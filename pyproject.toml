@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-reframe = ["opencv-python-headless>=4.8"]
+reframe = ["opencv-python-headless>=4.8,<5"]
 
 [project.scripts]
 hermesclip = "hermesclip.cli:main"

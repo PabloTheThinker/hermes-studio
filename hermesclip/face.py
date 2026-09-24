@@ -15,6 +15,8 @@ def face_norm(video: Path, start: float, end: float) -> tuple[float, float] | No
     """Return (nx, ny) in 0–1 if a face is found in the clip window."""
     try:
         import cv2
+        if not hasattr(cv2, "CascadeClassifier"):
+            return None
     except ImportError:
         return None
     bundled = Path(__file__).resolve().parent / "data" / "haarcascade_frontalface_default.xml"
