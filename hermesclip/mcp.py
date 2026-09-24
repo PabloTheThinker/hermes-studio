@@ -18,7 +18,7 @@ TOOLS = [
                 "max_clips": {"type": "integer", "default": 3},
                 "prompt": {"type": "string"},
                 "keywords": {"type": "string"},
-                "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"]},
+                "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"]},
                 "layout": {"type": "string", "enum": ["fit", "fill"]},
             },
             "required": ["src"],

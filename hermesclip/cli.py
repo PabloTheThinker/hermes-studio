@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--whisper", default="tiny")
     cap.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
     cap.add_argument("--layout", choices=["fit", "fill"], default="fit")
-    cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1", "4:5"], default="9:16")
     cap.add_argument("--no-hook", action="store_true")
 
     edt = sub.add_parser("edit", help="trim or split an existing clip (local; does not post)")
@@ -114,7 +114,7 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--recommend", action="store_true", help="Hermes picks settings after analyzing the source")
     run.add_argument("--mode", choices=["clip", "captions"], default="clip")
     run.add_argument("--no-hook", action="store_true")
-    run.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    run.add_argument("--aspect", choices=["9:16", "16:9", "1:1", "4:5"], default="9:16")
     run.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
     run.add_argument(
         "--layout",

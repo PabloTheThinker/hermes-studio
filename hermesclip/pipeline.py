@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from hermesclip.download import LIVE_DEFAULT_SEC, SourceInfo, fetch, probe
+from hermesclip.layout import canvas
 from hermesclip.plan import ClipPlan, plan_grok, plan_heuristic, save_plan
 from hermesclip.render import probe_duration, render_clip
 from hermesclip.transcribe import Transcript, Word, load_transcript, transcribe
@@ -229,7 +230,7 @@ def new_job(
         max_clips=max_clips,
         live_seconds=live_seconds,
         live_from_start=live_from_start,
-        aspect=aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
+        aspect=aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
         captions=bool(captions),
         min_sec=float(min_sec),
         max_sec=float(max_sec),
@@ -307,9 +308,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             hi = min(dur, float(job.end_time) if job.end_time is not None else min(dur, lo + job.max_sec))
             tr = Transcript("en", dur, "", [Word("…", lo, hi)])
 
-        width, height = (
-            (1920, 1080) if job.aspect == "16:9" else (1080, 1080) if job.aspect == "1:1" else (1080, 1920)
-        )
+        width, height = canvas(job.aspect)
         layout = job.layout if job.layout in ("fit", "fill") else "fit"
         style = job.style if job.captions else "clean"
 
@@ -363,12 +362,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                         have.add(w)
         save_plan(plans, work / "plan.json")
 
-        if job.aspect == "16:9":
-            width, height = 1920, 1080
-        elif job.aspect == "1:1":
-            width, height = 1080, 1080
-        else:
-            width, height = 1080, 1920
+        width, height = canvas(job.aspect)
         layout = job.layout if job.layout in ("fit", "fill") else "fit"
         style = job.style if job.captions else "clean"
         written: list[dict] = []

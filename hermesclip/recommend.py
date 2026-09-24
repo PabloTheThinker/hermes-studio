@@ -54,6 +54,9 @@ def recommend_heuristic(info: SourceInfo) -> Recommendation:
 
     rec.aspect = "9:16"
     why.append("Vertical 9:16 — Shorts / Reels / TikTok default.")
+    if any(w in title for w in ("instagram", "ig feed", "carousel")):
+        rec.aspect = "4:5"
+        why.append("Instagram/feed title: 4:5 portrait.")
 
     if info.is_live or kind == "twitch":
         rec.layout = "fill"
@@ -121,7 +124,7 @@ def recommend_grok(info: SourceInfo, base: Recommendation) -> Recommendation | N
                 "role": "system",
                 "content": (
                     "You pick HermesClip job settings for one video. "
-                    "Return JSON only with keys: aspect (9:16|1:1|16:9), layout (fit|fill), "
+                    "Return JSON only with keys: aspect (9:16|1:1|16:9|4:5), layout (fit|fill), "
                     "dur (xshort|short|medium|long|midform), max_clips (1-8), pacing (tight|natural), "
                     "style (pop|impact|clean|glow|neon|boxed), mode (clip|captions), "
                     "hook (bool), prompt (short hunt words or empty), keywords (space-separated highlight words), why (array of short reasons). "
@@ -160,7 +163,7 @@ def recommend_grok(info: SourceInfo, base: Recommendation) -> Recommendation | N
         return None
     rec = Recommendation(**{k: getattr(base, k) for k in Recommendation.__dataclass_fields__ if k != "why"})
     rec.why = []
-    if data.get("aspect") in ("9:16", "1:1", "16:9"):
+    if data.get("aspect") in ("9:16", "1:1", "16:9", "4:5"):
         rec.aspect = data["aspect"]
     if data.get("layout") in ("fit", "fill"):
         rec.layout = data["layout"]

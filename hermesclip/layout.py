@@ -1,9 +1,20 @@
-"""9:16 framing. BridgeClip Classic (fit) and Full Frame (fill), no OpenRouter."""
+"""Framing. BridgeClip Classic (fit) and Full Frame (fill), no OpenRouter."""
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+ASPECTS = {
+    "9:16": (1080, 1920),
+    "1:1": (1080, 1080),
+    "16:9": (1920, 1080),
+    "4:5": (1080, 1350),
+}
+
+
+def canvas(aspect: str) -> tuple[int, int]:
+    return ASPECTS.get(aspect, ASPECTS["9:16"])
 
 
 def even(value: float) -> int:

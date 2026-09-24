@@ -9,7 +9,7 @@ Hermes Agent integration is the **standalone plugin** (`hermesclip_*` tools), no
 Local remakes of Opus product surface:
 - Virality chip = hook/standalone/arc score ×100 (heuristic, not their model)
 - Hunt prompt = ClipAnything-lite keyword boost
-- Aspects 9:16 / 1:1 / 16:9
+- Aspects 9:16 / 4:5 / 1:1 / 16:9
 - Fit Classic vs Fill crop (speaker Haar crop when opencv is installed)
 - Header: search, New clip, running count, Local · no post
 - Best recommendation after analysis

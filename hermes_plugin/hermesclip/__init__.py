@@ -103,7 +103,7 @@ def hermesclip_run(
         "--live-seconds",
         str(int(live_seconds) or 1200),
         "--aspect",
-        aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
+        aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
         "--mode",
         mode if mode in ("clip", "captions") else "clip",
         "--min-sec",
@@ -157,7 +157,7 @@ def hermesclip_captions(
         "--layout",
         layout if layout in ("fit", "fill") else "fit",
         "--aspect",
-        aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
+        aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
     ]
     if not hook:
         argv.append("--no-hook")
@@ -362,7 +362,7 @@ def register(ctx) -> None:
                     "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
                     "prompt": {"type": "string"},
                     "keywords": {"type": "string", "description": "Words to highlight in captions"},
-                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"]},
+                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"]},
                 },
                 "required": ["src"],
             },
