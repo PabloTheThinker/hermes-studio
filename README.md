@@ -1,10 +1,10 @@
-# HermesClip
+# Hermes Studio
 
-Part of **Hermes Studio** — video tools for [Hermes Agent](https://hermes-agent.nousresearch.com/). HermesClip is the clipper (now). A timeline editor comes later under the same title.
+Video tools for [Hermes Agent](https://hermes-agent.nousresearch.com/). **HermesClip** is the clipper (now). A timeline editor comes later under this title.
+
+Repo: https://github.com/PabloTheThinker/hermes-studio
 
 Long video or YouTube URL in. Captioned 9:16 shorts out. Nothing is posted for you.
-
-Local [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + FFmpeg. Optional Grok planner if `XAI_API_KEY` is set.
 
 ## Needs
 
@@ -15,34 +15,33 @@ Local [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + FFmpeg. Opti
 ## Install
 
 ```bash
-git clone <this-repo>
-cd hermesclip
+git clone https://github.com/PabloTheThinker/hermes-studio.git
+cd hermes-studio
 python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
+
+Hermes skill: copy `skills/hermesclip/` into `$HERMES_HOME/skills/hermesclip/`.
 
 ## CLI
 
 ```bash
 .venv/bin/python -m hermesclip run VIDEO.mp4 \
   --out ./clips --max-clips 3 \
-  --pacing tight --style pop
+  --layout fit --plan heuristic --pacing tight --style pop
 ```
 
+- Layout: `fit` (default) | `fill`
 - Styles: `pop` | `impact` | `clean`
-- Pacing: `tight` (cut filler and dead air) | `natural`
+- Pacing: `tight` | `natural`
 
 ## Hermes plugin
 
-Copy `hermes_plugin/hermesclip/` into `$HERMES_HOME/plugins/hermesclip/` and add `hermesclip` to `plugins.enabled`. After a **new session**, the tool is `hermesclip_run`.
+Copy `hermes_plugin/hermesclip/` into `$HERMES_HOME/plugins/hermesclip/` and merge `hermesclip` into `plugins.enabled`. After a **new session**: `hermesclip_run`, `hermesclip_transcribe`, `hermesclip_plan`, `hermesclip_list`.
 
 ## Site
 
-Static landing: `site/index.html`.
-
-```bash
-python3 -m http.server 3860 --bind 127.0.0.1 --directory site
-```
+https://pablothethinker.github.io/hermes-studio/
 
 ## License
 

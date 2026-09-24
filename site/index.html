@@ -131,10 +131,8 @@
           scored moments, Fit 9:16 on a blur pad. The editor comes later under the same name.
           Nothing is posted for you.
         </p>
-        <pre class="install" id="cmd"><span>$</span> python3 -m venv .venv &amp;&amp; .venv/bin/pip install -e .
-.venv/bin/python -m hermesclip run VIDEO.mp4 --out ./clips --layout fit --plan heuristic</pre>
         <div class="row">
-          <button class="btn btn-signal" type="button" id="copy-btn">Copy HermesClip</button>
+          <a class="btn btn-signal" href="https://github.com/PabloTheThinker/hermes-studio">GitHub</a>
           <a class="btn" href="#products">Under Studio</a>
         </div>
       </div>
@@ -187,17 +185,5 @@
     Independent companion to Hermes Agent. Not an official Nous product.
   </footer>
 </div>
-  <script>
-    (function () {
-      var cmd = document.getElementById("cmd").textContent.replace(/^\$\s*/, "").trim();
-      document.getElementById("copy-btn").addEventListener("click", function () {
-        var el = this;
-        var done = function () { el.textContent = "Copied"; };
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(cmd).then(done).catch(done);
-        } else { done(); }
-      });
-    })();
-  </script>
 </body>
 </html>
