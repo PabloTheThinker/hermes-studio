@@ -45,13 +45,20 @@ def frame_filters(
     ass_f: str,
     vin: str = "vin",
     vout: str = "outv",
+    face: tuple[float, float] | None = None,
 ) -> str:
-    """Filter graph from [vin] to [vout]. layout: fit | fill."""
+    """Filter graph from [vin] to [vout]. layout: fit | fill. fill can pin on a face."""
     scale = "flags=lanczos"
     if layout == "fill":
+        crop = f"crop={out_w}:{out_h}"
+        if face:
+            from hermesclip.face import fill_crop_xy
+
+            x, y = fill_crop_xy(src_w, src_h, out_w, out_h, face[0], face[1])
+            crop = f"crop={out_w}:{out_h}:{x}:{y}"
         return (
             f"[{vin}]scale={out_w}:{out_h}:force_original_aspect_ratio=increase:{scale},"
-            f"crop={out_w}:{out_h},setsar=1,subtitles='{ass_f}'[{vout}]"
+            f"{crop},setsar=1,subtitles='{ass_f}'[{vout}]"
         )
     scaled_h, _y = letterbox_geometry(src_w, src_h, out_w, out_h)
     bg_w, bg_h = even(out_w // 4), even(out_h // 4)

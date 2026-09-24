@@ -46,6 +46,11 @@ def render_clip(
 ) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     src_w, src_h = probe_size(video)
+    face = None
+    if layout == "fill":
+        from hermesclip.face import face_norm
+
+        face = face_norm(video, plan.start, plan.end)
     if pacing == "tight":
         tm = keep_intervals(tr.words, plan.start, plan.end)
         cap_words = remap_words(tr.words, plan.start, plan.end, tm)
@@ -70,7 +75,7 @@ def render_clip(
         )
     )
     ass_f = _ass_escape(ass)
-    graph = frame_filters(src_w, src_h, width, height, layout, ass_f, vin="cv", vout="outv")
+    graph = frame_filters(src_w, src_h, width, height, layout, ass_f, vin="cv", vout="outv", face=face)
     if len(tm.keeps) <= 1:
         a, b = tm.keeps[0] if tm.keeps else (0.0, plan.end - plan.start)
         cmd = _simple(video, plan.start + a, plan.start + b, graph, out_path)
