@@ -51,6 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
     cap.add_argument("--no-hook", action="store_true")
 
+    edt = sub.add_parser("edit", help="trim an existing clip (local; does not post)")
+    edt.add_argument("src")
+    edt.add_argument("--start", type=float, required=True)
+    edt.add_argument("--end", type=float, required=True)
+    edt.add_argument("--out", default="")
+
     args = p.parse_args(argv)
     if args.cmd == "run":
         return _run(args)
@@ -67,6 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         args.live_from_start = False
         args.prompt = ""
         return _run(args)
+    if args.cmd == "edit":
+        return _edit_cmd(args)
     if args.cmd == "transcribe":
         return _transcribe_cmd(args)
     if args.cmd == "plan":
@@ -142,6 +150,20 @@ def _run(args: argparse.Namespace) -> int:
     print("done")
     for w in result.get("clips") or []:
         print(w)
+    return 0
+
+
+def _edit_cmd(args: argparse.Namespace) -> int:
+    from hermesclip.edit import trim_file
+
+    src = Path(args.src).expanduser()
+    dest = Path(args.out).expanduser() if args.out else src.with_name(src.stem + "-trim" + src.suffix)
+    try:
+        path = trim_file(src, dest, float(args.start), float(args.end))
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)[-1200:]}))
+        return 1
+    print(json.dumps({"ok": True, "file": str(path)}))
     return 0
 
 

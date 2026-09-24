@@ -21,8 +21,14 @@
       padding: 0 1.1rem; border-bottom: 1px solid var(--hair); height: 56px;
     }
     .top .brand { padding: 0; }
-    .top-search { flex: 1; max-width: 420px; margin: 0; }
-    .top-search input { margin: 0; }
+    .top-search { flex: 1; max-width: 480px; margin: 0; }
+    .top-search input { margin: 0; height: 36px; padding: .45rem .75rem; }
+    .pill {
+      font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--ice); border: 1px solid var(--hair);
+      padding: 4px 8px; white-space: nowrap;
+    }
+    .top-actions { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
     aside { border-right: 1px solid var(--hair); padding: 1rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
     .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; }
     .mark { width: 12px; height: 22px; border: 1px solid var(--signal); background: linear-gradient(180deg, var(--signal), #0a1f6b); }
@@ -82,9 +88,12 @@
   <div id="app">
     <header class="top">
       <div class="brand"><span class="mark"></span><div><div class="brand-name">Hermes Studio</div><div class="brand-sub">HermesClip</div></div></div>
-      <div class="top-search"><input id="q" placeholder="Search library" /></div>
-      <button class="btn btn-signal" id="new-clip">New clip</button>
-      <span class="hint" id="top-live"></span>
+      <div class="top-search"><input id="q" placeholder="Search clips, titles, sources" /></div>
+      <div class="top-actions">
+        <span class="pill" id="top-live" hidden></span>
+        <span class="pill">Local · no post</span>
+        <button class="btn btn-signal" id="new-clip">New clip</button>
+      </div>
     </header>
     <aside>
       <nav>
@@ -137,7 +146,10 @@
       b.hidden = live === 0;
       b.textContent = live;
       const tl = $("#top-live");
-      if (tl) tl.textContent = live ? live + " running" : "";
+      if (tl) {
+        tl.textContent = live ? live + " running" : "";
+        tl.hidden = !live;
+      }
       if (state.page === "create") return;
       if (state.page === "library" && state.open) return;
       const sig = JSON.stringify(state.jobs.map(j => [j.id, j.status, j.progress, j.message]));

@@ -14,3 +14,4 @@ provides_tools:
   - hermesclip_probe
   - hermesclip_studio
   - hermesclip_captions
+  - hermesclip_edit

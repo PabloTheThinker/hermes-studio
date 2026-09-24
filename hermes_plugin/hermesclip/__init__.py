@@ -164,6 +164,21 @@ def hermesclip_captions(
     return json.dumps({"ok": True, "out": str(out_dir), "log": (result.get("stdout") or "")[-1500:]})
 
 
+def hermesclip_edit(src: str, start: float, end: float, out: str = "") -> str:
+    if not src:
+        return json.dumps({"ok": False, "error": "src is required"})
+    argv = ["edit", str(Path(src).expanduser()), "--start", str(float(start)), "--end", str(float(end))]
+    if out:
+        argv += ["--out", str(Path(out).expanduser())]
+    result = _run_mod(argv, timeout=600)
+    if not result.get("ok"):
+        return json.dumps(result)
+    try:
+        return json.dumps(json.loads(result["stdout"].strip().splitlines()[-1]))
+    except Exception:
+        return json.dumps({"ok": True, "log": result.get("stdout", "")[-1500:]})
+
+
 def hermesclip_transcribe(src: str, work: str = "", whisper: str = "tiny") -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -416,4 +431,29 @@ def register(ctx) -> None:
             hook=(args or {}).get("hook", True) is not False,
         ),
         description="HermesClip: burn captions on the full video. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_edit",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_edit",
+            "description": "HermesClip: trim an existing clip file (start/end seconds). Local FFmpeg. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string"},
+                    "start": {"type": "number"},
+                    "end": {"type": "number"},
+                    "out": {"type": "string"},
+                },
+                "required": ["src", "start", "end"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_edit(
+            src=(args or {}).get("src") or "",
+            start=float((args or {}).get("start") or 0),
+            end=float((args or {}).get("end") or 0),
+            out=(args or {}).get("out") or "",
+        ),
+        description="HermesClip: trim an existing clip. Does not post.",
     )
