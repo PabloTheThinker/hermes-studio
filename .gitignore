@@ -1,7 +1,12 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 demo/
 *.mp4
 site/proof-*.png
+site/index.v*.html
+site/index.pre-review.html
+site/index.schematic.html
+site/nous.html
 .cache/

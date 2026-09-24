@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: hermesclip
-Version: 0.1.0
-Summary: HermesClip — Linux 9:16 clipper for Hermes Agent
-Requires-Python: >=3.11
-Requires-Dist: faster-whisper>=1.0.0
