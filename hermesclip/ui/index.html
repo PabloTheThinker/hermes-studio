@@ -271,7 +271,7 @@
         <p class="lede">${esc(j.src)}</p>
         <div class="row" style="margin:0 0 1rem"><button class="btn" id="copy-btn" data-job="${j.id}">Social copy</button><span class="hint">Local pack. You seal any post.</span></div>
         ${copy ? `<article class="job"><p class="fig">${esc(copy.source || "copy")}</p><ul class="lede">${(copy.titles||[]).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede">${esc(copy.description||"")}</p><p class="hint">${esc((copy.hashtags||[]).join(" "))}</p></article>` : ""}
-        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p><div class="row"><input data-split-at="${esc(c.file)}" placeholder="split at sec" style="max-width:120px;margin:0"><button class="btn" data-split="${esc(c.file)}">Split</button></div></div></article>`).join("")}</div>`;
+        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p><div class="row"><input data-split-at="${esc(c.file)}" placeholder="split at sec" style="max-width:120px;margin:0"><button class="btn" data-split="${esc(c.file)}">Split</button><button class="btn" data-dup="${esc(c.file)}">Duplicate</button><button class="btn" data-drop="${esc(c.file)}">Drop</button></div></div></article>`).join("")}</div>`;
     }
     function jobsPage() {
       const jobs = state.jobs;
@@ -378,6 +378,21 @@
           state.open = state.library.find(x => x.id === jobId) || state.open;
         } catch (e) { state.err = e.message; }
         render();
+      });
+      const clipOp = async (file, op) => {
+        const jobId = state.open && state.open.id;
+        if (!jobId) return;
+        try {
+          await api("/api/edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: jobId, file, op }) });
+          await refresh();
+          state.open = state.library.find(x => x.id === jobId) || state.open;
+        } catch (e) { state.err = e.message; }
+        render();
+      };
+      document.querySelectorAll("[data-dup]").forEach(el => el.onclick = () => clipOp(el.dataset.dup, "duplicate"));
+      document.querySelectorAll("[data-drop]").forEach(el => el.onclick = () => {
+        if (!confirm("Drop this clip from the run? File goes to .trash in the job folder.")) return;
+        clipOp(el.dataset.drop, "drop");
       });
       const copyBtn = $("#copy-btn");
       if (copyBtn) copyBtn.onclick = async () => {

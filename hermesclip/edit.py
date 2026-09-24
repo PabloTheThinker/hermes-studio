@@ -55,3 +55,32 @@ def split_file(src: Path, at: float, dest_a: Path | None = None, dest_b: Path | 
     a = trim_file(src, dest_a, 0.0, at)
     b = trim_file(src, dest_b, at, dur)
     return a, b
+
+
+def duplicate_file(src: Path, dest: Path | None = None) -> Path:
+    """Safe copy to edit. Opus duplicate_clip analog. Does not post."""
+    import shutil
+
+    src = Path(src).expanduser().resolve()
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    dest = Path(dest).expanduser().resolve() if dest else src.with_name(src.stem + "-copy" + src.suffix)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
+
+
+def drop_file(src: Path) -> Path:
+    """Move a clip aside. Does not post. Recoverable trash in the job folder."""
+    src = Path(src).expanduser().resolve()
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    trash = src.parent / ".trash"
+    trash.mkdir(parents=True, exist_ok=True)
+    dest = trash / src.name
+    n = 1
+    while dest.exists():
+        dest = trash / f"{src.stem}-{n}{src.suffix}"
+        n += 1
+    src.rename(dest)
+    return dest

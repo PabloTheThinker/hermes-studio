@@ -174,9 +174,12 @@ def hermesclip_edit(
 ) -> str:
     if not src:
         return json.dumps({"ok": False, "error": "src is required"})
-    argv = ["edit", str(Path(src).expanduser()), "--op", op if op in ("trim", "split") else "trim"]
+    argv = ["edit", str(Path(src).expanduser()), "--op", op if op in ("trim", "split", "duplicate", "drop") else "trim"]
     if op == "split":
         argv += ["--at", str(float(at if at is not None else 0))]
+    elif op in ("duplicate", "drop"):
+        if out and op == "duplicate":
+            argv += ["--out", str(Path(out).expanduser())]
     else:
         argv += ["--start", str(float(start)), "--end", str(float(end))]
         if out:
@@ -497,7 +500,7 @@ def register(ctx) -> None:
                 "type": "object",
                 "properties": {
                     "src": {"type": "string"},
-                    "op": {"type": "string", "enum": ["trim", "split"], "default": "trim"},
+                    "op": {"type": "string", "enum": ["trim", "split", "duplicate", "drop"], "default": "trim"},
                     "start": {"type": "number"},
                     "end": {"type": "number"},
                     "at": {"type": "number", "description": "Split point in seconds"},

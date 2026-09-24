@@ -137,18 +137,17 @@ def _call(name: str, args: dict) -> str:
     if name == "list":
         return _cli(["list"])
     if name == "edit":
-        return _cli(
-            [
-                "edit",
-                str(args.get("src") or ""),
-                "--start",
-                str(args.get("start") or 0),
-                "--end",
-                str(args.get("end") or 0),
-                "--out",
-                str(args.get("out") or ""),
-            ]
-        )
+        op = str(args.get("op") or "trim")
+        argv = ["edit", str(args.get("src") or ""), "--op", op]
+        if op == "split":
+            argv += ["--at", str(args.get("at") or 0)]
+        elif op == "trim":
+            argv += ["--start", str(args.get("start") or 0), "--end", str(args.get("end") or 0)]
+            if args.get("out"):
+                argv += ["--out", str(args["out"])]
+        elif op == "duplicate" and args.get("out"):
+            argv += ["--out", str(args["out"])]
+        return _cli(argv)
     if name == "recommend":
         env = __import__("os").environ.copy()
         env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])

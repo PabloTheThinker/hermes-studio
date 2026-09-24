@@ -283,7 +283,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return _json(self, 404, {"ok": False, "error": "clip not found"})
             op = str(body.get("op") or "trim")
             try:
-                from hermesclip.edit import split_file, trim_file
+                from hermesclip.edit import drop_file, duplicate_file, split_file, trim_file
 
                 if op == "split":
                     a, b = split_file(media, float(body.get("at") or 0))
@@ -294,6 +294,21 @@ class StudioHandler(BaseHTTPRequestHandler):
                     job.clips = list(job.clips or []) + extra
                     job.save()
                     return _json(self, 200, {"ok": True, "op": "split", "files": [a.name, b.name]})
+                if op == "duplicate":
+                    path = duplicate_file(media)
+                    clip = next((c for c in (job.clips or []) if c.get("file") == name), {}) or {}
+                    extra = dict(clip)
+                    extra["file"] = path.name
+                    extra["title"] = (clip.get("title") or Path(name).stem) + " copy"
+                    extra["thumb"] = ""
+                    job.clips = list(job.clips or []) + [extra]
+                    job.save()
+                    return _json(self, 200, {"ok": True, "op": "duplicate", "file": path.name})
+                if op == "drop":
+                    drop_file(media)
+                    job.clips = [c for c in (job.clips or []) if c.get("file") != name]
+                    job.save()
+                    return _json(self, 200, {"ok": True, "op": "drop", "file": name})
                 start = _seconds(body.get("start")) or 0.0
                 end = _seconds(body.get("end")) or 0.0
                 dest = media.with_name(media.stem + "-trim" + media.suffix)
