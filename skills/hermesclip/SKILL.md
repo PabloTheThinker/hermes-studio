@@ -5,24 +5,32 @@ description: Use when cutting 9:16 shorts in Hermes. Local Whisper.
 
 # HermesClip (Hermes Studio)
 
-Clipper under **Hermes Studio**. Linux. Local Whisper + FFmpeg. Does not post.
+Clipper under **Hermes Studio**. Linux. Local Whisper + FFmpeg. Localhost library. Does not post.
 
 Repo: https://github.com/PabloTheThinker/hermes-studio
 
 ## When
 
-Long video or YouTube URL → captioned 9:16 shorts. Hermes Agent tool, not a cloud clipper.
+Long video, YouTube / X / Twitch URL, or a livestream → captioned 9:16 shorts.
 
-## Install (Hermes)
+## Localhost
 
-Copy `hermes_plugin/hermesclip/` to `$HERMES_HOME/plugins/hermesclip/` and merge `hermesclip` into `plugins.enabled`. New session. Tools:
+```bash
+python -m hermesclip studio --host 127.0.0.1 --port 3870
+```
 
-- `hermesclip_run` — full cut (`src` path or URL)
+http://127.0.0.1:3870/ — Create, Library, Jobs. Loopback only.
+
+## Hermes tools
+
+- `hermesclip_run` — full cut (`src` path or URL; live URLs take live-seconds)
 - `hermesclip_transcribe` — Whisper only
 - `hermesclip_plan` — score windows, no render
-- `hermesclip_list` — existing clips
+- `hermesclip_list` — library
+- `hermesclip_probe` — title / live flag
+- `hermesclip_studio` — start loopback desk
 
-Never auto-post.
+Never auto-post. Do not bounce the gateway.
 
 ## CLI
 
@@ -34,6 +42,8 @@ python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
 `--layout fit` (default) = whole frame on blur. `--layout fill` = punch-in.
+
+Live YouTube / X / Twitch: timed capture (default 20 min, max 2 h), then the same planner.
 
 ## Family
 

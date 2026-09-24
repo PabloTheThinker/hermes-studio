@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 __plugin_name__ = "hermesclip"
-__plugin_version__ = "0.2.0"
+__plugin_version__ = "0.3.0"
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT = Path.home() / "projects" / "hermesclip"
@@ -69,31 +69,36 @@ def hermesclip_run(
     style: str = "pop",
     plan: str = "heuristic",
     layout: str = "fit",
+    live_seconds: int = 1200,
+    live_from_start: bool = False,
 ) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
     out_dir = Path(out).expanduser() if out else _out_default()
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = _run_mod(
-        [
-            "run",
-            str(src).strip(),
-            "--out",
-            str(out_dir),
-            "--max-clips",
-            str(int(max_clips) or 3),
-            "--whisper",
-            whisper or "tiny",
-            "--pacing",
-            pacing if pacing in ("tight", "natural") else "tight",
-            "--style",
-            style if style in ("pop", "impact", "clean") else "pop",
-            "--plan",
-            plan if plan in ("auto", "heuristic", "grok") else "heuristic",
-            "--layout",
-            layout if layout in ("fit", "fill") else "fit",
-        ]
-    )
+    argv = [
+        "run",
+        str(src).strip(),
+        "--out",
+        str(out_dir),
+        "--max-clips",
+        str(int(max_clips) or 3),
+        "--whisper",
+        whisper or "tiny",
+        "--pacing",
+        pacing if pacing in ("tight", "natural") else "tight",
+        "--style",
+        style if style in ("pop", "impact", "clean") else "pop",
+        "--plan",
+        plan if plan in ("auto", "heuristic", "grok") else "heuristic",
+        "--layout",
+        layout if layout in ("fit", "fill") else "fit",
+        "--live-seconds",
+        str(int(live_seconds) or 1200),
+    ]
+    if live_from_start:
+        argv.append("--live-from-start")
+    result = _run_mod(argv)
     if not result.get("ok"):
         return json.dumps(result)
     clips = []
@@ -146,8 +151,6 @@ def hermesclip_list(out: str = "") -> str:
     argv = ["list"]
     if out:
         argv += ["--out", str(Path(out).expanduser())]
-    else:
-        argv += ["--out", str(_out_default())]
     result = _run_mod(argv, timeout=30)
     if not result.get("ok"):
         return json.dumps(result)
@@ -157,6 +160,57 @@ def hermesclip_list(out: str = "") -> str:
         return json.dumps(data)
     except Exception:
         return json.dumps({"ok": True, "raw": result.get("stdout", "")[-1500:]})
+
+
+def hermesclip_probe(src: str) -> str:
+    if not src or not str(src).strip():
+        return json.dumps({"ok": False, "error": "src is required"})
+    result = _run_mod(["probe", str(src).strip()], timeout=90)
+    if not result.get("ok"):
+        return json.dumps(result)
+    try:
+        return result["stdout"].strip().splitlines()[-1]
+    except Exception:
+        return json.dumps({"ok": True, "raw": result.get("stdout", "")[-1500:]})
+
+
+def hermesclip_studio(host: str = "127.0.0.1", port: int = 3870) -> str:
+    """Start localhost Studio if it is not already up. Loopback only. Does not post."""
+    import socket
+    import time
+    import urllib.request
+
+    host = host or "127.0.0.1"
+    port = int(port or 3870)
+    url = f"http://{host}:{port}/"
+    try:
+        with urllib.request.urlopen(url, timeout=2) as r:
+            if r.status == 200:
+                return json.dumps({"ok": True, "url": url, "already": True})
+    except Exception:
+        pass
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(_PROJECT)
+    log = Path.home() / ".hermes" / "clips" / "studio.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("ab") as fh:
+        subprocess.Popen(
+            [_python(), "-m", "hermesclip", "studio", "--host", host, "--port", str(port)],
+            stdout=fh,
+            stderr=fh,
+            env=env,
+            cwd=str(_PROJECT),
+            start_new_session=True,
+        )
+    for _ in range(20):
+        time.sleep(0.25)
+        try:
+            with urllib.request.urlopen(url, timeout=1) as r:
+                if r.status == 200:
+                    return json.dumps({"ok": True, "url": url, "already": False})
+        except Exception:
+            continue
+    return json.dumps({"ok": False, "error": f"studio did not bind {url}", "log": str(log)})
 
 
 def register(ctx) -> None:
@@ -242,5 +296,40 @@ def register(ctx) -> None:
             },
         },
         handler=lambda args, **kw: hermesclip_list(out=(args or {}).get("out") or ""),
-        description="HermesClip: list rendered clips from a manifest.json directory.",
+        description="HermesClip: list the local clip library (or a manifest folder). Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_probe",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_probe",
+            "description": "HermesClip: probe a URL or file for title and live status. No download.",
+            "parameters": {
+                "type": "object",
+                "properties": {"src": {"type": "string"}},
+                "required": ["src"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_probe(src=(args or {}).get("src") or ""),
+        description="HermesClip: probe a URL or file for title and live status. No download.",
+    )
+    ctx.register_tool(
+        name="hermesclip_studio",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_studio",
+            "description": "Start localhost Hermes Studio (Create / Library / Jobs) on loopback. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "host": {"type": "string", "default": "127.0.0.1"},
+                    "port": {"type": "integer", "default": 3870},
+                },
+            },
+        },
+        handler=lambda args, **kw: hermesclip_studio(
+            host=(args or {}).get("host") or "127.0.0.1",
+            port=int((args or {}).get("port") or 3870),
+        ),
+        description="Start localhost Hermes Studio (Create / Library / Jobs) on loopback. Does not post.",
     )

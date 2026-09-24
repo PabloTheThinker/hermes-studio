@@ -3,17 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-import tempfile
 from pathlib import Path
 
-from hermesclip.download import fetch
+from hermesclip.download import LIVE_DEFAULT_SEC, probe
+from hermesclip.pipeline import run_once
 from hermesclip.plan import plan_grok, plan_heuristic, save_plan
-from hermesclip.render import probe_duration, render_clip
-from hermesclip.transcribe import Transcript, Word, load_transcript, transcribe
+from hermesclip.transcribe import load_transcript, transcribe
+from hermesclip.download import fetch as fetch_src
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="hermesclip", description="HermesClip — Linux 9:16 clipper")
+    p = argparse.ArgumentParser(prog="hermesclip", description="Hermes Studio — HermesClip")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     run = sub.add_parser("run", help="download + transcribe + plan + render")
@@ -32,8 +32,15 @@ def main(argv: list[str] | None = None) -> int:
     plp.add_argument("--max-sec", type=float, default=45)
     plp.add_argument("--plan", choices=["auto", "heuristic", "grok"], default="heuristic")
 
-    lsp = sub.add_parser("list", help="print manifest.json clips")
+    lsp = sub.add_parser("list", help="print library or a manifest.json folder")
     lsp.add_argument("--out", default="")
+
+    prp = sub.add_parser("probe", help="title / live flag for a URL or file")
+    prp.add_argument("src")
+
+    stu = sub.add_parser("studio", help="localhost Create / Library / Jobs (loopback)")
+    stu.add_argument("--host", default="127.0.0.1")
+    stu.add_argument("--port", type=int, default=3870)
 
     args = p.parse_args(argv)
     if args.cmd == "run":
@@ -44,6 +51,13 @@ def main(argv: list[str] | None = None) -> int:
         return _plan_cmd(args)
     if args.cmd == "list":
         return _list_cmd(args)
+    if args.cmd == "probe":
+        return _probe_cmd(args)
+    if args.cmd == "studio":
+        from hermesclip.studio import serve
+
+        serve(args.host, args.port)
+        return 0
     return 2
 
 
@@ -65,64 +79,46 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
         help="fit = whole frame on blur. fill = punch-in crop.",
     )
     run.add_argument("--work", default="")
-
-
-def _work_dir(args_work: str) -> Path:
-    work = Path(args_work).expanduser().resolve() if args_work else Path(tempfile.mkdtemp(prefix="hermesclip-"))
-    work.mkdir(parents=True, exist_ok=True)
-    return work
-
-
-def _pick_plans(tr: Transcript, args) -> list:
-    plans = None
-    if args.plan in ("auto", "grok"):
-        plans = plan_grok(tr, args.max_clips, args.min_sec, args.max_sec)
-        if args.plan == "grok" and not plans:
-            print("grok planner unavailable (no XAI_API_KEY); using heuristic", file=sys.stderr)
-    if not plans:
-        plans = plan_heuristic(tr, args.max_clips, args.min_sec, args.max_sec)
-    return plans
+    run.add_argument(
+        "--live-seconds",
+        type=int,
+        default=LIVE_DEFAULT_SEC,
+        help="If the source is live, capture this many seconds (max 7200).",
+    )
+    run.add_argument("--live-from-start", action="store_true", help="YouTube live: from stream start")
 
 
 def _run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out).expanduser().resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
-    work = _work_dir(args.work)
-
-    video = fetch(args.src, work)
-    if args.transcript:
-        tr = load_transcript(Path(args.transcript))
-    else:
-        print(f"transcribe {video} ({args.whisper})", flush=True)
-        tr = transcribe(video, work, model_size=args.whisper)
-        if not tr.words:
-            dur = probe_duration(video)
-            tr = Transcript("en", dur, "", [Word("…", 0.0, min(dur, args.max_sec))])
-
-    plans = _pick_plans(tr, args)
-    save_plan(plans, work / "plan.json")
-    print(json.dumps([{"start": x.start, "end": x.end, "title": x.title, "score": x.score} for x in plans], indent=2), flush=True)
-
-    written = []
-    for i, plan in enumerate(plans, 1):
-        dest = out_dir / f"clip-{i:02d}.mp4"
-        print(f"render {dest.name} {plan.start:.1f}-{plan.end:.1f}s", flush=True)
-        render_clip(
-            video, plan, tr, dest, work, pacing=args.pacing, style=args.style, layout=args.layout
-        )
-        written.append(str(dest))
-    (out_dir / "manifest.json").write_text(
-        json.dumps({"source": str(video), "clips": written, "work": str(work)}, indent=2)
+    work = Path(args.work).expanduser().resolve() if args.work else None
+    result = run_once(
+        args.src,
+        out_dir,
+        max_clips=args.max_clips,
+        whisper=args.whisper,
+        pacing=args.pacing,
+        style=args.style,
+        plan=args.plan,
+        layout=args.layout,
+        work=work,
+        live_seconds=args.live_seconds,
+        live_from_start=args.live_from_start,
+        transcript=Path(args.transcript).expanduser() if args.transcript else None,
+        on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
+    print(json.dumps(result, indent=2), flush=True)
     print("done")
-    for w in written:
+    for w in result.get("clips") or []:
         print(w)
     return 0
 
 
 def _transcribe_cmd(args: argparse.Namespace) -> int:
-    work = _work_dir(args.work)
-    video = fetch(args.src, work)
+    import tempfile
+
+    work = Path(args.work).expanduser().resolve() if args.work else Path(tempfile.mkdtemp(prefix="hermesclip-"))
+    work.mkdir(parents=True, exist_ok=True)
+    video = fetch_src(args.src, work)
     print(f"transcribe {video} ({args.whisper})", flush=True)
     tr = transcribe(video, work, model_size=args.whisper)
     path = work / "transcript.json"
@@ -132,7 +128,11 @@ def _transcribe_cmd(args: argparse.Namespace) -> int:
 
 def _plan_cmd(args: argparse.Namespace) -> int:
     tr = load_transcript(Path(args.transcript).expanduser())
-    plans = _pick_plans(tr, args)
+    plans = None
+    if args.plan in ("auto", "grok"):
+        plans = plan_grok(tr, args.max_clips, args.min_sec, args.max_sec)
+    if not plans:
+        plans = plan_heuristic(tr, args.max_clips, args.min_sec, args.max_sec)
     out = Path(args.out).expanduser() if args.out else Path(args.transcript).expanduser().parent / "plan.json"
     save_plan(plans, out)
     payload = [{"start": x.start, "end": x.end, "title": x.title, "score": x.score, "emphasis": x.emphasis} for x in plans]
@@ -141,12 +141,51 @@ def _plan_cmd(args: argparse.Namespace) -> int:
 
 
 def _list_cmd(args: argparse.Namespace) -> int:
-    out = Path(args.out).expanduser() if args.out else Path.home() / ".hermes" / "clips"
-    man = out / "manifest.json"
-    if not man.is_file():
-        print(json.dumps({"ok": False, "error": f"no manifest in {out}"}))
+    from hermesclip.pipeline import import_legacy, list_jobs
+
+    if args.out:
+        out = Path(args.out).expanduser()
+        man = out / "manifest.json"
+        if not man.is_file():
+            print(json.dumps({"ok": False, "error": f"no manifest in {out}"}))
+            return 1
+        print(man.read_text())
+        return 0
+    import_legacy()
+    jobs = [
+        {
+            "id": j.id,
+            "title": j.title,
+            "status": j.status,
+            "clips": len(j.clips or []),
+            "dir": j.dir,
+            "is_live": j.is_live,
+        }
+        for j in list_jobs()
+    ]
+    print(json.dumps({"ok": True, "jobs": jobs}, indent=2))
+    return 0
+
+
+def _probe_cmd(args: argparse.Namespace) -> int:
+    try:
+        info = probe(args.src)
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)[-800:]}))
         return 1
-    print(man.read_text())
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "title": info.title,
+                "is_live": info.is_live,
+                "live_status": info.live_status,
+                "duration": info.duration,
+                "extractor": info.extractor,
+                "id": info.video_id,
+            }
+        )
+    )
     return 0
 
 

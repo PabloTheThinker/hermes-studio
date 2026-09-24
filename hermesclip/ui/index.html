@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hermes Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0a0b0e;
+      --surface: #0f1117;
+      --fg: #ececf1;
+      --fg2: #9a9ab2;
+      --mute: #6b6b82;
+      --signal: #3b82f6;
+      --ice: #93c5fd;
+      --hair: rgba(255,255,255,.08);
+      --danger: #f87171;
+      --ok: #34d399;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--ink); color: var(--fg); font-family: Geist, system-ui, sans-serif; }
+    #app { display: grid; grid-template-columns: 200px 1fr; min-height: 100%; }
+    aside {
+      border-right: 1px solid var(--hair);
+      padding: 1.1rem .7rem;
+      display: flex; flex-direction: column; gap: .35rem;
+    }
+    .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; color: var(--fg); }
+    .mark { width: 12px; height: 22px; border: 1px solid var(--signal); background: linear-gradient(180deg, var(--signal), #0a1f6b); }
+    .brand-name { font-family: "Instrument Serif", serif; font-size: 1.05rem; }
+    .brand-sub { font-family: "Geist Mono", monospace; font-size: 9px; letter-spacing: .16em; color: var(--mute); text-transform: uppercase; }
+    nav button {
+      display: flex; width: 100%; align-items: center; gap: .6rem;
+      background: transparent; border: 0; color: var(--fg2);
+      font: 500 13px Geist, system-ui; padding: .55rem .7rem; cursor: pointer; text-align: left;
+    }
+    nav button.active { color: var(--fg); background: rgba(59,130,246,.12); }
+    nav button:hover { color: var(--fg); }
+    .badge {
+      margin-left: auto; font-family: "Geist Mono", monospace; font-size: 10px;
+      background: var(--signal); color: #061018; padding: 1px 6px;
+    }
+    main { padding: 1.6rem 2rem 3rem; overflow: auto; }
+    .fig { font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .18em; color: var(--signal); text-transform: uppercase; margin: 0 0 .4rem; }
+    h1 { font-family: "Instrument Serif", serif; font-size: 2.4rem; font-weight: 400; margin: 0 0 .4rem; letter-spacing: -.02em; }
+    .lede { color: var(--fg2); max-width: 36rem; margin: 0 0 1.4rem; line-height: 1.5; }
+    label { display: block; font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); margin: 0 0 .35rem; }
+    input, select, textarea {
+      width: 100%; background: var(--surface); color: var(--fg); border: 1px solid var(--hair);
+      padding: .7rem .8rem; font: 14px Geist, system-ui; margin: 0 0 1rem;
+    }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+    .btn {
+      display: inline-flex; align-items: center; min-height: 40px; padding: .55rem 1rem;
+      border: 1px solid var(--hair); background: transparent; color: var(--fg);
+      font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer;
+    }
+    .btn-signal { background: var(--signal); border-color: var(--signal); color: #061018; }
+    .hint { color: var(--mute); font-size: 13px; margin: -.4rem 0 1rem; }
+    .live { color: var(--danger); font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+    .ok { color: var(--ok); }
+    .err { color: var(--danger); white-space: pre-wrap; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+    .card { border: 1px solid var(--hair); background: var(--surface); cursor: pointer; }
+    .card img, .card .ph { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; display: block; }
+    .card .meta { padding: .75rem .85rem 1rem; }
+    .card h3 { margin: 0 0 .25rem; font-size: 14px; font-weight: 500; }
+    .card p { margin: 0; color: var(--mute); font-size: 12px; }
+    .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
+    .clip { border: 1px solid var(--hair); background: var(--surface); }
+    .clip video, .clip img { width: 100%; aspect-ratio: 9/16; object-fit: cover; background: #000; display: block; }
+    .clip .meta { padding: .7rem .8rem 1rem; }
+    .job { border: 1px solid var(--hair); padding: 1rem 1.1rem; margin: 0 0 .7rem; background: var(--surface); }
+    .bar { height: 3px; background: var(--hair); margin: .7rem 0 0; }
+    .bar > i { display: block; height: 3px; background: var(--signal); width: 0; }
+    .empty { border: 1px dashed var(--hair); padding: 2.5rem 1rem; text-align: center; color: var(--fg2); }
+    video.player { width: min(360px, 100%); background: #000; border: 1px solid var(--hair); }
+    @media (max-width: 800px) {
+      #app { grid-template-columns: 1fr; }
+      aside { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--hair); overflow-x: auto; }
+      nav { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside>
+      <div class="brand">
+        <span class="mark"></span>
+        <div>
+          <div class="brand-name">Hermes Studio</div>
+          <div class="brand-sub">HermesClip</div>
+        </div>
+      </div>
+      <nav>
+        <button data-page="create" class="active">Create</button>
+        <button data-page="library">Library</button>
+        <button data-page="jobs">Jobs <span class="badge" id="job-badge" hidden>0</span></button>
+      </nav>
+    </aside>
+    <main id="main"></main>
+  </div>
+  <script>
+    const state = { page: "create", jobs: [], library: [], probe: null, open: null, err: "" };
+
+    function $(sel, el = document) { return el.querySelector(sel); }
+    function fmt(n) {
+      if (!n) return "";
+      const s = Math.floor(n % 60).toString().padStart(2, "0");
+      const m = Math.floor(n / 60);
+      return m + ":" + s;
+    }
+    async function api(path, opts) {
+      const res = await fetch(path, opts);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+      return data;
+    }
+    async function refresh() {
+      const jobs = await api("/api/jobs");
+      state.jobs = jobs.jobs || [];
+      const lib = await api("/api/library");
+      state.library = lib.runs || [];
+      const live = state.jobs.filter(j => j.status === "queued" || j.status === "running").length;
+      const b = $("#job-badge");
+      b.hidden = live === 0;
+      b.textContent = live;
+      if (state.page !== "create") render();
+    }
+    function nav(page) {
+      state.page = page;
+      state.open = null;
+      document.querySelectorAll("nav button").forEach(btn => btn.classList.toggle("active", btn.dataset.page === page));
+      render();
+    }
+    document.querySelectorAll("nav button").forEach(btn => btn.addEventListener("click", () => nav(btn.dataset.page)));
+
+    function render() {
+      const main = $("#main");
+      if (state.page === "create") main.innerHTML = createPage();
+      else if (state.page === "library") main.innerHTML = libraryPage();
+      else main.innerHTML = jobsPage();
+      bind();
+    }
+    function createPage() {
+      const p = state.probe;
+      return `
+        <p class="fig">Fig. 01 · Create</p>
+        <h1>Long video in.<br/>Hook-first shorts.</h1>
+        <p class="lede">YouTube, X, Twitch, a past livestream, or a file on this machine. Live captures a slice, then Clip cuts. Nothing is posted.</p>
+        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
+        <label>Source</label>
+        <input id="src" value="${esc(state.src || "")}" placeholder="https://youtube.com/watch?v=…  ·  x.com/i/broadcasts/…  ·  /path/to/file.mp4" />
+        <p class="hint" id="probe-line">${p ? probeLine(p) : "Paste a link, then Probe — live streams get a timed capture."}</p>
+        <div class="grid2">
+          <div>
+            <label>Layout</label>
+            <select id="layout"><option value="fit">Fit (classic)</option><option value="fill">Fill (punch-in)</option></select>
+          </div>
+          <div>
+            <label>Clips</label>
+            <select id="max_clips"><option>3</option><option>5</option><option>8</option></select>
+          </div>
+          <div>
+            <label>Live slice</label>
+            <select id="live_seconds">
+              <option value="600">10 min</option>
+              <option value="1200" selected>20 min</option>
+              <option value="1800">30 min</option>
+              <option value="3600">60 min</option>
+            </select>
+          </div>
+          <div>
+            <label>Captions</label>
+            <select id="style"><option value="pop">Pop</option><option value="impact">Impact</option><option value="clean">Clean</option></select>
+          </div>
+        </div>
+        <label><input type="checkbox" id="live_from_start" style="width:auto" /> Live from start (YouTube)</label>
+        <div class="row" style="margin-top:1rem">
+          <button class="btn" id="probe-btn">Probe</button>
+          <button class="btn btn-signal" id="run-btn">Queue job</button>
+        </div>
+      `;
+    }
+    function probeLine(p) {
+      if (!p.ok) return `<span class="err">${esc(p.error || "probe failed")}</span>`;
+      const live = p.is_live ? ` <span class="live">live ${esc(p.live_status || "")}</span>` : (p.duration ? " · " + fmt(p.duration) : "");
+      return `<span class="ok">${esc(p.title)}</span>${live} · ${esc(p.extractor || "")}`;
+    }
+    function libraryPage() {
+      if (state.open) return runDetail(state.open);
+      const runs = state.library;
+      if (!runs.length) return `<p class="fig">Library</p><h1>Every finished run.</h1><div class="empty">No clips yet. Create a job from a long video or a livestream.</div>`;
+      return `<p class="fig">Library</p><h1>${runs.length} run${runs.length===1?"":"s"}.</h1>
+        <div class="cards">${runs.map(runCard).join("")}</div>`;
+    }
+    function runCard(j) {
+      const thumb = (j.clips || []).find(c => c.thumb);
+      const img = thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="" />` : `<div class="ph"></div>`;
+      return `<article class="card" data-open="${j.id}">${img}<div class="meta"><h3>${esc(j.title || j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live ? " · live" : ""}</p></div></article>`;
+    }
+    function runDetail(j) {
+      const clips = (j.clips || []).map(c => `
+        <article class="clip">
+          <video class="player" controls preload="metadata" src="/media/${j.id}/${c.file}"></video>
+          <div class="meta"><h3>${esc(c.title || c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · score ${Number(c.score||0).toFixed(2)}</p></div>
+        </article>`).join("");
+      return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p>
+        <h1>${esc(j.title)}</h1>
+        <p class="lede">${esc(j.src)}</p>
+        <div class="clips">${clips || "<div class='empty'>No files.</div>"}</div>`;
+    }
+    function jobsPage() {
+      const jobs = state.jobs;
+      if (!jobs.length) return `<p class="fig">Jobs</p><h1>Queue.</h1><div class="empty">Nothing running. Create a clip job.</div>`;
+      return `<p class="fig">Jobs</p><h1>Queue and history.</h1>${jobs.map(jobRow).join("")}`;
+    }
+    function jobRow(j) {
+      const pct = Math.round((j.progress || 0) * 100);
+      return `<article class="job">
+        <div class="row" style="justify-content:space-between">
+          <strong>${esc(j.title || j.id)}</strong>
+          <span class="hint" style="margin:0">${esc(j.status)} · ${esc(j.stage || "")}</span>
+        </div>
+        <p class="hint" style="margin:.4rem 0 0">${esc(j.message || j.error || j.src)}</p>
+        <div class="bar"><i style="width:${pct}%"></i></div>
+      </article>`;
+    }
+    function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function bind() {
+      const probeBtn = $("#probe-btn");
+      const runBtn = $("#run-btn");
+      if (probeBtn) probeBtn.onclick = async () => {
+        state.err = "";
+        state.src = $("#src").value.trim();
+        try {
+          state.probe = await api("/api/probe?src=" + encodeURIComponent(state.src));
+        } catch (e) { state.probe = { ok: false, error: e.message }; }
+        render();
+      };
+      if (runBtn) runBtn.onclick = async () => {
+        state.err = "";
+        state.src = $("#src").value.trim();
+        try {
+          const body = {
+            src: state.src,
+            layout: $("#layout").value,
+            max_clips: Number($("#max_clips").value),
+            live_seconds: Number($("#live_seconds").value),
+            live_from_start: $("#live_from_start").checked,
+            style: $("#style").value,
+            plan: "heuristic",
+            whisper: "tiny",
+            pacing: "tight",
+          };
+          await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          nav("jobs");
+          await refresh();
+        } catch (e) { state.err = e.message; render(); }
+      };
+      document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => {
+        state.open = state.library.find(j => j.id === el.dataset.open);
+        render();
+      });
+      const back = $("#back-lib");
+      if (back) back.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
+    }
+    render();
+    refresh();
+    setInterval(refresh, 2500);
+  </script>
+</body>
+</html>
