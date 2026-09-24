@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+demo/
+*.mp4
+site/proof-*.png
+.cache/

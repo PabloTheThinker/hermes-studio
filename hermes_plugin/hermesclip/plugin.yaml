@@ -1,0 +1,12 @@
+name: hermesclip
+version: "0.2.0"
+description: >
+  HermesClip under Hermes Studio. Linux 9:16 clipper for any Hermes Agent.
+  Local Whisper + FFmpeg. Does not post.
+author: "Pablo Navarro"
+kind: standalone
+provides_tools:
+  - hermesclip_run
+  - hermesclip_transcribe
+  - hermesclip_plan
+  - hermesclip_list

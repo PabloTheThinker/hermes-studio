@@ -1,0 +1,12 @@
+[project]
+name = "hermesclip"
+version = "0.1.0"
+description = "HermesClip — Linux 9:16 clipper for Hermes Agent"
+requires-python = ">=3.11"
+dependencies = ["faster-whisper>=1.0.0"]
+
+[project.scripts]
+hermesclip = "hermesclip.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hermesclip*"]
