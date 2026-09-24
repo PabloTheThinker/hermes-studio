@@ -15,8 +15,15 @@
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--ink); color: var(--fg); font-family: Geist, system-ui, sans-serif; }
-    #app { display: grid; grid-template-columns: 200px 1fr; min-height: 100%; }
-    aside { border-right: 1px solid var(--hair); padding: 1.1rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
+    #app { display: grid; grid-template-columns: 200px 1fr; grid-template-rows: 56px 1fr; min-height: 100%; }
+    .top {
+      grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem;
+      padding: 0 1.1rem; border-bottom: 1px solid var(--hair); height: 56px;
+    }
+    .top .brand { padding: 0; }
+    .top-search { flex: 1; max-width: 420px; margin: 0; }
+    .top-search input { margin: 0; }
+    aside { border-right: 1px solid var(--hair); padding: 1rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
     .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; }
     .mark { width: 12px; height: 22px; border: 1px solid var(--signal); background: linear-gradient(180deg, var(--signal), #0a1f6b); }
     .brand-name { font-family: "Instrument Serif", serif; font-size: 1.05rem; }
@@ -38,7 +45,12 @@
     .ok { color: var(--ok); }
     .err { color: var(--danger); white-space: pre-wrap; }
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
-    .card { border: 1px solid var(--hair); background: var(--surface); cursor: pointer; }
+    .chip {
+      position: absolute; top: .5rem; right: .5rem;
+      font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .08em;
+      background: #0a0b0e; color: var(--ice); border: 1px solid var(--hair); padding: 2px 6px;
+    }
+    .card { position: relative; border: 1px solid var(--hair); background: var(--surface); cursor: pointer; }
     .card img, .card .ph { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; display: block; }
     .card .meta, .clip .meta { padding: .75rem .85rem 1rem; }
     .card h3, .clip h3 { margin: 0 0 .25rem; font-size: 14px; font-weight: 500; }
@@ -68,8 +80,13 @@
 </head>
 <body>
   <div id="app">
-    <aside>
+    <header class="top">
       <div class="brand"><span class="mark"></span><div><div class="brand-name">Hermes Studio</div><div class="brand-sub">HermesClip</div></div></div>
+      <div class="top-search"><input id="q" placeholder="Search library" /></div>
+      <button class="btn btn-signal" id="new-clip">New clip</button>
+      <span class="hint" id="top-live"></span>
+    </header>
+    <aside>
       <nav>
         <button data-page="create" class="active">Create</button>
         <button data-page="library">Library</button>
@@ -97,6 +114,7 @@
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
       style: "pop", captions: true, pacing: "tight",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
+      prompt: "", q: "",
       jobs: [], library: [], open: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
@@ -117,7 +135,14 @@
       const b = $("#job-badge");
       b.hidden = live === 0;
       b.textContent = live;
-      if (state.page !== "create") render();
+      const tl = $("#top-live");
+      if (tl) tl.textContent = live ? live + " running" : "";
+      if (state.page === "create") return;
+      if (state.page === "library" && state.open) return;
+      const sig = JSON.stringify(state.jobs.map(j => [j.id, j.status, j.progress, j.message]));
+      if (sig === state.sig && state.page === "jobs") return;
+      state.sig = sig;
+      render();
     }
     function nav(page) {
       state.page = page; state.open = null;
@@ -158,6 +183,8 @@
         <div class="row" style="margin:1rem 0"><button class="btn" id="probe-btn">Probe</button></div>
         <label><input type="checkbox" id="trim" ${state.trim?"checked":""} style="width:auto"> Clip only part of it</label>
         ${state.trim ? `<div class="row"><input id="start" placeholder="start 90 or 1:30" value="${esc(state.start)}" style="max-width:180px"><input id="end" placeholder="end" value="${esc(state.end)}" style="max-width:180px"></div>` : ""}
+        <label>Hunt (optional)</label>
+        <input id="prompt" value="${esc(state.prompt)}" placeholder="ClipAnything-lite: e.g. money, mistake, wait what" />
         <label>Live slice</label>
         <select id="live_seconds"><option value="600">10 min</option><option value="1200" ${state.live_seconds==1200?"selected":""}>20 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select>
         <label><input type="checkbox" id="live_from_start" ${state.live_from_start?"checked":""} style="width:auto"> YouTube live from start</label>`;
@@ -168,6 +195,7 @@
         <label>Aspect</label>
         <div class="tiles">
           <button class="tile ${state.aspect==="9:16"?"on":""}" data-k="aspect" data-v="9:16">Vertical<small>Shorts, Reels, TikTok · 9:16</small></button>
+          <button class="tile ${state.aspect==="1:1"?"on":""}" data-k="aspect" data-v="1:1">Square<small>Feed · 1:1</small></button>
           <button class="tile ${state.aspect==="16:9"?"on":""}" data-k="aspect" data-v="16:9">Horizontal<small>YouTube, X · 16:9</small></button>
         </div>
         <label>Framing</label>
@@ -197,19 +225,28 @@
         <p class="hint">${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.max_clips} clips · ${state.captions?state.style:"no captions"}</p>
         <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
     }
+    function viral(j) {
+      const clips = j.clips || [];
+      const scores = clips.map(c => (c.virality != null ? c.virality : Math.round((c.score || 0) * 100)));
+      return scores.length ? Math.max(...scores) : 0;
+    }
     function libraryPage() {
       if (state.open) return runDetail(state.open);
-      const runs = state.library;
+      const q = (state.q || "").trim().toLowerCase();
+      let runs = state.library.slice();
+      if (q) runs = runs.filter(j => (j.title || "").toLowerCase().includes(q) || (j.src || "").toLowerCase().includes(q));
+      runs.sort((a, b) => viral(b) - viral(a));
       if (!runs.length) return `<p class="fig">Library</p><h1>Every finished run.</h1><div class="empty">Generate clips. They land here, newest first.</div>`;
       return `<p class="fig">Library</p><h1>${runs.length} run${runs.length===1?"":"s"}.</h1><div class="cards">${runs.map(j => {
         const thumb = (j.clips||[]).find(c => c.thumb);
-        return `<article class="card" data-open="${j.id}">${thumb?`<img src="/media/${j.id}/${thumb.thumb}" alt="">`:`<div class="ph"></div>`}<div class="meta"><h3>${esc(j.title||j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live?" · live":""}</p></div></article>`;
+        const v = viral(j);
+        return `<article class="card" data-open="${j.id}">${v?`<span class="chip">${v}</span>`:""}${thumb?`<img src="/media/${j.id}/${thumb.thumb}" alt="">`:`<div class="ph"></div>`}<div class="meta"><h3>${esc(j.title||j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live?" · live":""}</p></div></article>`;
       }).join("")}</div>`;
     }
     function runDetail(j) {
       return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p><h1>${esc(j.title)}</h1>
         <p class="lede">${esc(j.src)}</p>
-        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls preload="metadata" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p></div></article>`).join("")}</div>`;
+        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p></div></article>`).join("")}</div>`;
     }
     function jobsPage() {
       const jobs = state.jobs;
@@ -234,6 +271,8 @@
       const mc = $("#max_clips"); if (mc) state.max_clips = Number(mc.value);
       const pc = $("#pacing"); if (pc) state.pacing = pc.value;
       const cap = $("#captions"); if (cap) state.captions = cap.checked;
+      const pr = $("#prompt"); if (pr) state.prompt = pr.value;
+      const qq = $("#q"); if (qq) state.q = qq.value;
     }
     function bind() {
       document.querySelectorAll("[data-step]").forEach(el => el.onclick = () => { grabForm(); state.step = el.dataset.step; render(); });
@@ -258,17 +297,25 @@
             live_seconds: state.live_seconds, live_from_start: state.live_from_start,
             start_time: state.trim && state.start ? state.start : null,
             end_time: state.trim && state.end ? state.end : null,
+            prompt: state.prompt,
             plan: "heuristic", whisper: "tiny",
           })});
           state.step = "video"; nav("jobs"); await refresh();
         } catch (e) { state.err = e.message; render(); }
       };
       document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => { state.open = state.library.find(j => j.id === el.dataset.open); render(); });
+      document.querySelectorAll("video").forEach(v => {
+        v.addEventListener("play", () => {
+          document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); });
+        });
+      });
       const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
       document.querySelectorAll("[data-retry]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.retry+"/retry", { method: "POST" }); refresh(); });
       document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.cancel+"/cancel", { method: "POST" }); refresh(); });
       const trim = $("#trim"); if (trim) trim.onchange = () => { grabForm(); render(); };
     }
+    document.getElementById("new-clip").onclick = () => { state.step = "video"; nav("create"); };
+    document.getElementById("q").oninput = (e) => { state.q = e.target.value; if (state.page === "library" && !state.open) render(); };
     render(); refresh(); setInterval(refresh, 2500);
   </script>
 </body>

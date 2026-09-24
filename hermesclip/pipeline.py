@@ -67,6 +67,7 @@ class Job:
     max_sec: float = 45.0
     start_time: float | None = None
     end_time: float | None = None
+    prompt: str = ""
     clips: list[dict] = field(default_factory=list)
     work: str = ""
     dir: str = ""
@@ -186,6 +187,7 @@ def new_job(
     max_sec: float = 45.0,
     start_time: float | None = None,
     end_time: float | None = None,
+    prompt: str = "",
 ) -> Job:
     info: SourceInfo | None = None
     title = src
@@ -227,6 +229,7 @@ def new_job(
         max_sec=float(max_sec),
         start_time=start_time,
         end_time=end_time,
+        prompt=prompt or "",
         dir=str(dest),
         work=str(dest / "work"),
     )
@@ -303,9 +306,21 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             plans = plan_grok(tr, job.max_clips, min_sec, max_sec)
         if not plans:
             plans = plan_heuristic(tr, job.max_clips, min_sec, max_sec)
+        if job.prompt:
+            keys = [k for k in job.prompt.lower().replace(",", " ").split() if len(k) > 2]
+            for item in plans:
+                blob = (item.title or "").lower()
+                hits = sum(1 for k in keys if k in blob)
+                item.score = min(1.0, item.score + 0.1 * hits)
+            plans.sort(key=lambda x: x.score, reverse=True)
         save_plan(plans, work / "plan.json")
 
-        width, height = (1080, 1920) if job.aspect != "16:9" else (1920, 1080)
+        if job.aspect == "16:9":
+            width, height = 1920, 1080
+        elif job.aspect == "1:1":
+            width, height = 1080, 1080
+        else:
+            width, height = 1080, 1920
         layout = job.layout if job.layout in ("fit", "fill") else "fit"
         style = job.style if job.captions else "clean"
         written: list[dict] = []
@@ -334,6 +349,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                     "start": plan.start,
                     "end": plan.end,
                     "score": plan.score,
+                    "virality": int(round(plan.score * 100)),
                     "thumb": thumb,
                 }
             )

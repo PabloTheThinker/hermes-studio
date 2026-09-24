@@ -109,6 +109,21 @@ class StudioHandler(BaseHTTPRequestHandler):
         return
 
     def do_HEAD(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        path = unquote(parsed.path)
+        if path.startswith("/media/"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3:
+                media = _safe_media(parts[1], parts[2])
+                if media:
+                    ctype = mimetypes.guess_type(str(media))[0] or "application/octet-stream"
+                    size = media.stat().st_size
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Accept-Ranges", "bytes")
+                    self.send_header("Content-Length", str(size))
+                    self.end_headers()
+                    return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", "0")
@@ -204,6 +219,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 max_sec=float(body.get("max_sec") or 45),
                 start_time=_seconds(start_time),
                 end_time=_seconds(end_time),
+                prompt=str(body.get("prompt") or ""),
             )
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
@@ -236,12 +252,49 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def _file(self, path: Path, content_type: str) -> None:
+        size = path.stat().st_size
+        if content_type.startswith("video/"):
+            start, end = 0, size - 1
+            rng = self.headers.get("Range")
+            if rng and rng.startswith("bytes="):
+                spec = rng.split("=", 1)[1]
+                a, _, b = spec.partition("-")
+                try:
+                    start = int(a) if a else 0
+                    end = int(b) if b else size - 1
+                except ValueError:
+                    start, end = 0, size - 1
+                end = min(end, size - 1)
+                if start > end or start >= size:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.end_headers()
+                    return
+                self.send_response(206)
+            else:
+                self.send_response(200)
+            length = end - start + 1
+            self.send_header("Content-Type", content_type)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            if rng:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.end_headers()
+            with path.open("rb") as fh:
+                fh.seek(start)
+                left = length
+                while left > 0:
+                    chunk = fh.read(min(256 * 1024, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            return
         data = path.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
-        if content_type.startswith("video/"):
-            self.send_header("Accept-Ranges", "none")
         self.end_headers()
         self.wfile.write(data)
 
