@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes Studio — HermesClip desk (loopback :3870)
+After=default.target network-online.target
+
+[Service]
+Type=simple
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=%h/projects/hermesclip
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/projects/hermesclip/.venv/bin/python -m hermesclip studio --host 127.0.0.1 --port 3870
+
+[Install]
+WantedBy=default.target
