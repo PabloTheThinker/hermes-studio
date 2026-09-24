@@ -24,7 +24,7 @@ Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline
 3. Hunt: pass `prompt`. Captions-only: `hermesclip_captions` or `mode=captions`.
 4. Fill layout follows a speaker if opencv 4 is installed (`hermesclip[reframe]`).
 5. `hermesclip_list` — library. `hermesclip_copy` — titles/hashtags (does not post).
-6. `hermesclip_edit` — `op=trim` (`start`,`end`), `op=split` (`at`), `op=duplicate`, `op=drop` (trash, not delete).
+6. `hermesclip_edit` — `op=trim` (`start`,`end`), `op=split` (`at`), `op=duplicate`, `op=drop` (trash, not delete). Desk: Up/Down reorders clips in a run (`/api/edit` `op=reorder`).
 7. Do **not** call `hermesclip_studio`. Desk is `hermes-studio.service`.
 
 New plugin tools appear on the **next** session. Never bounce the gateway for this.

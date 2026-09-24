@@ -309,6 +309,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                     job.clips = [c for c in (job.clips or []) if c.get("file") != name]
                     job.save()
                     return _json(self, 200, {"ok": True, "op": "drop", "file": name})
+                if op == "reorder":
+                    clips = list(job.clips or [])
+                    names = [c.get("file") for c in clips]
+                    if name not in names:
+                        return _json(self, 400, {"ok": False, "error": "clip not in run"})
+                    i = names.index(name)
+                    delta = -1 if str(body.get("dir") or "up") == "up" else 1
+                    j = i + delta
+                    if j < 0 or j >= len(clips):
+                        return _json(self, 200, {"ok": True, "op": "reorder", "files": names})
+                    clips[i], clips[j] = clips[j], clips[i]
+                    job.clips = clips
+                    job.save()
+                    return _json(self, 200, {"ok": True, "op": "reorder", "files": [c.get("file") for c in clips]})
                 start = _seconds(body.get("start")) or 0.0
                 end = _seconds(body.get("end")) or 0.0
                 dest = media.with_name(media.stem + "-trim" + media.suffix)
