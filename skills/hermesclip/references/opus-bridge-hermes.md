@@ -14,7 +14,9 @@ Local remakes of Opus product surface:
 - Header: search, New clip, running count, Local · no post
 - Best recommendation after analysis
 - Social copy pack (no post)
+- Caption keyword highlight (user + hunt + title)
+- 1:1 actually lands (was coerced to 9:16)
 
 Not remade (on purpose): auto-post, brand templates, AI B-roll, AI voiceover, social scheduler, per-frame cloud reframe tracker.
 
-Editing now: trim, captions, hook overlay, speaker-fill. Timeline editor stays parked until Pablo asks.
+Editing now: trim, split, duplicate, drop, restore, reorder, captions, hook overlay, speaker-fill, keyword highlight. Timeline editor stays parked until Pablo asks.

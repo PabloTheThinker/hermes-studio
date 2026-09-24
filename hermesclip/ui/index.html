@@ -125,7 +125,7 @@
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
       style: "pop", captions: true, pacing: "tight",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
-      prompt: "", q: "", hook: true, mode: "clip", path: "wizard", why: [],
+      prompt: "", q: "", hook: true, mode: "clip", path: "wizard", why: [], keywords: "",
       jobs: [], library: [], open: null, copy: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
@@ -251,13 +251,15 @@
       return `<p class="fig">04 · Captions</p><h1>Word-by-word captions</h1>
         <label><input type="checkbox" id="captions" ${state.captions?"checked":""} style="width:auto"> Burn captions into each clip</label>
         <label><input type="checkbox" id="hook" ${state.hook?"checked":""} style="width:auto"> Hook title overlay (first 3s)</label>
-        <div class="tiles">${styles.map(s => `<button class="tile ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>`;
+        <div class="tiles">${styles.map(s => `<button class="tile ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>
+        <label>Highlight words</label>
+        <input id="keywords" placeholder="money, mistake, never" value="${esc(state.keywords||"")}" />`;
     }
     function reviewStep() {
       const d = DUR.find(x => x.id === state.dur);
       return `<p class="fig">05 · Review</p><h1>Generate</h1>
         <p class="lede">${esc(state.src || "(no source)")}</p>
-        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}${state.path==="best"?" · Hermes pick":""}</p>
+        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}${state.keywords?" · highlight":""}${state.path==="best"?" · Hermes pick":""}</p>
         ${(state.why||[]).length ? `<ul class="lede">${state.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
         <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
     }
@@ -313,6 +315,7 @@
       const cap = $("#captions"); if (cap) state.captions = cap.checked;
       const hk = $("#hook"); if (hk) state.hook = hk.checked;
       const pr = $("#prompt"); if (pr) state.prompt = pr.value;
+      const kw = $("#keywords"); if (kw) state.keywords = kw.value;
       const qq = $("#q"); if (qq) state.q = qq.value;
     }
     function bind() {
@@ -348,6 +351,7 @@
           state.mode = r.mode || "clip";
           state.live_seconds = r.live_seconds || 1200;
           if (r.prompt) state.prompt = r.prompt;
+          if (r.keywords) state.keywords = r.keywords;
           state.why = r.why || [];
           state.step = "review";
         } catch (e) { state.err = e.message; }
@@ -365,6 +369,7 @@
             start_time: state.trim && state.start ? state.start : null,
             end_time: state.trim && state.end ? state.end : null,
             prompt: state.prompt,
+            keywords: state.keywords,
             hook: state.hook,
             mode: state.mode,
             plan: "heuristic", whisper: "tiny",

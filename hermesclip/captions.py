@@ -182,3 +182,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def _esc(s: str) -> str:
     return s.replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}")
+
+
+def parse_keywords(*parts: str) -> list[str]:
+    """Opus-style highlight words. Comma or space. Does not post."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if not part:
+            continue
+        for tok in str(part).replace(",", " ").split():
+            t = tok.strip(".,!?#\"'").lower()
+            if len(t) < 3 or t in seen:
+                continue
+            seen.add(t)
+            out.append(t)
+            if len(out) >= 8:
+                return out
+    return out

@@ -110,6 +110,7 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--plan", choices=["auto", "heuristic", "grok"], default="auto")
     run.add_argument("--pacing", choices=["tight", "natural"], default="tight")
     run.add_argument("--prompt", default="", help="ClipAnything-lite hunt words")
+    run.add_argument("--keywords", default="", help="Words to highlight in captions (Opus-style)")
     run.add_argument("--recommend", action="store_true", help="Hermes picks settings after analyzing the source")
     run.add_argument("--mode", choices=["clip", "captions"], default="clip")
     run.add_argument("--no-hook", action="store_true")
@@ -151,6 +152,7 @@ def _run(args: argparse.Namespace) -> int:
         hook=not getattr(args, "no_hook", False),
         mode=getattr(args, "mode", "clip"),
         aspect=getattr(args, "aspect", "9:16"),
+        keywords=getattr(args, "keywords", "") or "",
         on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
     if getattr(args, "recommend", False):
@@ -172,6 +174,7 @@ def _run(args: argparse.Namespace) -> int:
             mode=rec.mode,
             aspect=rec.aspect,
             captions=rec.captions,
+            keywords=rec.keywords or kwargs.get("keywords") or "",
         )
     result = run_once(args.src, out_dir, **kwargs)
     print(json.dumps(result, indent=2), flush=True)

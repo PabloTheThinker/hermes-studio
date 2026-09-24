@@ -21,7 +21,7 @@ Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline
 
 1. `hermesclip_probe` — title / live / duration.
 2. Prefer `hermesclip_recommend` then `hermesclip_run` with those fields, or `hermesclip_run` with `--recommend`.
-3. Hunt: pass `prompt`. Captions-only: `hermesclip_captions` or `mode=captions`.
+3. Hunt: pass `prompt`. Captions-only: `hermesclip_captions` or `mode=captions`. Highlight: `keywords` (comma/space) plus hunt words get extra ASS color.
 4. Fill layout follows a speaker if opencv 4 is installed (`hermesclip[reframe]`).
 5. `hermesclip_list` — library. `hermesclip_copy` — titles/hashtags (does not post).
 6. `hermesclip_edit` — `op=trim` (`start`,`end`), `op=split` (`at`), `op=duplicate`, `op=drop` (trash), `op=restore` (from `.trash`). Desk: Up/Down reorders; Dropped row restores.

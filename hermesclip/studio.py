@@ -290,6 +290,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 prompt=str((rec.prompt if rec and rec.prompt else body.get("prompt")) or ""),
                 hook=(rec.hook if rec else body.get("hook", True)) is not False,
                 mode=str((rec.mode if rec else body.get("mode")) or "clip"),
+                keywords=str((getattr(rec, "keywords", "") if rec else body.get("keywords")) or ""),
             )
             if rec:
                 job.message = "Hermes pick · " + "; ".join(rec.why[:2])

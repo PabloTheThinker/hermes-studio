@@ -17,6 +17,7 @@ TOOLS = [
                 "out": {"type": "string"},
                 "max_clips": {"type": "integer", "default": 3},
                 "prompt": {"type": "string"},
+                "keywords": {"type": "string"},
                 "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"]},
                 "layout": {"type": "string", "enum": ["fit", "fill"]},
             },
@@ -125,6 +126,8 @@ def _call(name: str, args: dict) -> str:
             argv += ["--max-clips", str(int(args["max_clips"]))]
         if args.get("prompt"):
             argv += ["--prompt", str(args["prompt"])]
+        if args.get("keywords"):
+            argv += ["--keywords", str(args["keywords"])]
         if args.get("aspect"):
             argv += ["--aspect", str(args["aspect"])]
         if args.get("layout"):

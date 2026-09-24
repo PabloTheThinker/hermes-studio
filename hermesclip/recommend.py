@@ -24,6 +24,7 @@ class Recommendation:
     mode: str = "clip"
     live_seconds: int = LIVE_DEFAULT_SEC
     prompt: str = ""
+    keywords: str = ""
     plan: str = "heuristic"
     why: list[str] = field(default_factory=list)
 
@@ -97,6 +98,12 @@ def recommend_heuristic(info: SourceInfo) -> Recommendation:
         rec.style = "clean"
         why.append("Tutorial/slides: Classic fit, clean captions.")
 
+    from hermesclip.captions import parse_keywords
+
+    rec.keywords = " ".join(parse_keywords(info.title or "")[:5])
+    if rec.keywords:
+        why.append("Highlight title words in captions.")
+
     rec.why = why
     return rec
 
@@ -117,7 +124,7 @@ def recommend_grok(info: SourceInfo, base: Recommendation) -> Recommendation | N
                     "Return JSON only with keys: aspect (9:16|1:1|16:9), layout (fit|fill), "
                     "dur (xshort|short|medium|long|midform), max_clips (1-8), pacing (tight|natural), "
                     "style (pop|impact|clean|glow|neon|boxed), mode (clip|captions), "
-                    "hook (bool), prompt (short hunt words or empty), why (array of short reasons). "
+                    "hook (bool), prompt (short hunt words or empty), keywords (space-separated highlight words), why (array of short reasons). "
                     "Prefer 9:16 shorts. Never post. No social accounts."
                 ),
             },
@@ -179,6 +186,8 @@ def recommend_grok(info: SourceInfo, base: Recommendation) -> Recommendation | N
         rec.hook = data["hook"]
     if isinstance(data.get("prompt"), str):
         rec.prompt = data["prompt"][:80]
+    if isinstance(data.get("keywords"), str):
+        rec.keywords = data["keywords"][:80]
     why = data.get("why")
     rec.why = [str(x) for x in why][:6] if isinstance(why, list) else ["Hermes pick after analysis."]
     rec.plan = "heuristic"

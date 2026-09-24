@@ -77,6 +77,7 @@ def hermesclip_run(
     hook: bool = True,
     min_sec: float = 12,
     max_sec: float = 45,
+    keywords: str = "",
 ) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -112,6 +113,8 @@ def hermesclip_run(
     ]
     if prompt:
         argv += ["--prompt", str(prompt)]
+    if keywords:
+        argv += ["--keywords", str(keywords)]
     if not hook:
         argv.append("--no-hook")
     if live_from_start:
@@ -357,11 +360,14 @@ def register(ctx) -> None:
                     "style": {"type": "string", "enum": ["pop", "impact", "clean"], "default": "pop"},
                     "plan": {"type": "string", "enum": ["heuristic", "grok", "auto"], "default": "heuristic"},
                     "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
+                    "prompt": {"type": "string"},
+                    "keywords": {"type": "string", "description": "Words to highlight in captions"},
+                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"]},
                 },
                 "required": ["src"],
             },
         },
-        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
+        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout", "prompt", "keywords", "aspect") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
         description="HermesClip: cut a local video or URL into captioned 9:16 shorts. Does not post.",
     )
     ctx.register_tool(

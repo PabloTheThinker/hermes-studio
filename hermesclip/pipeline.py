@@ -70,6 +70,7 @@ class Job:
     prompt: str = ""
     hook: bool = True
     mode: str = "clip"
+    keywords: str = ""
     clips: list[dict] = field(default_factory=list)
     work: str = ""
     dir: str = ""
@@ -192,6 +193,7 @@ def new_job(
     prompt: str = "",
     hook: bool = True,
     mode: str = "clip",
+    keywords: str = "",
 ) -> Job:
     info: SourceInfo | None = None
     title = src
@@ -227,7 +229,7 @@ def new_job(
         max_clips=max_clips,
         live_seconds=live_seconds,
         live_from_start=live_from_start,
-        aspect=aspect if aspect in ("9:16", "16:9") else "9:16",
+        aspect=aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
         captions=bool(captions),
         min_sec=float(min_sec),
         max_sec=float(max_sec),
@@ -236,6 +238,7 @@ def new_job(
         prompt=prompt or "",
         hook=bool(hook),
         mode=mode if mode in ("clip", "captions") else "clip",
+        keywords=keywords or "",
         dir=str(dest),
         work=str(dest / "work"),
     )
@@ -313,7 +316,10 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         if job.mode == "captions":
             bump("render", 0.6, "Captions only")
             dur = probe_duration(video)
-            plan = ClipPlan(float(job.start_time or 0.0), float(job.end_time or dur), job.title[:60], [], 0.5)
+            from hermesclip.captions import parse_keywords
+
+            keys = parse_keywords(job.keywords, job.prompt)
+            plan = ClipPlan(float(job.start_time or 0.0), float(job.end_time or dur), job.title[:60], keys, 0.5)
             dest = out_dir / "captions.mp4"
             render_clip(
                 video, plan, tr, dest, work,
@@ -345,6 +351,16 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                 hits = sum(1 for k in keys if k in blob)
                 item.score = min(1.0, item.score + 0.1 * hits)
             plans.sort(key=lambda x: x.score, reverse=True)
+        from hermesclip.captions import parse_keywords
+
+        extra = parse_keywords(job.keywords, job.prompt)
+        if extra:
+            for item in plans:
+                have = {e.lower() for e in item.emphasis}
+                for w in extra:
+                    if w not in have:
+                        item.emphasis.append(w)
+                        have.add(w)
         save_plan(plans, work / "plan.json")
 
         if job.aspect == "16:9":
@@ -428,6 +444,7 @@ def run_once(
     mode: str = "clip",
     aspect: str = "9:16",
     captions: bool = True,
+    keywords: str = "",
 ) -> dict:
     """CLI-shaped run. Writes clips into out_dir (not necessarily the library)."""
     job = new_job(
@@ -447,6 +464,7 @@ def run_once(
         prompt=prompt,
         hook=hook,
         mode=mode,
+        keywords=keywords,
     )
     if work:
         job.work = str(work)
