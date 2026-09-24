@@ -11,28 +11,31 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 
 ## When to Use
 
-- Long video, YouTube / X / Twitch URL, or a livestream → captioned shorts
-- Another Hermes agent needs to clip, caption, probe, list, or trim
+- Long video / YouTube / X / Twitch / livestream → captioned shorts
+- Another Hermes agent must clip, caption, recommend, copy, trim, or split
 - User is on the localhost desk (Create / Library / Jobs)
 
-Don't use for: auto-post, Opus cloud MCP, CapCut-class timeline editor (parked).
+Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline editor (parked).
 
-## Agent tools (native plugin — prefer these)
+## Procedure (agents)
 
-`hermesclip_probe` → `hermesclip_run` (or `_captions`) → `hermesclip_list` → `hermesclip_edit` if a trim is needed.
-
-- `hermesclip_run` — cut (`src`, optional `prompt` hunt, `aspect`, `layout`, `hook`, `mode`)
-- `hermesclip_captions` — burn captions on the full take
-- `hermesclip_transcribe` / `hermesclip_plan` — Whisper / score windows, no render
-- `hermesclip_list` / `hermesclip_probe`
-- `hermesclip_edit` — trim an existing file (`start`, `end`)
-- `hermesclip_studio` — do not call; desk is `hermes-studio.service`
+1. `hermesclip_probe` — title / live / duration.
+2. Prefer `hermesclip_recommend` then `hermesclip_run` with those fields, or `hermesclip_run` with `--recommend`.
+3. Hunt: pass `prompt`. Captions-only: `hermesclip_captions` or `mode=captions`.
+4. Fill layout follows a speaker if opencv 4 is installed (`hermesclip[reframe]`).
+5. `hermesclip_list` — library. `hermesclip_copy` — titles/hashtags (does not post).
+6. `hermesclip_edit` — `op=trim` (`start`,`end`) or `op=split` (`at`).
+7. Do **not** call `hermesclip_studio`. Desk is `hermes-studio.service`.
 
 New plugin tools appear on the **next** session. Never bounce the gateway for this.
 
-## Local MCP (optional)
+## Desk
 
-Same jobs over stdio for MCP clients. Not `https://mcp.opus.pro/mcp` (that posts and spends credits).
+User unit `hermes-studio.service` — loopback `:3870`, Restart=on-failure.
+Serve HTTPS (never Funnel). If dead, `systemctl --user restart hermes-studio`.
+Create: **Best recommendation** skips the wizard after analysis. Library: Social copy, Split.
+
+## Local MCP (optional)
 
 ```yaml
 mcp_servers:
@@ -42,21 +45,10 @@ mcp_servers:
     timeout: 3600
 ```
 
-Run from a venv that has `hermesclip` installed. Filter out any future publish tools if someone adds them.
+Not `https://mcp.opus.pro/mcp`.
 
-## Desk
+## Pitfalls
 
-User unit `hermes-studio.service` — loopback `:3870`, Restart=on-failure.
-Serve HTTPS (never Funnel). If dead, `systemctl --user restart hermes-studio`. Never bounce hermes-gateway.
-
-## CLI
-
-```bash
-python -m hermesclip run VIDEO.mp4 --out ./clips --layout fit --plan heuristic
-python -m hermesclip captions VIDEO.mp4 --out ./clips
-python -m hermesclip edit clip.mp4 --start 2 --end 18
-```
-
-## Family
-
-Hermes Studio is the title. HermesClip ships now. Timeline editor later, same title.
+- Tight pacing already drops um/uh at render. Split/trim are post-cut only.
+- Haar fill is still; no per-frame tracker.
+- You seal every post. HermesClip never publishes.

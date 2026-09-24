@@ -272,6 +272,35 @@ class StudioHandler(BaseHTTPRequestHandler):
                 job.save()
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
+        if path == "/api/edit":
+            body = _read_json(self)
+            job = load_job(str(body.get("job") or ""))
+            name = str(body.get("file") or "")
+            if not job or not name:
+                return _json(self, 400, {"ok": False, "error": "job and file required"})
+            media = _safe_media(job.id, name)
+            if not media:
+                return _json(self, 404, {"ok": False, "error": "clip not found"})
+            op = str(body.get("op") or "trim")
+            try:
+                from hermesclip.edit import split_file, trim_file
+
+                if op == "split":
+                    a, b = split_file(media, float(body.get("at") or 0))
+                    extra = [
+                        {"file": a.name, "title": (Path(name).stem + " A"), "start": 0, "end": float(body.get("at") or 0), "score": 0, "virality": 0, "thumb": ""},
+                        {"file": b.name, "title": (Path(name).stem + " B"), "start": float(body.get("at") or 0), "end": 0, "score": 0, "virality": 0, "thumb": ""},
+                    ]
+                    job.clips = list(job.clips or []) + extra
+                    job.save()
+                    return _json(self, 200, {"ok": True, "op": "split", "files": [a.name, b.name]})
+                start = _seconds(body.get("start")) or 0.0
+                end = _seconds(body.get("end")) or 0.0
+                dest = media.with_name(media.stem + "-trim" + media.suffix)
+                path = trim_file(media, dest, start, end)
+                return _json(self, 200, {"ok": True, "op": "trim", "file": path.name})
+            except Exception as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
         if path.startswith("/api/jobs/") and path.endswith("/retry"):
             job_id = path.split("/")[3]
             job = load_job(job_id)

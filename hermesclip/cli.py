@@ -51,10 +51,12 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
     cap.add_argument("--no-hook", action="store_true")
 
-    edt = sub.add_parser("edit", help="trim an existing clip (local; does not post)")
+    edt = sub.add_parser("edit", help="trim or split an existing clip (local; does not post)")
     edt.add_argument("src")
-    edt.add_argument("--start", type=float, required=True)
-    edt.add_argument("--end", type=float, required=True)
+    edt.add_argument("--op", choices=["trim", "split"], default="trim")
+    edt.add_argument("--start", type=float, default=None)
+    edt.add_argument("--end", type=float, default=None)
+    edt.add_argument("--at", type=float, default=None, help="split point in seconds")
     edt.add_argument("--out", default="")
 
     cop = sub.add_parser("copy", help="titles / description / hashtags from a job or transcript (does not post)")
@@ -180,16 +182,28 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _edit_cmd(args: argparse.Namespace) -> int:
-    from hermesclip.edit import trim_file
+    from hermesclip.edit import split_file, trim_file
 
     src = Path(args.src).expanduser()
-    dest = Path(args.out).expanduser() if args.out else src.with_name(src.stem + "-trim" + src.suffix)
+    op = getattr(args, "op", "trim") or "trim"
     try:
+        if op == "split":
+            at = args.at
+            if at is None:
+                print(json.dumps({"ok": False, "error": "--at is required for split"}))
+                return 1
+            a, b = split_file(src, float(at))
+            print(json.dumps({"ok": True, "op": "split", "files": [str(a), str(b)]}))
+            return 0
+        if args.start is None or args.end is None:
+            print(json.dumps({"ok": False, "error": "--start and --end are required for trim"}))
+            return 1
+        dest = Path(args.out).expanduser() if args.out else src.with_name(src.stem + "-trim" + src.suffix)
         path = trim_file(src, dest, float(args.start), float(args.end))
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)[-1200:]}))
         return 1
-    print(json.dumps({"ok": True, "file": str(path)}))
+    print(json.dumps({"ok": True, "op": "trim", "file": str(path)}))
     return 0
 
 

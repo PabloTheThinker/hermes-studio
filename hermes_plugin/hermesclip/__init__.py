@@ -164,12 +164,23 @@ def hermesclip_captions(
     return json.dumps({"ok": True, "out": str(out_dir), "log": (result.get("stdout") or "")[-1500:]})
 
 
-def hermesclip_edit(src: str, start: float, end: float, out: str = "") -> str:
+def hermesclip_edit(
+    src: str,
+    start: float = 0,
+    end: float = 0,
+    out: str = "",
+    op: str = "trim",
+    at: float | None = None,
+) -> str:
     if not src:
         return json.dumps({"ok": False, "error": "src is required"})
-    argv = ["edit", str(Path(src).expanduser()), "--start", str(float(start)), "--end", str(float(end))]
-    if out:
-        argv += ["--out", str(Path(out).expanduser())]
+    argv = ["edit", str(Path(src).expanduser()), "--op", op if op in ("trim", "split") else "trim"]
+    if op == "split":
+        argv += ["--at", str(float(at if at is not None else 0))]
+    else:
+        argv += ["--start", str(float(start)), "--end", str(float(end))]
+        if out:
+            argv += ["--out", str(Path(out).expanduser())]
     result = _run_mod(argv, timeout=600)
     if not result.get("ok"):
         return json.dumps(result)
@@ -481,16 +492,18 @@ def register(ctx) -> None:
         toolset="hermesclip",
         schema={
             "name": "hermesclip_edit",
-            "description": "HermesClip: trim an existing clip file (start/end seconds). Local FFmpeg. Does not post.",
+            "description": "HermesClip: trim or split an existing clip. Local FFmpeg. Does not post.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "src": {"type": "string"},
+                    "op": {"type": "string", "enum": ["trim", "split"], "default": "trim"},
                     "start": {"type": "number"},
                     "end": {"type": "number"},
+                    "at": {"type": "number", "description": "Split point in seconds"},
                     "out": {"type": "string"},
                 },
-                "required": ["src", "start", "end"],
+                "required": ["src"],
             },
         },
         handler=lambda args, **kw: hermesclip_edit(
@@ -498,8 +511,10 @@ def register(ctx) -> None:
             start=float((args or {}).get("start") or 0),
             end=float((args or {}).get("end") or 0),
             out=(args or {}).get("out") or "",
+            op=(args or {}).get("op") or "trim",
+            at=(args or {}).get("at"),
         ),
-        description="HermesClip: trim an existing clip. Does not post.",
+        description="HermesClip: trim or split a clip. Does not post.",
     )
     ctx.register_tool(
         name="hermesclip_recommend",
