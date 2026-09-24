@@ -179,6 +179,35 @@ def hermesclip_edit(src: str, start: float, end: float, out: str = "") -> str:
         return json.dumps({"ok": True, "log": result.get("stdout", "")[-1500:]})
 
 
+def hermesclip_recommend(src: str) -> str:
+    if not src or not str(src).strip():
+        return json.dumps({"ok": False, "error": "src is required"})
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(_PROJECT)
+    try:
+        proc = subprocess.run(
+            [
+                _python(),
+                "-c",
+                "import json,sys; from hermesclip.recommend import recommend_for; i,r=recommend_for(sys.argv[1]); print(json.dumps({'ok':True,'title':i.title,'is_live':i.is_live,'duration':i.duration,'recommendation':r.as_job()}))",
+                str(src).strip(),
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=40,
+            cwd=str(_PROJECT),
+        )
+    except Exception as exc:
+        return json.dumps({"ok": False, "error": str(exc)})
+    if proc.returncode != 0:
+        return json.dumps({"ok": False, "error": (proc.stderr or proc.stdout or "")[-2000:]})
+    try:
+        return json.dumps(json.loads(proc.stdout.strip().splitlines()[-1]))
+    except Exception:
+        return json.dumps({"ok": True, "log": proc.stdout[-1500:]})
+
+
 def hermesclip_transcribe(src: str, work: str = "", whisper: str = "tiny") -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -456,4 +485,19 @@ def register(ctx) -> None:
             out=(args or {}).get("out") or "",
         ),
         description="HermesClip: trim an existing clip. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_recommend",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_recommend",
+            "description": "HermesClip: analyze a source and return the best local job settings. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {"src": {"type": "string"}},
+                "required": ["src"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_recommend(src=(args or {}).get("src") or ""),
+        description="HermesClip: analyze a source and pick settings. Does not post.",
     )

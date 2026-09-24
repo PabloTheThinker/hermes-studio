@@ -102,6 +102,7 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--plan", choices=["auto", "heuristic", "grok"], default="auto")
     run.add_argument("--pacing", choices=["tight", "natural"], default="tight")
     run.add_argument("--prompt", default="", help="ClipAnything-lite hunt words")
+    run.add_argument("--recommend", action="store_true", help="Hermes picks settings after analyzing the source")
     run.add_argument("--mode", choices=["clip", "captions"], default="clip")
     run.add_argument("--no-hook", action="store_true")
     run.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
@@ -125,9 +126,7 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
 def _run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out).expanduser().resolve()
     work = Path(args.work).expanduser().resolve() if args.work else None
-    result = run_once(
-        args.src,
-        out_dir,
+    kwargs = dict(
         max_clips=args.max_clips,
         whisper=args.whisper,
         pacing=args.pacing,
@@ -146,6 +145,27 @@ def _run(args: argparse.Namespace) -> int:
         aspect=getattr(args, "aspect", "9:16"),
         on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
+    if getattr(args, "recommend", False):
+        from hermesclip.recommend import recommend_for
+
+        _info, rec = recommend_for(args.src)
+        print(json.dumps({"recommend": rec.as_job()}, indent=2), flush=True)
+        kwargs.update(
+            max_clips=rec.max_clips,
+            pacing=rec.pacing,
+            style=rec.style,
+            plan=rec.plan,
+            layout=rec.layout,
+            live_seconds=rec.live_seconds,
+            min_sec=rec.min_sec,
+            max_sec=rec.max_sec,
+            prompt=rec.prompt or kwargs["prompt"],
+            hook=rec.hook,
+            mode=rec.mode,
+            aspect=rec.aspect,
+            captions=rec.captions,
+        )
+    result = run_once(args.src, out_dir, **kwargs)
     print(json.dumps(result, indent=2), flush=True)
     print("done")
     for w in result.get("clips") or []:

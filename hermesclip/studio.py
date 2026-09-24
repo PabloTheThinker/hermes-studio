@@ -156,6 +156,28 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
             except Exception as exc:
                 return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
+        if path.startswith("/api/recommend"):
+            qs = parse_qs(parsed.query)
+            src = (qs.get("src") or [""])[0]
+            if not src:
+                return _json(self, 400, {"ok": False, "error": "src required"})
+            try:
+                from hermesclip.recommend import recommend_for
+
+                info, rec = recommend_for(src)
+                return _json(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        "title": info.title,
+                        "is_live": info.is_live,
+                        "duration": info.duration,
+                        "recommendation": rec.as_job(),
+                    },
+                )
+            except Exception as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
         if path == "/api/jobs":
             return _json(self, 200, {"ok": True, "jobs": [asdict(j) for j in list_jobs()], "busy": sorted(_busy)})
         if path.startswith("/api/jobs/"):
@@ -199,30 +221,41 @@ class StudioHandler(BaseHTTPRequestHandler):
             src = str(body.get("src") or "").strip()
             if not src:
                 return _json(self, 400, {"ok": False, "error": "src required"})
-            live_seconds = int(body.get("live_seconds") or LIVE_DEFAULT_SEC)
+            rec = None
+            if body.get("recommend"):
+                from hermesclip.recommend import recommend_for
+
+                try:
+                    _info, rec = recommend_for(src)
+                except Exception as exc:
+                    return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
+            live_seconds = int((rec.live_seconds if rec else body.get("live_seconds")) or LIVE_DEFAULT_SEC)
             live_seconds = max(60, min(live_seconds, LIVE_MAX_SEC))
             start_time = body.get("start_time")
             end_time = body.get("end_time")
             job = new_job(
                 src,
-                max_clips=int(body.get("max_clips") or 3),
+                max_clips=int((rec.max_clips if rec else body.get("max_clips")) or 3),
                 whisper=str(body.get("whisper") or "tiny"),
-                pacing=str(body.get("pacing") or "tight"),
-                style=str(body.get("style") or "pop"),
-                plan=str(body.get("plan") or "heuristic"),
-                layout=str(body.get("layout") or "fit"),
+                pacing=str((rec.pacing if rec else body.get("pacing")) or "tight"),
+                style=str((rec.style if rec else body.get("style")) or "pop"),
+                plan=str((rec.plan if rec else body.get("plan")) or "heuristic"),
+                layout=str((rec.layout if rec else body.get("layout")) or "fit"),
                 live_seconds=live_seconds,
                 live_from_start=bool(body.get("live_from_start")),
-                aspect=str(body.get("aspect") or "9:16"),
-                captions=body.get("captions", True) is not False,
-                min_sec=float(body.get("min_sec") or 12),
-                max_sec=float(body.get("max_sec") or 45),
+                aspect=str((rec.aspect if rec else body.get("aspect")) or "9:16"),
+                captions=(rec.captions if rec else body.get("captions", True)) is not False,
+                min_sec=float((rec.min_sec if rec else body.get("min_sec")) or 12),
+                max_sec=float((rec.max_sec if rec else body.get("max_sec")) or 45),
                 start_time=_seconds(start_time),
                 end_time=_seconds(end_time),
-                prompt=str(body.get("prompt") or ""),
-                hook=body.get("hook", True) is not False,
-                mode=str(body.get("mode") or "clip"),
+                prompt=str((rec.prompt if rec and rec.prompt else body.get("prompt")) or ""),
+                hook=(rec.hook if rec else body.get("hook", True)) is not False,
+                mode=str((rec.mode if rec else body.get("mode")) or "clip"),
             )
+            if rec:
+                job.message = "Hermes pick · " + "; ".join(rec.why[:2])
+                job.save()
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
         if path.startswith("/api/jobs/") and path.endswith("/retry"):

@@ -15,3 +15,4 @@ provides_tools:
   - hermesclip_studio
   - hermesclip_captions
   - hermesclip_edit
+  - hermesclip_recommend

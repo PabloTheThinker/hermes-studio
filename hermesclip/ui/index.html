@@ -124,7 +124,7 @@
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
       style: "pop", captions: true, pacing: "tight",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
-      prompt: "", q: "", hook: true, mode: "clip",
+      prompt: "", q: "", hook: true, mode: "clip", path: "wizard", why: [],
       jobs: [], library: [], open: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
@@ -183,13 +183,15 @@
           <button class="btn" id="back" ${i===0?"disabled":""}>Back</button>
           ${state.step === "review"
             ? `<button class="btn btn-signal" id="run-btn">Generate</button>`
+            : state.step === "video"
+            ? `<div class="row"><button class="btn" id="next">Settings</button><button class="btn btn-signal" id="best-btn">Best recommendation</button></div>`
             : `<button class="btn btn-signal" id="next">Next</button>`}
         </div>`;
     }
     function videoStep() {
       const p = state.probe;
       return `<p class="fig">01 · Video</p><h1>Choose a video</h1>
-        <p class="lede">Local file, YouTube, X, Twitch, or a livestream. Live captures a slice, then Clip cuts. Nothing is posted.</p>
+        <p class="lede">Local file, YouTube, X, Twitch, or a livestream. Pick <em>Best recommendation</em> and Hermes analyzes the source, or walk Settings yourself. Nothing is posted.</p>
         <label>Source</label>
         <input id="src" value="${esc(state.src)}" placeholder="https://youtube.com/…  ·  /path/to/file.mp4" />
         <p class="hint">${p ? (p.ok ? `<span class="ok">${esc(p.title)}</span>${p.is_live?` <span class="live">live</span>`:""}` : `<span class="err">${esc(p.error)}</span>`) : "Paste a link, then Probe."}</p>
@@ -241,7 +243,8 @@
       const d = DUR.find(x => x.id === state.dur);
       return `<p class="fig">05 · Review</p><h1>Generate</h1>
         <p class="lede">${esc(state.src || "(no source)")}</p>
-        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}</p>
+        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}${state.path==="best"?" · Hermes pick":""}</p>
+        ${(state.why||[]).length ? `<ul class="lede">${state.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
         <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
     }
     function viral(j) {
@@ -304,6 +307,32 @@
         grabForm(); state.err = "";
         try { state.probe = await api("/api/probe?src=" + encodeURIComponent(state.src)); }
         catch (e) { state.probe = { ok: false, error: e.message }; }
+        render();
+      };
+      const bestBtn = $("#best-btn");
+      if (bestBtn) bestBtn.onclick = async () => {
+        grabForm(); state.err = "";
+        if (!state.src) { state.err = "Paste a source first."; render(); return; }
+        bestBtn.disabled = true; bestBtn.textContent = "Analyzing…";
+        try {
+          const data = await api("/api/recommend?src=" + encodeURIComponent(state.src));
+          const r = data.recommendation || {};
+          state.probe = { ok: true, title: data.title, is_live: data.is_live, duration: data.duration };
+          state.path = "best";
+          state.aspect = r.aspect || "9:16";
+          state.layout = r.layout || "fit";
+          state.dur = r.dur || "short";
+          state.max_clips = r.max_clips || 3;
+          state.pacing = r.pacing || "tight";
+          state.style = r.style || "pop";
+          state.captions = r.captions !== false;
+          state.hook = r.hook !== false;
+          state.mode = r.mode || "clip";
+          state.live_seconds = r.live_seconds || 1200;
+          if (r.prompt) state.prompt = r.prompt;
+          state.why = r.why || [];
+          state.step = "review";
+        } catch (e) { state.err = e.message; }
         render();
       };
       const runBtn = $("#run-btn");

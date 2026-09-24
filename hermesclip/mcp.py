@@ -60,6 +60,15 @@ TOOLS = [
             "required": ["src", "start", "end"],
         },
     },
+    {
+        "name": "recommend",
+        "description": "Analyze a source and return best local job settings. Does not post.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"src": {"type": "string"}},
+            "required": ["src"],
+        },
+    },
 ]
 
 
@@ -131,6 +140,24 @@ def _call(name: str, args: dict) -> str:
                 str(args.get("out") or ""),
             ]
         )
+    if name == "recommend":
+        env = __import__("os").environ.copy()
+        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+        import subprocess
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json,sys; from hermesclip.recommend import recommend_for; i,r=recommend_for(sys.argv[1]); print(json.dumps({'ok':True,'title':i.title,'recommendation':r.as_job()}))",
+                str(args.get("src") or ""),
+            ],
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=40,
+        )
+        return (proc.stdout or proc.stderr or "")[-8000:]
     return json.dumps({"ok": False, "error": f"unknown tool {name}"})
 
 
