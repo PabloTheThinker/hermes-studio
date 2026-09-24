@@ -208,6 +208,21 @@ def hermesclip_recommend(src: str) -> str:
         return json.dumps({"ok": True, "log": proc.stdout[-1500:]})
 
 
+def hermesclip_copy(src: str, clip_title: str = "") -> str:
+    if not src:
+        return json.dumps({"ok": False, "error": "src is required"})
+    argv = ["copy", str(src)]
+    if clip_title:
+        argv += ["--clip-title", clip_title]
+    result = _run_mod(argv, timeout=60)
+    if not result.get("ok"):
+        return json.dumps(result)
+    try:
+        return json.dumps(json.loads(result["stdout"].strip().splitlines()[-1]))
+    except Exception:
+        return json.dumps({"ok": True, "log": result.get("stdout", "")[-1500:]})
+
+
 def hermesclip_transcribe(src: str, work: str = "", whisper: str = "tiny") -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -500,4 +515,25 @@ def register(ctx) -> None:
         },
         handler=lambda args, **kw: hermesclip_recommend(src=(args or {}).get("src") or ""),
         description="HermesClip: analyze a source and pick settings. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_copy",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_copy",
+            "description": "HermesClip: local titles, description, hashtags for a job. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string", "description": "Job id or job directory"},
+                    "clip_title": {"type": "string"},
+                },
+                "required": ["src"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_copy(
+            src=(args or {}).get("src") or "",
+            clip_title=(args or {}).get("clip_title") or "",
+        ),
+        description="HermesClip: local social copy pack. Does not post.",
     )

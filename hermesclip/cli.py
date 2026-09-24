@@ -57,6 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     edt.add_argument("--end", type=float, required=True)
     edt.add_argument("--out", default="")
 
+    cop = sub.add_parser("copy", help="titles / description / hashtags from a job or transcript (does not post)")
+    cop.add_argument("src", help="job directory, job id, or transcript.json")
+    cop.add_argument("--clip-title", default="")
+
     args = p.parse_args(argv)
     if args.cmd == "run":
         return _run(args)
@@ -75,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.cmd == "edit":
         return _edit_cmd(args)
+    if args.cmd == "copy":
+        return _copy_cmd(args)
     if args.cmd == "transcribe":
         return _transcribe_cmd(args)
     if args.cmd == "plan":
@@ -184,6 +190,35 @@ def _edit_cmd(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": str(exc)[-1200:]}))
         return 1
     print(json.dumps({"ok": True, "file": str(path)}))
+    return 0
+
+
+def _copy_cmd(args: argparse.Namespace) -> int:
+    from hermesclip.copy import copy_from_job_dir, copy_pack
+    from hermesclip.pipeline import library_root, load_job
+
+    src = Path(args.src).expanduser()
+    try:
+        if src.is_dir():
+            pack = copy_from_job_dir(src, args.clip_title)
+        elif src.name == "transcript.json" and src.is_file():
+            text = json.loads(src.read_text()).get("text") or ""
+            pack = copy_pack(src.parent.name, text, args.clip_title)
+        else:
+            job = load_job(args.src)
+            if not job:
+                root = library_root() / args.src
+                if root.is_dir():
+                    pack = copy_from_job_dir(root, args.clip_title)
+                else:
+                    print(json.dumps({"ok": False, "error": "not a job dir or id"}))
+                    return 1
+            else:
+                pack = copy_from_job_dir(Path(job.dir), args.clip_title)
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)[-1200:]}))
+        return 1
+    print(json.dumps({"ok": True, **pack}, indent=2))
     return 0
 
 

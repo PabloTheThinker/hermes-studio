@@ -16,3 +16,4 @@ provides_tools:
   - hermesclip_captions
   - hermesclip_edit
   - hermesclip_recommend
+  - hermesclip_copy

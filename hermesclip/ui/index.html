@@ -125,7 +125,7 @@
       style: "pop", captions: true, pacing: "tight",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
       prompt: "", q: "", hook: true, mode: "clip", path: "wizard", why: [],
-      jobs: [], library: [], open: null,
+      jobs: [], library: [], open: null, copy: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
@@ -266,8 +266,11 @@
       }).join("")}</div>`;
     }
     function runDetail(j) {
+      const copy = state.copy && state.copy.job === j.id ? state.copy : null;
       return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p><h1>${esc(j.title)}</h1>
         <p class="lede">${esc(j.src)}</p>
+        <div class="row" style="margin:0 0 1rem"><button class="btn" id="copy-btn" data-job="${j.id}">Social copy</button><span class="hint">Local pack. You seal any post.</span></div>
+        ${copy ? `<article class="job"><p class="fig">${esc(copy.source || "copy")}</p><ul class="lede">${(copy.titles||[]).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede">${esc(copy.description||"")}</p><p class="hint">${esc((copy.hashtags||[]).join(" "))}</p></article>` : ""}
         <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p></div></article>`).join("")}</div>`;
     }
     function jobsPage() {
@@ -361,6 +364,16 @@
         });
       });
       const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
+      const copyBtn = $("#copy-btn");
+      if (copyBtn) copyBtn.onclick = async () => {
+        const id = copyBtn.dataset.job;
+        copyBtn.disabled = true; copyBtn.textContent = "Writing…";
+        try {
+          const data = await api("/api/copy?job=" + encodeURIComponent(id));
+          state.copy = { job: id, ...data };
+        } catch (e) { state.err = e.message; }
+        render();
+      };
       document.querySelectorAll("[data-retry]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.retry+"/retry", { method: "POST" }); refresh(); });
       document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.cancel+"/cancel", { method: "POST" }); refresh(); });
       const trim = $("#trim"); if (trim) trim.onchange = () => { grabForm(); render(); };

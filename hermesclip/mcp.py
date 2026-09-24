@@ -69,6 +69,15 @@ TOOLS = [
             "required": ["src"],
         },
     },
+    {
+        "name": "copy",
+        "description": "Local titles, description, hashtags for a job. Does not post.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"src": {"type": "string"}, "clip_title": {"type": "string"}},
+            "required": ["src"],
+        },
+    },
 ]
 
 
@@ -158,6 +167,11 @@ def _call(name: str, args: dict) -> str:
             timeout=40,
         )
         return (proc.stdout or proc.stderr or "")[-8000:]
+    if name == "copy":
+        argv = ["copy", str(args.get("src") or "")]
+        if args.get("clip_title"):
+            argv += ["--clip-title", str(args["clip_title"])]
+        return _cli(argv)
     return json.dumps({"ok": False, "error": f"unknown tool {name}"})
 
 

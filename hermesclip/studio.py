@@ -178,6 +178,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
             except Exception as exc:
                 return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
+        if path.startswith("/api/copy"):
+            qs = parse_qs(parsed.query)
+            job_id = (qs.get("job") or [""])[0]
+            clip_title = (qs.get("clip") or [""])[0]
+            job = load_job(job_id)
+            if not job:
+                return _json(self, 404, {"ok": False, "error": "job not found"})
+            try:
+                from hermesclip.copy import copy_from_job_dir
+
+                pack = copy_from_job_dir(Path(job.dir), clip_title)
+                return _json(self, 200, {"ok": True, **pack})
+            except Exception as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
         if path == "/api/jobs":
             return _json(self, 200, {"ok": True, "jobs": [asdict(j) for j in list_jobs()], "busy": sorted(_busy)})
         if path.startswith("/api/jobs/"):
