@@ -142,6 +142,12 @@
       state.jobs = jobs.jobs || [];
       const lib = await api("/api/library");
       state.library = lib.runs || [];
+      if (state.open && state.open.id) {
+        try {
+          const t = await api("/api/trash?job=" + encodeURIComponent(state.open.id));
+          state.trash = t.files || [];
+        } catch { state.trash = []; }
+      } else { state.trash = []; }
       const live = state.jobs.filter(j => j.status === "queued" || j.status === "running").length;
       const b = $("#job-badge");
       b.hidden = live === 0;
@@ -279,7 +285,8 @@
         <p class="lede">${esc(j.src)}</p>
         <div class="row" style="margin:0 0 1rem"><button class="btn" id="copy-btn" data-job="${j.id}">Social copy</button><span class="hint">Local pack. You seal any post.</span></div>
         ${copy ? `<article class="job"><p class="fig">${esc(copy.source || "copy")}</p><ul class="lede">${(copy.titles||[]).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede">${esc(copy.description||"")}</p><p class="hint">${esc((copy.hashtags||[]).join(" "))}</p></article>` : ""}
-        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p><div class="row"><button class="btn" data-up="${esc(c.file)}">Up</button><button class="btn" data-down="${esc(c.file)}">Down</button><input data-split-at="${esc(c.file)}" placeholder="split at sec" style="max-width:120px;margin:0"><button class="btn" data-split="${esc(c.file)}">Split</button><button class="btn" data-dup="${esc(c.file)}">Duplicate</button><button class="btn" data-drop="${esc(c.file)}">Drop</button></div></div></article>`).join("")}</div>`;
+        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p><div class="row"><button class="btn" data-up="${esc(c.file)}">Up</button><button class="btn" data-down="${esc(c.file)}">Down</button><input data-split-at="${esc(c.file)}" placeholder="split at sec" style="max-width:120px;margin:0"><button class="btn" data-split="${esc(c.file)}">Split</button><button class="btn" data-dup="${esc(c.file)}">Duplicate</button><button class="btn" data-drop="${esc(c.file)}">Drop</button></div></div></article>`).join("")}</div>
+        ${(state.trash||[]).length ? `<p class="fig" style="margin-top:1.4rem">Dropped</p><div class="row">${state.trash.map(t => `<button class="btn" data-restore="${esc(t.file)}">Restore ${esc(t.file)}</button>`).join("")}</div>` : ""}`;
     }
     function jobsPage() {
       const jobs = state.jobs;
@@ -365,7 +372,14 @@
           state.step = "video"; nav("jobs"); await refresh();
         } catch (e) { state.err = e.message; render(); }
       };
-      document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => { state.open = state.library.find(j => j.id === el.dataset.open); render(); });
+      document.querySelectorAll("[data-open]").forEach(el => el.onclick = async () => {
+        state.open = state.library.find(j => j.id === el.dataset.open);
+        try {
+          const t = await api("/api/trash?job=" + encodeURIComponent(el.dataset.open));
+          state.trash = t.files || [];
+        } catch { state.trash = []; }
+        render();
+      });
       document.querySelectorAll("video").forEach(v => {
         v.addEventListener("play", () => {
           document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); });
@@ -404,6 +418,7 @@
         if (!confirm("Drop this clip from the run? File goes to .trash in the job folder.")) return;
         clipOp(el.dataset.drop, "drop");
       });
+      document.querySelectorAll("[data-restore]").forEach(el => el.onclick = () => clipOp(el.dataset.restore, "restore"));
       const copyBtn = $("#copy-btn");
       if (copyBtn) copyBtn.onclick = async () => {
         const id = copyBtn.dataset.job;

@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
 
     edt = sub.add_parser("edit", help="trim or split an existing clip (local; does not post)")
     edt.add_argument("src")
-    edt.add_argument("--op", choices=["trim", "split", "duplicate", "drop"], default="trim")
+    edt.add_argument("--op", choices=["trim", "split", "duplicate", "drop", "restore"], default="trim")
     edt.add_argument("--start", type=float, default=None)
     edt.add_argument("--end", type=float, default=None)
     edt.add_argument("--at", type=float, default=None, help="split point in seconds")
@@ -182,7 +182,7 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _edit_cmd(args: argparse.Namespace) -> int:
-    from hermesclip.edit import drop_file, duplicate_file, split_file, trim_file
+    from hermesclip.edit import drop_file, duplicate_file, restore_file, split_file, trim_file
 
     src = Path(args.src).expanduser()
     op = getattr(args, "op", "trim") or "trim"
@@ -202,6 +202,10 @@ def _edit_cmd(args: argparse.Namespace) -> int:
         if op == "drop":
             path = drop_file(src)
             print(json.dumps({"ok": True, "op": "drop", "file": str(path)}))
+            return 0
+        if op == "restore":
+            path, _meta = restore_file(src)
+            print(json.dumps({"ok": True, "op": "restore", "file": str(path)}))
             return 0
         if args.start is None or args.end is None:
             print(json.dumps({"ok": False, "error": "--start and --end are required for trim"}))

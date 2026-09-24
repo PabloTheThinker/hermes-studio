@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -70,8 +71,10 @@ def duplicate_file(src: Path, dest: Path | None = None) -> Path:
     return dest
 
 
-def drop_file(src: Path) -> Path:
+def drop_file(src: Path, meta: dict | None = None) -> Path:
     """Move a clip aside. Does not post. Recoverable trash in the job folder."""
+    import json
+
     src = Path(src).expanduser().resolve()
     if not src.is_file():
         raise FileNotFoundError(str(src))
@@ -83,4 +86,48 @@ def drop_file(src: Path) -> Path:
         dest = trash / f"{src.stem}-{n}{src.suffix}"
         n += 1
     src.rename(dest)
+    if meta is not None:
+        dest.with_name(dest.name + ".meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+        )
     return dest
+
+
+def restore_file(src: Path, dest: Path | None = None) -> tuple[Path, dict]:
+    """Undo drop. Opus restore analog. Does not post."""
+    src = Path(src).expanduser().resolve()
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    if src.parent.name != ".trash":
+        raise ValueError("restore only from .trash")
+    dest = Path(dest).expanduser().resolve() if dest else src.parent.parent / src.name
+    if dest.exists():
+        dest = dest.with_name(src.stem + "-restored" + src.suffix)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    side = src.with_name(src.name + ".meta.json")
+    meta: dict = {}
+    if side.is_file():
+        try:
+            loaded = json.loads(side.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                meta = loaded
+        except Exception:
+            meta = {}
+    src.rename(dest)
+    if side.is_file():
+        side.unlink()
+    return dest, meta
+
+
+def list_trash(job_dir: Path) -> list[dict]:
+    trash = Path(job_dir).expanduser() / ".trash"
+    if not trash.is_dir():
+        return []
+    out: list[dict] = []
+    for p in sorted(trash.iterdir()):
+        if not p.is_file() or p.name.endswith(".meta.json"):
+            continue
+        if p.suffix.lower() != ".mp4":
+            continue
+        out.append({"file": p.name})
+    return out

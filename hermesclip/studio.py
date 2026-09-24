@@ -102,6 +102,22 @@ def _safe_media(job_id: str, name: str) -> Path | None:
     return path
 
 
+def _safe_trash(job_id: str, name: str) -> Path | None:
+    if "/" in name or "\\" in name or name.startswith("."):
+        return None
+    root = library_root().resolve()
+    trash = (root / job_id / ".trash").resolve()
+    path = (trash / name).resolve()
+    try:
+        path.relative_to(trash)
+        trash.relative_to(root)
+    except ValueError:
+        return None
+    if not path.is_file() or not name.endswith(".mp4"):
+        return None
+    return path
+
+
 class StudioHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -203,6 +219,14 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path == "/api/library":
             jobs = [asdict(j) for j in list_jobs() if j.status == "completed"]
             return _json(self, 200, {"ok": True, "runs": jobs})
+        if path.startswith("/api/trash"):
+            qs = parse_qs(parsed.query)
+            job = load_job((qs.get("job") or [""])[0])
+            if not job:
+                return _json(self, 404, {"ok": False, "error": "job not found"})
+            from hermesclip.edit import list_trash
+
+            return _json(self, 200, {"ok": True, "files": list_trash(Path(job.dir))})
         if path.startswith("/media/"):
             parts = path.strip("/").split("/")
             if len(parts) != 3:
@@ -278,13 +302,25 @@ class StudioHandler(BaseHTTPRequestHandler):
             name = str(body.get("file") or "")
             if not job or not name:
                 return _json(self, 400, {"ok": False, "error": "job and file required"})
-            media = _safe_media(job.id, name)
-            if not media:
-                return _json(self, 404, {"ok": False, "error": "clip not found"})
             op = str(body.get("op") or "trim")
             try:
-                from hermesclip.edit import drop_file, duplicate_file, split_file, trim_file
+                from hermesclip.edit import drop_file, duplicate_file, restore_file, split_file, trim_file
 
+                if op == "restore":
+                    trash = _safe_trash(job.id, name)
+                    if not trash:
+                        return _json(self, 404, {"ok": False, "error": "not in trash"})
+                    path, meta = restore_file(trash)
+                    extra = dict(meta)
+                    extra["file"] = path.name
+                    extra.setdefault("title", Path(name).stem)
+                    extra.setdefault("thumb", "")
+                    job.clips = list(job.clips or []) + [extra]
+                    job.save()
+                    return _json(self, 200, {"ok": True, "op": "restore", "file": path.name})
+                media = _safe_media(job.id, name)
+                if not media:
+                    return _json(self, 404, {"ok": False, "error": "clip not found"})
                 if op == "split":
                     a, b = split_file(media, float(body.get("at") or 0))
                     extra = [
@@ -305,7 +341,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                     job.save()
                     return _json(self, 200, {"ok": True, "op": "duplicate", "file": path.name})
                 if op == "drop":
-                    drop_file(media)
+                    clip = next((c for c in (job.clips or []) if c.get("file") == name), {}) or {}
+                    drop_file(media, clip)
                     job.clips = [c for c in (job.clips or []) if c.get("file") != name]
                     job.save()
                     return _json(self, 200, {"ok": True, "op": "drop", "file": name})
