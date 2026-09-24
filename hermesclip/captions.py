@@ -107,6 +107,7 @@ def build_ass(
     play_y: int = 1920,
     style: str = "pop",
     layout: str = "fit",
+    hook: str = "",
 ) -> str:
     """Word-highlight ASS. Fit puts captions in the lower pad; fill keeps them off the chin."""
     st = STYLES.get(style, STYLES["pop"])
@@ -147,6 +148,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Face,{st.font},{st.size},{st.primary},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,{st.spacing},0,1,{st.outline_w},0,2,{st.margin_x},{st.margin_x},{margin_v},1
+Style: Hook,{st.font},{max(28, st.size - 12)},{st.highlight},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,0.8,0,1,3,0,8,{st.margin_x},{st.margin_x},72,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -170,6 +172,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 line.append(col + _esc(raw))
             text = r"{\an2}" + " ".join(line)
             events.append(f"Dialogue: 0,{_ts(a)},{_ts(b)},Face,,0,0,0,,{text}")
+    if hook:
+        ht = _esc(hook.strip())[:80]
+        if ht:
+            end = min(3.0, max(1.2, clip_end - clip_start))
+            events.insert(0, f"Dialogue: 1,0:00:00.00,{_ts(end)},Hook,,0,0,0,,{{\\an8}}{ht}")
     return header + "\n".join(events) + "\n"
 
 

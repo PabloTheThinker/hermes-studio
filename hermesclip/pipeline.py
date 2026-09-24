@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 
 from hermesclip.download import LIVE_DEFAULT_SEC, SourceInfo, fetch, probe
-from hermesclip.plan import plan_grok, plan_heuristic, save_plan
+from hermesclip.plan import ClipPlan, plan_grok, plan_heuristic, save_plan
 from hermesclip.render import probe_duration, render_clip
 from hermesclip.transcribe import Transcript, Word, load_transcript, transcribe
 
@@ -68,6 +68,8 @@ class Job:
     start_time: float | None = None
     end_time: float | None = None
     prompt: str = ""
+    hook: bool = True
+    mode: str = "clip"
     clips: list[dict] = field(default_factory=list)
     work: str = ""
     dir: str = ""
@@ -188,6 +190,8 @@ def new_job(
     start_time: float | None = None,
     end_time: float | None = None,
     prompt: str = "",
+    hook: bool = True,
+    mode: str = "clip",
 ) -> Job:
     info: SourceInfo | None = None
     title = src
@@ -230,6 +234,8 @@ def new_job(
         start_time=start_time,
         end_time=end_time,
         prompt=prompt or "",
+        hook=bool(hook),
+        mode=mode if mode in ("clip", "captions") else "clip",
         dir=str(dest),
         work=str(dest / "work"),
     )
@@ -298,6 +304,32 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             hi = min(dur, float(job.end_time) if job.end_time is not None else min(dur, lo + job.max_sec))
             tr = Transcript("en", dur, "", [Word("…", lo, hi)])
 
+        width, height = (
+            (1920, 1080) if job.aspect == "16:9" else (1080, 1080) if job.aspect == "1:1" else (1080, 1920)
+        )
+        layout = job.layout if job.layout in ("fit", "fill") else "fit"
+        style = job.style if job.captions else "clean"
+
+        if job.mode == "captions":
+            bump("render", 0.6, "Captions only")
+            dur = probe_duration(video)
+            plan = ClipPlan(float(job.start_time or 0.0), float(job.end_time or dur), job.title[:60], [], 0.5)
+            dest = out_dir / "captions.mp4"
+            render_clip(
+                video, plan, tr, dest, work,
+                width=width, height=height, pacing="natural", style=style, layout=layout,
+                hook=plan.title if job.hook else "",
+            )
+            thumb = _thumb(dest, out_dir / "captions.jpg")
+            job.clips = [{"file": dest.name, "title": "Captions", "start": plan.start, "end": plan.end, "score": 1.0, "virality": 0, "thumb": thumb}]
+            job.status = "completed"
+            job.stage = "done"
+            job.progress = 1.0
+            job.message = "captions"
+            job.finished_at = utcnow()
+            job.save()
+            return job
+
         bump("plan", 0.55, "Scoring hook-first windows")
         min_sec = float(job.min_sec or 12.0)
         max_sec = float(job.max_sec or 45.0)
@@ -340,6 +372,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                 pacing=job.pacing,
                 style=style,
                 layout=layout,
+                hook=plan.title if job.hook else "",
             )
             thumb = _thumb(dest, out_dir / f"clip-{i:02d}.jpg")
             written.append(
@@ -388,53 +421,55 @@ def run_once(
     live_from_start: bool = False,
     transcript: Path | None = None,
     on_progress: Progress | None = None,
+    min_sec: float = 12.0,
+    max_sec: float = 45.0,
+    prompt: str = "",
+    hook: bool = True,
+    mode: str = "clip",
+    aspect: str = "9:16",
+    captions: bool = True,
 ) -> dict:
     """CLI-shaped run. Writes clips into out_dir (not necessarily the library)."""
-    work = work or Path(tempfile.mkdtemp(prefix="hermesclip-"))
-    work.mkdir(parents=True, exist_ok=True)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    def bump(stage: str, pct: float, msg: str) -> None:
-        if on_progress:
-            on_progress(stage, pct, msg)
-
-    bump("download", 0.05, "Fetching source")
-    info = None
-    try:
-        info = probe(src)
-    except Exception:
-        info = None
-    video = fetch(
+    job = new_job(
         src,
-        work,
+        max_clips=max_clips,
+        whisper=whisper,
+        pacing=pacing,
+        style=style,
+        plan=plan,
+        layout=layout,
         live_seconds=live_seconds,
         live_from_start=live_from_start,
-        info=info,
+        aspect=aspect,
+        captions=captions if mode != "captions" else True,
+        min_sec=min_sec,
+        max_sec=max_sec,
+        prompt=prompt,
+        hook=hook,
+        mode=mode,
     )
-    if transcript:
-        tr = load_transcript(transcript)
-    else:
-        bump("transcribe", 0.25, f"Whisper ({whisper})")
-        tr = transcribe(video, work, model_size=whisper)
-        if not tr.words:
-            dur = probe_duration(video)
-            tr = Transcript("en", dur, "", [Word("…", 0.0, min(dur, 45.0))])
-    bump("plan", 0.55, "Scoring windows")
-    plans = None
-    if plan in ("auto", "grok"):
-        plans = plan_grok(tr, max_clips, 12.0, 45.0)
-    if not plans:
-        plans = plan_heuristic(tr, max_clips, 12.0, 45.0)
-    save_plan(plans, work / "plan.json")
-    written = []
-    n = max(len(plans), 1)
-    for i, item in enumerate(plans, 1):
-        bump("render", 0.6 + 0.35 * (i - 1) / n, f"Render clip {i:02d}")
-        dest = out_dir / f"clip-{i:02d}.mp4"
-        render_clip(video, item, tr, dest, work, pacing=pacing, style=style, layout=layout)
-        written.append(str(dest))
-    (out_dir / "manifest.json").write_text(
-        json.dumps({"source": str(video), "clips": written, "work": str(work)}, indent=2)
-    )
-    bump("done", 1.0, "done")
-    return {"source": str(video), "clips": written, "work": str(work), "title": (info.title if info else src)}
+    if work:
+        job.work = str(work)
+        job.save()
+    job = execute_job(job, on_progress=on_progress)
+    dest = Path(job.dir)
+    files = [str(dest / c["file"]) for c in job.clips]
+    if out_dir.resolve() != dest.resolve():
+        out_dir.mkdir(parents=True, exist_ok=True)
+        copied = []
+        for p in files:
+            srcp = Path(p)
+            if srcp.is_file():
+                target = out_dir / srcp.name
+                shutil.copy2(srcp, target)
+                copied.append(str(target))
+        files = copied or files
+    return {
+        "ok": job.status == "completed",
+        "source": job.src,
+        "clips": files,
+        "work": job.work,
+        "title": job.title,
+        "mode": job.mode,
+        "error": job.error,
+    }

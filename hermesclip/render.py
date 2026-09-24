@@ -42,6 +42,7 @@ def render_clip(
     pacing: str = "tight",
     style: str = "pop",
     layout: str = "fit",
+    hook: str = "",
 ) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     src_w, src_h = probe_size(video)
@@ -65,6 +66,7 @@ def render_clip(
             height,
             style,
             layout=layout,
+            hook=hook,
         )
     )
     ass_f = _ass_escape(ass)

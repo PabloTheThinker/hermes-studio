@@ -108,13 +108,14 @@
       { id: "short", label: "Short", hint: "30–60s", min: 30, max: 60 },
       { id: "medium", label: "Medium", hint: "1–2m", min: 60, max: 120 },
       { id: "long", label: "Long", hint: "2–5m", min: 120, max: 300 },
+      { id: "midform", label: "Mid-form", hint: "3–15m", min: 180, max: 900 },
     ];
     const state = {
       page: "create", step: "video", src: "", probe: null, err: "",
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
       style: "pop", captions: true, pacing: "tight",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
-      prompt: "", q: "",
+      prompt: "", q: "", hook: true, mode: "clip",
       jobs: [], library: [], open: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
@@ -183,6 +184,11 @@
         <div class="row" style="margin:1rem 0"><button class="btn" id="probe-btn">Probe</button></div>
         <label><input type="checkbox" id="trim" ${state.trim?"checked":""} style="width:auto"> Clip only part of it</label>
         ${state.trim ? `<div class="row"><input id="start" placeholder="start 90 or 1:30" value="${esc(state.start)}" style="max-width:180px"><input id="end" placeholder="end" value="${esc(state.end)}" style="max-width:180px"></div>` : ""}
+        <label>Job</label>
+        <div class="tiles">
+          <button class="tile ${state.mode==="clip"?"on":""}" data-k="mode" data-v="clip">Clips<small>Hook-first shorts</small></button>
+          <button class="tile ${state.mode==="captions"?"on":""}" data-k="mode" data-v="captions">Captions only<small>Burn on the full take</small></button>
+        </div>
         <label>Hunt (optional)</label>
         <input id="prompt" value="${esc(state.prompt)}" placeholder="ClipAnything-lite: e.g. money, mistake, wait what" />
         <label>Live slice</label>
@@ -216,13 +222,14 @@
       const styles = ["pop","impact","clean","glow","neon","boxed"];
       return `<p class="fig">04 · Captions</p><h1>Word-by-word captions</h1>
         <label><input type="checkbox" id="captions" ${state.captions?"checked":""} style="width:auto"> Burn captions into each clip</label>
+        <label><input type="checkbox" id="hook" ${state.hook?"checked":""} style="width:auto"> Hook title overlay (first 3s)</label>
         <div class="tiles">${styles.map(s => `<button class="tile ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>`;
     }
     function reviewStep() {
       const d = DUR.find(x => x.id === state.dur);
       return `<p class="fig">05 · Review</p><h1>Generate</h1>
         <p class="lede">${esc(state.src || "(no source)")}</p>
-        <p class="hint">${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.max_clips} clips · ${state.captions?state.style:"no captions"}</p>
+        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}</p>
         <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
     }
     function viral(j) {
@@ -271,6 +278,7 @@
       const mc = $("#max_clips"); if (mc) state.max_clips = Number(mc.value);
       const pc = $("#pacing"); if (pc) state.pacing = pc.value;
       const cap = $("#captions"); if (cap) state.captions = cap.checked;
+      const hk = $("#hook"); if (hk) state.hook = hk.checked;
       const pr = $("#prompt"); if (pr) state.prompt = pr.value;
       const qq = $("#q"); if (qq) state.q = qq.value;
     }
@@ -298,6 +306,8 @@
             start_time: state.trim && state.start ? state.start : null,
             end_time: state.trim && state.end ? state.end : null,
             prompt: state.prompt,
+            hook: state.hook,
+            mode: state.mode,
             plan: "heuristic", whisper: "tiny",
           })});
           state.step = "video"; nav("jobs"); await refresh();

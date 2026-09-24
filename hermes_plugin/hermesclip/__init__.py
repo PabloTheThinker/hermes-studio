@@ -71,6 +71,12 @@ def hermesclip_run(
     layout: str = "fit",
     live_seconds: int = 1200,
     live_from_start: bool = False,
+    prompt: str = "",
+    aspect: str = "9:16",
+    mode: str = "clip",
+    hook: bool = True,
+    min_sec: float = 12,
+    max_sec: float = 45,
 ) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -88,14 +94,26 @@ def hermesclip_run(
         "--pacing",
         pacing if pacing in ("tight", "natural") else "tight",
         "--style",
-        style if style in ("pop", "impact", "clean") else "pop",
+        style if style in ("pop", "impact", "clean", "glow", "neon", "boxed") else "pop",
         "--plan",
         plan if plan in ("auto", "heuristic", "grok") else "heuristic",
         "--layout",
         layout if layout in ("fit", "fill") else "fit",
         "--live-seconds",
         str(int(live_seconds) or 1200),
+        "--aspect",
+        aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
+        "--mode",
+        mode if mode in ("clip", "captions") else "clip",
+        "--min-sec",
+        str(float(min_sec) or 12),
+        "--max-sec",
+        str(float(max_sec) or 45),
     ]
+    if prompt:
+        argv += ["--prompt", str(prompt)]
+    if not hook:
+        argv.append("--no-hook")
     if live_from_start:
         argv.append("--live-from-start")
     result = _run_mod(argv)
@@ -109,6 +127,41 @@ def hermesclip_run(
         except Exception:
             clips = []
     return json.dumps({"ok": True, "out": str(out_dir), "clips": clips, "log": (result.get("stdout") or "")[-1500:]})
+
+
+def hermesclip_captions(
+    src: str,
+    out: str = "",
+    whisper: str = "tiny",
+    style: str = "pop",
+    layout: str = "fit",
+    aspect: str = "9:16",
+    hook: bool = True,
+) -> str:
+    if not src or not str(src).strip():
+        return json.dumps({"ok": False, "error": "src is required"})
+    out_dir = Path(out).expanduser() if out else _out_default()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    argv = [
+        "captions",
+        str(src).strip(),
+        "--out",
+        str(out_dir),
+        "--whisper",
+        whisper or "tiny",
+        "--style",
+        style if style in ("pop", "impact", "clean", "glow", "neon", "boxed") else "pop",
+        "--layout",
+        layout if layout in ("fit", "fill") else "fit",
+        "--aspect",
+        aspect if aspect in ("9:16", "16:9", "1:1") else "9:16",
+    ]
+    if not hook:
+        argv.append("--no-hook")
+    result = _run_mod(argv)
+    if not result.get("ok"):
+        return json.dumps(result)
+    return json.dumps({"ok": True, "out": str(out_dir), "log": (result.get("stdout") or "")[-1500:]})
 
 
 def hermesclip_transcribe(src: str, work: str = "", whisper: str = "tiny") -> str:
@@ -332,4 +385,35 @@ def register(ctx) -> None:
             port=int((args or {}).get("port") or 3870),
         ),
         description="Start localhost Hermes Studio (Create / Library / Jobs) on loopback. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_captions",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_captions",
+            "description": "HermesClip: burn captions on the full video (no clip planner). Local only. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "src": {"type": "string"},
+                    "out": {"type": "string"},
+                    "whisper": {"type": "string", "default": "tiny"},
+                    "style": {"type": "string", "default": "pop"},
+                    "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
+                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"], "default": "9:16"},
+                    "hook": {"type": "boolean", "default": True},
+                },
+                "required": ["src"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_captions(
+            src=(args or {}).get("src") or "",
+            out=(args or {}).get("out") or "",
+            whisper=(args or {}).get("whisper") or "tiny",
+            style=(args or {}).get("style") or "pop",
+            layout=(args or {}).get("layout") or "fit",
+            aspect=(args or {}).get("aspect") or "9:16",
+            hook=(args or {}).get("hook", True) is not False,
+        ),
+        description="HermesClip: burn captions on the full video. Does not post.",
     )

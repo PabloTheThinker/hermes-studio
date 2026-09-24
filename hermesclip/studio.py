@@ -220,6 +220,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 start_time=_seconds(start_time),
                 end_time=_seconds(end_time),
                 prompt=str(body.get("prompt") or ""),
+                hook=body.get("hook", True) is not False,
+                mode=str(body.get("mode") or "clip"),
             )
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})

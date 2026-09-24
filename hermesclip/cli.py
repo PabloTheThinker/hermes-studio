@@ -42,8 +42,30 @@ def main(argv: list[str] | None = None) -> int:
     stu.add_argument("--host", default="127.0.0.1")
     stu.add_argument("--port", type=int, default=3870)
 
+    cap = sub.add_parser("captions", help="burn captions on the full video (no clip planner)")
+    cap.add_argument("src")
+    cap.add_argument("--out", default="./clips")
+    cap.add_argument("--whisper", default="tiny")
+    cap.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
+    cap.add_argument("--layout", choices=["fit", "fill"], default="fit")
+    cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    cap.add_argument("--no-hook", action="store_true")
+
     args = p.parse_args(argv)
     if args.cmd == "run":
+        return _run(args)
+    if args.cmd == "captions":
+        args.mode = "captions"
+        args.max_clips = 1
+        args.min_sec = 12
+        args.max_sec = 1e9
+        args.plan = "heuristic"
+        args.pacing = "natural"
+        args.transcript = ""
+        args.work = ""
+        args.live_seconds = LIVE_DEFAULT_SEC
+        args.live_from_start = False
+        args.prompt = ""
         return _run(args)
     if args.cmd == "transcribe":
         return _transcribe_cmd(args)
@@ -71,7 +93,11 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--transcript", default="", help="reuse transcript.json")
     run.add_argument("--plan", choices=["auto", "heuristic", "grok"], default="auto")
     run.add_argument("--pacing", choices=["tight", "natural"], default="tight")
-    run.add_argument("--style", choices=["pop", "impact", "clean"], default="pop")
+    run.add_argument("--prompt", default="", help="ClipAnything-lite hunt words")
+    run.add_argument("--mode", choices=["clip", "captions"], default="clip")
+    run.add_argument("--no-hook", action="store_true")
+    run.add_argument("--aspect", choices=["9:16", "16:9", "1:1"], default="9:16")
+    run.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
     run.add_argument(
         "--layout",
         choices=["fit", "fill"],
@@ -104,6 +130,12 @@ def _run(args: argparse.Namespace) -> int:
         live_seconds=args.live_seconds,
         live_from_start=args.live_from_start,
         transcript=Path(args.transcript).expanduser() if args.transcript else None,
+        min_sec=args.min_sec,
+        max_sec=args.max_sec,
+        prompt=getattr(args, "prompt", "") or "",
+        hook=not getattr(args, "no_hook", False),
+        mode=getattr(args, "mode", "clip"),
+        aspect=getattr(args, "aspect", "9:16"),
         on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
     print(json.dumps(result, indent=2), flush=True)
