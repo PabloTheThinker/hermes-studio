@@ -9,93 +9,67 @@
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --ink: #0a0b0e;
-      --surface: #0f1117;
-      --fg: #ececf1;
-      --fg2: #9a9ab2;
-      --mute: #6b6b82;
-      --signal: #3b82f6;
-      --ice: #93c5fd;
-      --hair: rgba(255,255,255,.08);
-      --danger: #f87171;
-      --ok: #34d399;
+      --ink: #0a0b0e; --surface: #0f1117; --fg: #ececf1; --fg2: #9a9ab2;
+      --mute: #6b6b82; --signal: #3b82f6; --ice: #93c5fd; --hair: rgba(255,255,255,.08);
+      --danger: #f87171; --ok: #34d399;
     }
     * { box-sizing: border-box; }
     html, body { margin: 0; height: 100%; background: var(--ink); color: var(--fg); font-family: Geist, system-ui, sans-serif; }
     #app { display: grid; grid-template-columns: 200px 1fr; min-height: 100%; }
-    aside {
-      border-right: 1px solid var(--hair);
-      padding: 1.1rem .7rem;
-      display: flex; flex-direction: column; gap: .35rem;
-    }
-    .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; color: var(--fg); }
+    aside { border-right: 1px solid var(--hair); padding: 1.1rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
+    .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; }
     .mark { width: 12px; height: 22px; border: 1px solid var(--signal); background: linear-gradient(180deg, var(--signal), #0a1f6b); }
     .brand-name { font-family: "Instrument Serif", serif; font-size: 1.05rem; }
     .brand-sub { font-family: "Geist Mono", monospace; font-size: 9px; letter-spacing: .16em; color: var(--mute); text-transform: uppercase; }
-    nav button {
-      display: flex; width: 100%; align-items: center; gap: .6rem;
-      background: transparent; border: 0; color: var(--fg2);
-      font: 500 13px Geist, system-ui; padding: .55rem .7rem; cursor: pointer; text-align: left;
-    }
+    nav button { display: flex; width: 100%; background: transparent; border: 0; color: var(--fg2); font: 500 13px Geist, system-ui; padding: .55rem .7rem; cursor: pointer; text-align: left; }
     nav button.active { color: var(--fg); background: rgba(59,130,246,.12); }
-    nav button:hover { color: var(--fg); }
-    .badge {
-      margin-left: auto; font-family: "Geist Mono", monospace; font-size: 10px;
-      background: var(--signal); color: #061018; padding: 1px 6px;
-    }
-    main { padding: 1.6rem 2rem 3rem; overflow: auto; }
+    .badge { margin-left: auto; font-family: "Geist Mono", monospace; font-size: 10px; background: var(--signal); color: #061018; padding: 1px 6px; }
+    main { padding: 1.6rem 2rem 3rem; overflow: auto; max-width: 920px; }
     .fig { font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .18em; color: var(--signal); text-transform: uppercase; margin: 0 0 .4rem; }
-    h1 { font-family: "Instrument Serif", serif; font-size: 2.4rem; font-weight: 400; margin: 0 0 .4rem; letter-spacing: -.02em; }
-    .lede { color: var(--fg2); max-width: 36rem; margin: 0 0 1.4rem; line-height: 1.5; }
+    h1 { font-family: "Instrument Serif", serif; font-size: 2.2rem; font-weight: 400; margin: 0 0 .4rem; }
+    .lede { color: var(--fg2); margin: 0 0 1.2rem; line-height: 1.5; }
     label { display: block; font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); margin: 0 0 .35rem; }
-    input, select, textarea {
-      width: 100%; background: var(--surface); color: var(--fg); border: 1px solid var(--hair);
-      padding: .7rem .8rem; font: 14px Geist, system-ui; margin: 0 0 1rem;
-    }
-    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+    input, select { width: 100%; background: var(--surface); color: var(--fg); border: 1px solid var(--hair); padding: .7rem .8rem; font: 14px Geist, system-ui; margin: 0 0 1rem; }
     .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
-    .btn {
-      display: inline-flex; align-items: center; min-height: 40px; padding: .55rem 1rem;
-      border: 1px solid var(--hair); background: transparent; color: var(--fg);
-      font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer;
-    }
+    .btn { display: inline-flex; align-items: center; min-height: 40px; padding: .55rem 1rem; border: 1px solid var(--hair); background: transparent; color: var(--fg); font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
     .btn-signal { background: var(--signal); border-color: var(--signal); color: #061018; }
-    .hint { color: var(--mute); font-size: 13px; margin: -.4rem 0 1rem; }
+    .hint { color: var(--mute); font-size: 13px; }
     .live { color: var(--danger); font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
     .ok { color: var(--ok); }
     .err { color: var(--danger); white-space: pre-wrap; }
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
     .card { border: 1px solid var(--hair); background: var(--surface); cursor: pointer; }
     .card img, .card .ph { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; display: block; }
-    .card .meta { padding: .75rem .85rem 1rem; }
-    .card h3 { margin: 0 0 .25rem; font-size: 14px; font-weight: 500; }
-    .card p { margin: 0; color: var(--mute); font-size: 12px; }
+    .card .meta, .clip .meta { padding: .75rem .85rem 1rem; }
+    .card h3, .clip h3 { margin: 0 0 .25rem; font-size: 14px; font-weight: 500; }
+    .card p, .clip p { margin: 0; color: var(--mute); font-size: 12px; }
     .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
     .clip { border: 1px solid var(--hair); background: var(--surface); }
-    .clip video, .clip img { width: 100%; aspect-ratio: 9/16; object-fit: cover; background: #000; display: block; }
-    .clip .meta { padding: .7rem .8rem 1rem; }
+    .clip video { width: 100%; aspect-ratio: 9/16; object-fit: cover; background: #000; display: block; }
     .job { border: 1px solid var(--hair); padding: 1rem 1.1rem; margin: 0 0 .7rem; background: var(--surface); }
     .bar { height: 3px; background: var(--hair); margin: .7rem 0 0; }
-    .bar > i { display: block; height: 3px; background: var(--signal); width: 0; }
+    .bar > i { display: block; height: 3px; background: var(--signal); }
     .empty { border: 1px dashed var(--hair); padding: 2.5rem 1rem; text-align: center; color: var(--fg2); }
-    video.player { width: min(360px, 100%); background: #000; border: 1px solid var(--hair); }
+    .steps { display: flex; gap: .35rem; margin: 0 0 1.4rem; flex-wrap: wrap; }
+    .steps button { border: 1px solid var(--hair); background: transparent; color: var(--mute); font: 500 12px Geist, system-ui; padding: .4rem .7rem; cursor: pointer; }
+    .steps button.on { color: var(--fg); border-color: var(--signal); }
+    .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin: 0 0 1rem; }
+    .tile { border: 1px solid var(--hair); background: var(--surface); padding: .85rem .9rem; cursor: pointer; text-align: left; color: var(--fg); }
+    .tile.on { border-color: var(--signal); }
+    .tile small { display: block; color: var(--mute); font-size: 12px; margin-top: .25rem; }
+    .foot { display: flex; justify-content: space-between; margin-top: 1.2rem; }
     @media (max-width: 800px) {
       #app { grid-template-columns: 1fr; }
-      aside { flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid var(--hair); overflow-x: auto; }
+      aside { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--hair); overflow-x: auto; }
       nav { display: flex; }
+      .tiles { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <div id="app">
     <aside>
-      <div class="brand">
-        <span class="mark"></span>
-        <div>
-          <div class="brand-name">Hermes Studio</div>
-          <div class="brand-sub">HermesClip</div>
-        </div>
-      </div>
+      <div class="brand"><span class="mark"></span><div><div class="brand-name">Hermes Studio</div><div class="brand-sub">HermesClip</div></div></div>
       <nav>
         <button data-page="create" class="active">Create</button>
         <button data-page="library">Library</button>
@@ -105,15 +79,29 @@
     <main id="main"></main>
   </div>
   <script>
-    const state = { page: "create", jobs: [], library: [], probe: null, open: null, err: "" };
-
-    function $(sel, el = document) { return el.querySelector(sel); }
-    function fmt(n) {
-      if (!n) return "";
-      const s = Math.floor(n % 60).toString().padStart(2, "0");
-      const m = Math.floor(n / 60);
-      return m + ":" + s;
-    }
+    const STEPS = [
+      { id: "video", label: "Video" },
+      { id: "format", label: "Format" },
+      { id: "clips", label: "Clips" },
+      { id: "captions", label: "Captions" },
+      { id: "review", label: "Review" },
+    ];
+    const DUR = [
+      { id: "xshort", label: "Extra short", hint: "10–30s", min: 10, max: 30 },
+      { id: "short", label: "Short", hint: "30–60s", min: 30, max: 60 },
+      { id: "medium", label: "Medium", hint: "1–2m", min: 60, max: 120 },
+      { id: "long", label: "Long", hint: "2–5m", min: 120, max: 300 },
+    ];
+    const state = {
+      page: "create", step: "video", src: "", probe: null, err: "",
+      aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
+      style: "pop", captions: true, pacing: "tight",
+      live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
+      jobs: [], library: [], open: null,
+    };
+    const $ = (s, el = document) => el.querySelector(s);
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    function fmt(n) { if (!n && n !== 0) return ""; const s = Math.floor(n % 60).toString().padStart(2,"0"); return Math.floor(n/60) + ":" + s; }
     async function api(path, opts) {
       const res = await fetch(path, opts);
       const data = await res.json().catch(() => ({}));
@@ -132,13 +120,11 @@
       if (state.page !== "create") render();
     }
     function nav(page) {
-      state.page = page;
-      state.open = null;
+      state.page = page; state.open = null;
       document.querySelectorAll("nav button").forEach(btn => btn.classList.toggle("active", btn.dataset.page === page));
       render();
     }
     document.querySelectorAll("nav button").forEach(btn => btn.addEventListener("click", () => nav(btn.dataset.page)));
-
     function render() {
       const main = $("#main");
       if (state.page === "create") main.innerHTML = createPage();
@@ -146,132 +132,144 @@
       else main.innerHTML = jobsPage();
       bind();
     }
-    function createPage() {
-      const p = state.probe;
-      return `
-        <p class="fig">Fig. 01 · Create</p>
-        <h1>Long video in.<br/>Hook-first shorts.</h1>
-        <p class="lede">YouTube, X, Twitch, a past livestream, or a file on this machine. Live captures a slice, then Clip cuts. Nothing is posted.</p>
-        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
-        <label>Source</label>
-        <input id="src" value="${esc(state.src || "")}" placeholder="https://youtube.com/watch?v=…  ·  x.com/i/broadcasts/…  ·  /path/to/file.mp4" />
-        <p class="hint" id="probe-line">${p ? probeLine(p) : "Paste a link, then Probe — live streams get a timed capture."}</p>
-        <div class="grid2">
-          <div>
-            <label>Layout</label>
-            <select id="layout"><option value="fit">Fit (classic)</option><option value="fill">Fill (punch-in)</option></select>
-          </div>
-          <div>
-            <label>Clips</label>
-            <select id="max_clips"><option>3</option><option>5</option><option>8</option></select>
-          </div>
-          <div>
-            <label>Live slice</label>
-            <select id="live_seconds">
-              <option value="600">10 min</option>
-              <option value="1200" selected>20 min</option>
-              <option value="1800">30 min</option>
-              <option value="3600">60 min</option>
-            </select>
-          </div>
-          <div>
-            <label>Captions</label>
-            <select id="style"><option value="pop">Pop</option><option value="impact">Impact</option><option value="clean">Clean</option></select>
-          </div>
-        </div>
-        <label><input type="checkbox" id="live_from_start" style="width:auto" /> Live from start (YouTube)</label>
-        <div class="row" style="margin-top:1rem">
-          <button class="btn" id="probe-btn">Probe</button>
-          <button class="btn btn-signal" id="run-btn">Queue job</button>
-        </div>
-      `;
+    function stepper() {
+      return `<div class="steps">${STEPS.map(s => `<button data-step="${s.id}" class="${state.step===s.id?"on":""}">${s.label}</button>`).join("")}</div>`;
     }
-    function probeLine(p) {
-      if (!p.ok) return `<span class="err">${esc(p.error || "probe failed")}</span>`;
-      const live = p.is_live ? ` <span class="live">live ${esc(p.live_status || "")}</span>` : (p.duration ? " · " + fmt(p.duration) : "");
-      return `<span class="ok">${esc(p.title)}</span>${live} · ${esc(p.extractor || "")}`;
+    function createPage() {
+      const i = STEPS.findIndex(s => s.id === state.step);
+      const body = { video: videoStep, format: formatStep, clips: clipsStep, captions: capStep, review: reviewStep }[state.step]();
+      return `${stepper()}
+        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
+        ${body}
+        <div class="foot">
+          <button class="btn" id="back" ${i===0?"disabled":""}>Back</button>
+          ${state.step === "review"
+            ? `<button class="btn btn-signal" id="run-btn">Generate</button>`
+            : `<button class="btn btn-signal" id="next">Next</button>`}
+        </div>`;
+    }
+    function videoStep() {
+      const p = state.probe;
+      return `<p class="fig">01 · Video</p><h1>Choose a video</h1>
+        <p class="lede">Local file, YouTube, X, Twitch, or a livestream. Live captures a slice, then Clip cuts. Nothing is posted.</p>
+        <label>Source</label>
+        <input id="src" value="${esc(state.src)}" placeholder="https://youtube.com/…  ·  /path/to/file.mp4" />
+        <p class="hint">${p ? (p.ok ? `<span class="ok">${esc(p.title)}</span>${p.is_live?` <span class="live">live</span>`:""}` : `<span class="err">${esc(p.error)}</span>`) : "Paste a link, then Probe."}</p>
+        <div class="row" style="margin:1rem 0"><button class="btn" id="probe-btn">Probe</button></div>
+        <label><input type="checkbox" id="trim" ${state.trim?"checked":""} style="width:auto"> Clip only part of it</label>
+        ${state.trim ? `<div class="row"><input id="start" placeholder="start 90 or 1:30" value="${esc(state.start)}" style="max-width:180px"><input id="end" placeholder="end" value="${esc(state.end)}" style="max-width:180px"></div>` : ""}
+        <label>Live slice</label>
+        <select id="live_seconds"><option value="600">10 min</option><option value="1200" ${state.live_seconds==1200?"selected":""}>20 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select>
+        <label><input type="checkbox" id="live_from_start" ${state.live_from_start?"checked":""} style="width:auto"> YouTube live from start</label>`;
+    }
+    function formatStep() {
+      return `<p class="fig">02 · Format</p><h1>Format and framing</h1>
+        <p class="lede">Where the clips run, and how each shot is framed — Classic Fit is the whole-frame blur pad.</p>
+        <label>Aspect</label>
+        <div class="tiles">
+          <button class="tile ${state.aspect==="9:16"?"on":""}" data-k="aspect" data-v="9:16">Vertical<small>Shorts, Reels, TikTok · 9:16</small></button>
+          <button class="tile ${state.aspect==="16:9"?"on":""}" data-k="aspect" data-v="16:9">Horizontal<small>YouTube, X · 16:9</small></button>
+        </div>
+        <label>Framing</label>
+        <div class="tiles">
+          <button class="tile ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic<small>Whole frame, blurred pad</small></button>
+          <button class="tile ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Full frame<small>Punch-in crop</small></button>
+        </div>`;
+    }
+    function clipsStep() {
+      return `<p class="fig">03 · Clips</p><h1>Length and count</h1>
+        <div class="tiles">${DUR.map(d => `<button class="tile ${state.dur===d.id?"on":""}" data-k="dur" data-v="${d.id}">${d.label}<small>${d.hint}</small></button>`).join("")}</div>
+        <label>How many</label>
+        <select id="max_clips"><option>3</option><option ${state.max_clips==5?"selected":""}>5</option><option ${state.max_clips==8?"selected":""}>8</option></select>
+        <label>Pacing</label>
+        <select id="pacing"><option value="tight">Tight (cut filler)</option><option value="natural" ${state.pacing==="natural"?"selected":""}>Natural</option></select>`;
+    }
+    function capStep() {
+      const styles = ["pop","impact","clean","glow","neon","boxed"];
+      return `<p class="fig">04 · Captions</p><h1>Word-by-word captions</h1>
+        <label><input type="checkbox" id="captions" ${state.captions?"checked":""} style="width:auto"> Burn captions into each clip</label>
+        <div class="tiles">${styles.map(s => `<button class="tile ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>`;
+    }
+    function reviewStep() {
+      const d = DUR.find(x => x.id === state.dur);
+      return `<p class="fig">05 · Review</p><h1>Generate</h1>
+        <p class="lede">${esc(state.src || "(no source)")}</p>
+        <p class="hint">${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.max_clips} clips · ${state.captions?state.style:"no captions"}</p>
+        <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
     }
     function libraryPage() {
       if (state.open) return runDetail(state.open);
       const runs = state.library;
-      if (!runs.length) return `<p class="fig">Library</p><h1>Every finished run.</h1><div class="empty">No clips yet. Create a job from a long video or a livestream.</div>`;
-      return `<p class="fig">Library</p><h1>${runs.length} run${runs.length===1?"":"s"}.</h1>
-        <div class="cards">${runs.map(runCard).join("")}</div>`;
-    }
-    function runCard(j) {
-      const thumb = (j.clips || []).find(c => c.thumb);
-      const img = thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="" />` : `<div class="ph"></div>`;
-      return `<article class="card" data-open="${j.id}">${img}<div class="meta"><h3>${esc(j.title || j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live ? " · live" : ""}</p></div></article>`;
+      if (!runs.length) return `<p class="fig">Library</p><h1>Every finished run.</h1><div class="empty">Generate clips. They land here, newest first.</div>`;
+      return `<p class="fig">Library</p><h1>${runs.length} run${runs.length===1?"":"s"}.</h1><div class="cards">${runs.map(j => {
+        const thumb = (j.clips||[]).find(c => c.thumb);
+        return `<article class="card" data-open="${j.id}">${thumb?`<img src="/media/${j.id}/${thumb.thumb}" alt="">`:`<div class="ph"></div>`}<div class="meta"><h3>${esc(j.title||j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live?" · live":""}</p></div></article>`;
+      }).join("")}</div>`;
     }
     function runDetail(j) {
-      const clips = (j.clips || []).map(c => `
-        <article class="clip">
-          <video class="player" controls preload="metadata" src="/media/${j.id}/${c.file}"></video>
-          <div class="meta"><h3>${esc(c.title || c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · score ${Number(c.score||0).toFixed(2)}</p></div>
-        </article>`).join("");
-      return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p>
-        <h1>${esc(j.title)}</h1>
+      return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p><h1>${esc(j.title)}</h1>
         <p class="lede">${esc(j.src)}</p>
-        <div class="clips">${clips || "<div class='empty'>No files.</div>"}</div>`;
+        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls preload="metadata" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p></div></article>`).join("")}</div>`;
     }
     function jobsPage() {
       const jobs = state.jobs;
-      if (!jobs.length) return `<p class="fig">Jobs</p><h1>Queue.</h1><div class="empty">Nothing running. Create a clip job.</div>`;
-      return `<p class="fig">Jobs</p><h1>Queue and history.</h1>${jobs.map(jobRow).join("")}`;
+      if (!jobs.length) return `<p class="fig">Jobs</p><h1>Queue.</h1><div class="empty">Nothing running.</div>`;
+      return `<p class="fig">Jobs</p><h1>Queue and history.</h1>${jobs.map(j => {
+        const pct = Math.round((j.progress||0)*100);
+        const retry = (j.status==="failed"||j.status==="cancelled") ? `<button class="btn" data-retry="${j.id}">Retry</button>` : "";
+        const cancel = j.status==="queued" ? `<button class="btn" data-cancel="${j.id}">Cancel</button>` : "";
+        return `<article class="job"><div class="row" style="justify-content:space-between"><strong>${esc(j.title||j.id)}</strong><span class="hint">${esc(j.status)} · ${esc(j.stage||"")}</span></div>
+          <p class="hint">${esc(j.message||j.error||j.src)}</p>
+          <div class="bar"><i style="width:${pct}%"></i></div>
+          <div class="row" style="margin-top:.6rem">${retry}${cancel}</div></article>`;
+      }).join("")}`;
     }
-    function jobRow(j) {
-      const pct = Math.round((j.progress || 0) * 100);
-      return `<article class="job">
-        <div class="row" style="justify-content:space-between">
-          <strong>${esc(j.title || j.id)}</strong>
-          <span class="hint" style="margin:0">${esc(j.status)} · ${esc(j.stage || "")}</span>
-        </div>
-        <p class="hint" style="margin:.4rem 0 0">${esc(j.message || j.error || j.src)}</p>
-        <div class="bar"><i style="width:${pct}%"></i></div>
-      </article>`;
+    function grabForm() {
+      const src = $("#src"); if (src) state.src = src.value.trim();
+      const live = $("#live_seconds"); if (live) state.live_seconds = Number(live.value);
+      const lfs = $("#live_from_start"); if (lfs) state.live_from_start = lfs.checked;
+      const trim = $("#trim"); if (trim) state.trim = trim.checked;
+      const st = $("#start"); if (st) state.start = st.value;
+      const en = $("#end"); if (en) state.end = en.value;
+      const mc = $("#max_clips"); if (mc) state.max_clips = Number(mc.value);
+      const pc = $("#pacing"); if (pc) state.pacing = pc.value;
+      const cap = $("#captions"); if (cap) state.captions = cap.checked;
     }
-    function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function bind() {
+      document.querySelectorAll("[data-step]").forEach(el => el.onclick = () => { grabForm(); state.step = el.dataset.step; render(); });
+      document.querySelectorAll("[data-k]").forEach(el => el.onclick = () => { state[el.dataset.k] = el.dataset.v; render(); });
+      const back = $("#back"); if (back) back.onclick = () => { grabForm(); const i = STEPS.findIndex(s => s.id === state.step); if (i>0) { state.step = STEPS[i-1].id; render(); } };
+      const next = $("#next"); if (next) next.onclick = () => { grabForm(); const i = STEPS.findIndex(s => s.id === state.step); if (i<STEPS.length-1) { state.step = STEPS[i+1].id; render(); } };
       const probeBtn = $("#probe-btn");
-      const runBtn = $("#run-btn");
       if (probeBtn) probeBtn.onclick = async () => {
-        state.err = "";
-        state.src = $("#src").value.trim();
-        try {
-          state.probe = await api("/api/probe?src=" + encodeURIComponent(state.src));
-        } catch (e) { state.probe = { ok: false, error: e.message }; }
+        grabForm(); state.err = "";
+        try { state.probe = await api("/api/probe?src=" + encodeURIComponent(state.src)); }
+        catch (e) { state.probe = { ok: false, error: e.message }; }
         render();
       };
+      const runBtn = $("#run-btn");
       if (runBtn) runBtn.onclick = async () => {
-        state.err = "";
-        state.src = $("#src").value.trim();
+        grabForm(); state.err = "";
+        const d = DUR.find(x => x.id === state.dur) || DUR[1];
         try {
-          const body = {
-            src: state.src,
-            layout: $("#layout").value,
-            max_clips: Number($("#max_clips").value),
-            live_seconds: Number($("#live_seconds").value),
-            live_from_start: $("#live_from_start").checked,
-            style: $("#style").value,
-            plan: "heuristic",
-            whisper: "tiny",
-            pacing: "tight",
-          };
-          await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-          nav("jobs");
-          await refresh();
+          await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            src: state.src, layout: state.layout, aspect: state.aspect, max_clips: state.max_clips,
+            min_sec: d.min, max_sec: d.max, style: state.style, captions: state.captions, pacing: state.pacing,
+            live_seconds: state.live_seconds, live_from_start: state.live_from_start,
+            start_time: state.trim && state.start ? state.start : null,
+            end_time: state.trim && state.end ? state.end : null,
+            plan: "heuristic", whisper: "tiny",
+          })});
+          state.step = "video"; nav("jobs"); await refresh();
         } catch (e) { state.err = e.message; render(); }
       };
-      document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => {
-        state.open = state.library.find(j => j.id === el.dataset.open);
-        render();
-      });
-      const back = $("#back-lib");
-      if (back) back.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
+      document.querySelectorAll("[data-open]").forEach(el => el.onclick = () => { state.open = state.library.find(j => j.id === el.dataset.open); render(); });
+      const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
+      document.querySelectorAll("[data-retry]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.retry+"/retry", { method: "POST" }); refresh(); });
+      document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.cancel+"/cancel", { method: "POST" }); refresh(); });
+      const trim = $("#trim"); if (trim) trim.onchange = () => { grabForm(); render(); };
     }
-    render();
-    refresh();
-    setInterval(refresh, 2500);
+    render(); refresh(); setInterval(refresh, 2500);
   </script>
 </body>
 </html>

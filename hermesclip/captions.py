@@ -74,6 +74,18 @@ STYLES = {
         80,
         0.6,
     ),
+    "glow": Style(
+        "glow", "DejaVu Sans", 50, False, 3,
+        "&H00FFFFFF", "&H00FFCC66", "&H00FFFFFF", "&H00AA5500", 4, 88, 220, 72, 1.0,
+    ),
+    "neon": Style(
+        "neon", "DejaVu Sans", 50, True, 3,
+        "&H00FF66FF", "&H00FFFF00", "&H0000FFFF", "&H00000000", 4, 88, 220, 72, 1.1,
+    ),
+    "boxed": Style(
+        "boxed", "DejaVu Sans", 44, False, 4,
+        "&H00FFFFFF", "&H0000E5FF", "&H00FFFFFF", "&H00E02020", 6, 88, 220, 72, 0.7,
+    ),
 }
 
 

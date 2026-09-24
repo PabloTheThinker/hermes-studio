@@ -61,6 +61,12 @@ class Job:
     max_clips: int = 3
     live_seconds: int = 1200
     live_from_start: bool = False
+    aspect: str = "9:16"
+    captions: bool = True
+    min_sec: float = 12.0
+    max_sec: float = 45.0
+    start_time: float | None = None
+    end_time: float | None = None
     clips: list[dict] = field(default_factory=list)
     work: str = ""
     dir: str = ""
@@ -174,6 +180,12 @@ def new_job(
     layout: str = "fit",
     live_seconds: int = LIVE_DEFAULT_SEC,
     live_from_start: bool = False,
+    aspect: str = "9:16",
+    captions: bool = True,
+    min_sec: float = 12.0,
+    max_sec: float = 45.0,
+    start_time: float | None = None,
+    end_time: float | None = None,
 ) -> Job:
     info: SourceInfo | None = None
     title = src
@@ -209,6 +221,12 @@ def new_job(
         max_clips=max_clips,
         live_seconds=live_seconds,
         live_from_start=live_from_start,
+        aspect=aspect if aspect in ("9:16", "16:9") else "9:16",
+        captions=bool(captions),
+        min_sec=float(min_sec),
+        max_sec=float(max_sec),
+        start_time=start_time,
+        end_time=end_time,
         dir=str(dest),
         work=str(dest / "work"),
     )
@@ -267,32 +285,46 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         )
         bump("transcribe", 0.25, f"Whisper ({job.whisper})")
         tr = transcribe(video, work, model_size=job.whisper)
+        if job.start_time is not None or job.end_time is not None:
+            lo = float(job.start_time or 0.0)
+            hi = float(job.end_time) if job.end_time is not None else 1e9
+            tr.words = [w for w in tr.words if w.end >= lo and w.start <= hi]
         if not tr.words:
             dur = probe_duration(video)
-            tr = Transcript("en", dur, "", [Word("…", 0.0, min(dur, 45.0))])
+            lo = float(job.start_time or 0.0)
+            hi = min(dur, float(job.end_time) if job.end_time is not None else min(dur, lo + job.max_sec))
+            tr = Transcript("en", dur, "", [Word("…", lo, hi)])
 
         bump("plan", 0.55, "Scoring hook-first windows")
+        min_sec = float(job.min_sec or 12.0)
+        max_sec = float(job.max_sec or 45.0)
         plans = None
         if job.plan in ("auto", "grok"):
-            plans = plan_grok(tr, job.max_clips, 12.0, 45.0)
+            plans = plan_grok(tr, job.max_clips, min_sec, max_sec)
         if not plans:
-            plans = plan_heuristic(tr, job.max_clips, 12.0, 45.0)
+            plans = plan_heuristic(tr, job.max_clips, min_sec, max_sec)
         save_plan(plans, work / "plan.json")
 
+        width, height = (1080, 1920) if job.aspect != "16:9" else (1920, 1080)
+        layout = job.layout if job.layout in ("fit", "fill") else "fit"
+        style = job.style if job.captions else "clean"
         written: list[dict] = []
         n = max(len(plans), 1)
         for i, plan in enumerate(plans, 1):
             bump("render", 0.6 + 0.35 * (i - 1) / n, f"Render clip {i:02d}")
             dest = out_dir / f"clip-{i:02d}.mp4"
+            use_tr = tr if job.captions else Transcript(tr.language, tr.duration, tr.text, [])
             render_clip(
                 video,
                 plan,
-                tr,
+                use_tr,
                 dest,
                 work,
+                width=width,
+                height=height,
                 pacing=job.pacing,
-                style=job.style,
-                layout=job.layout,
+                style=style,
+                layout=layout,
             )
             thumb = _thumb(dest, out_dir / f"clip-{i:02d}.jpg")
             written.append(

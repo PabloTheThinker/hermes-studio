@@ -25,12 +25,11 @@ PORT_DEFAULT = 3870
 
 _q: queue.Queue = queue.Queue()
 _lock = threading.Lock()
-_busy: str | None = None
-_cancel: set[str] = set()
+_busy: set[str] = set()
+MAX_PARALLEL_JOBS = 2
 
 
 def _worker() -> None:
-    global _busy
     while True:
         job_id = _q.get()
         try:
@@ -38,20 +37,19 @@ def _worker() -> None:
             if not job or job.status in {"cancelled", "completed"}:
                 continue
             with _lock:
-                _busy = job_id
+                _busy.add(job_id)
             execute_job(job)
         except Exception:
             pass
         finally:
             with _lock:
-                if _busy == job_id:
-                    _busy = None
+                _busy.discard(job_id)
             _q.task_done()
 
 
 def _start_worker() -> None:
-    t = threading.Thread(target=_worker, name="hermesclip-jobs", daemon=True)
-    t.start()
+    for i in range(MAX_PARALLEL_JOBS):
+        threading.Thread(target=_worker, name=f"hermesclip-jobs-{i}", daemon=True).start()
 
 
 def _json(handler: BaseHTTPRequestHandler, code: int, payload: dict | list) -> None:
@@ -62,6 +60,21 @@ def _json(handler: BaseHTTPRequestHandler, code: int, payload: dict | list) -> N
     handler.send_header("Cache-Control", "no-store")
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _seconds(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if ":" in text:
+        parts = [float(p) for p in text.split(":")]
+        if len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    return float(text)
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict:
@@ -95,6 +108,12 @@ class StudioHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         return
 
+    def do_HEAD(self) -> None:  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -123,7 +142,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
         if path == "/api/jobs":
-            return _json(self, 200, {"ok": True, "jobs": [asdict(j) for j in list_jobs()], "busy": _busy})
+            return _json(self, 200, {"ok": True, "jobs": [asdict(j) for j in list_jobs()], "busy": sorted(_busy)})
         if path.startswith("/api/jobs/"):
             job_id = path.split("/")[3]
             job = load_job(job_id)
@@ -167,6 +186,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return _json(self, 400, {"ok": False, "error": "src required"})
             live_seconds = int(body.get("live_seconds") or LIVE_DEFAULT_SEC)
             live_seconds = max(60, min(live_seconds, LIVE_MAX_SEC))
+            start_time = body.get("start_time")
+            end_time = body.get("end_time")
             job = new_job(
                 src,
                 max_clips=int(body.get("max_clips") or 3),
@@ -177,7 +198,29 @@ class StudioHandler(BaseHTTPRequestHandler):
                 layout=str(body.get("layout") or "fit"),
                 live_seconds=live_seconds,
                 live_from_start=bool(body.get("live_from_start")),
+                aspect=str(body.get("aspect") or "9:16"),
+                captions=body.get("captions", True) is not False,
+                min_sec=float(body.get("min_sec") or 12),
+                max_sec=float(body.get("max_sec") or 45),
+                start_time=_seconds(start_time),
+                end_time=_seconds(end_time),
             )
+            _q.put(job.id)
+            return _json(self, 202, {"ok": True, "job": asdict(job)})
+        if path.startswith("/api/jobs/") and path.endswith("/retry"):
+            job_id = path.split("/")[3]
+            job = load_job(job_id)
+            if not job:
+                return _json(self, 404, {"ok": False, "error": "not found"})
+            if job.status not in {"failed", "cancelled"}:
+                return _json(self, 400, {"ok": False, "error": "only failed or cancelled jobs retry"})
+            job.status = "queued"
+            job.stage = "queued"
+            job.progress = 0
+            job.error = None
+            job.message = "Retry queued"
+            job.finished_at = None
+            job.save()
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
         if path.startswith("/api/jobs/") and path.endswith("/cancel"):
