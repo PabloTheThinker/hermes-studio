@@ -97,7 +97,7 @@ def _safe_media(job_id: str, name: str) -> Path | None:
         return None
     if not path.is_file():
         return None
-    if not (name.endswith(".mp4") or name.endswith(".jpg") or name.endswith(".json")):
+    if not name.endswith((".mp4", ".jpg", ".json", ".srt", ".vtt", ".txt")):
         return None
     return path
 
@@ -216,6 +216,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             if not job:
                 return _json(self, 404, {"ok": False, "error": "not found"})
             return _json(self, 200, {"ok": True, "job": asdict(job)})
+        if path == "/api/tools":
+            from hermesclip.tools import catalogue
+
+            return _json(self, 200, {"ok": True, **catalogue()})
         if path == "/api/library":
             jobs = [asdict(j) for j in list_jobs() if j.status == "completed"]
             return _json(self, 200, {"ok": True, "runs": jobs})

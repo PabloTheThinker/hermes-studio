@@ -9,7 +9,7 @@ from pathlib import Path
 TOOLS = [
     {
         "name": "run",
-        "description": "Clip a local file or URL into shorts. Local Whisper + FFmpeg. Does not post.",
+        "description": "Hermes Studio tools: clip, captions, reframe, tighten, transcript. Local Whisper + FFmpeg. Does not post.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -18,8 +18,10 @@ TOOLS = [
                 "max_clips": {"type": "integer", "default": 3},
                 "prompt": {"type": "string"},
                 "keywords": {"type": "string"},
-                "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"]},
+                "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5", "source"]},
                 "layout": {"type": "string", "enum": ["fit", "fill"]},
+                "mode": {"type": "string", "enum": ["clip", "captions", "reframe", "tighten", "transcript"]},
+                "whisper": {"type": "string", "description": "fast | balanced | accurate"},
             },
             "required": ["src"],
         },
@@ -132,6 +134,10 @@ def _call(name: str, args: dict) -> str:
             argv += ["--aspect", str(args["aspect"])]
         if args.get("layout"):
             argv += ["--layout", str(args["layout"])]
+        if args.get("mode"):
+            argv += ["--mode", str(args["mode"])]
+        if args.get("whisper"):
+            argv += ["--whisper", str(args["whisper"])]
         return _cli(argv)
     if name == "captions":
         return _cli(["captions", str(args.get("src") or ""), "--out", str(args.get("out") or str(Path.home() / ".hermes" / "clips"))])

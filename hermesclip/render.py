@@ -43,7 +43,9 @@ def render_clip(
     style: str = "pop",
     layout: str = "fit",
     hook: str = "",
+    captions: bool = True,
 ) -> Path:
+    """Render one clip. Pacing always cuts on the real words; `captions=False` only hides the burn-in."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
     src_w, src_h = probe_size(video)
     face = None
@@ -60,6 +62,8 @@ def render_clip(
         cap_words = tr.words
         cap_start, cap_end = plan.start, plan.end
 
+    if not captions:
+        cap_words = []
     ass = work / f"{out_path.stem}.ass"
     ass.write_text(
         build_ass(

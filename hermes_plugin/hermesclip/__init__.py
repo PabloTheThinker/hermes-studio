@@ -78,6 +78,7 @@ def hermesclip_run(
     min_sec: float = 12,
     max_sec: float = 45,
     keywords: str = "",
+    captions: bool | None = None,
 ) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -103,9 +104,9 @@ def hermesclip_run(
         "--live-seconds",
         str(int(live_seconds) or 1200),
         "--aspect",
-        aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
+        aspect if aspect in ("9:16", "16:9", "1:1", "4:5", "source") else "9:16",
         "--mode",
-        mode if mode in ("clip", "captions") else "clip",
+        mode if mode in ("clip", "captions", "reframe", "tighten", "transcript") else "clip",
         "--min-sec",
         str(float(min_sec) or 12),
         "--max-sec",
@@ -117,19 +118,28 @@ def hermesclip_run(
         argv += ["--keywords", str(keywords)]
     if not hook:
         argv.append("--no-hook")
+    if captions is False:
+        argv.append("--no-captions")
     if live_from_start:
         argv.append("--live-from-start")
     result = _run_mod(argv)
     if not result.get("ok"):
         return json.dumps(result)
     clips = []
-    manifest = out_dir / "manifest.json"
-    if manifest.is_file():
-        try:
-            clips = json.loads(manifest.read_text()).get("clips") or []
-        except Exception:
-            clips = []
-    return json.dumps({"ok": True, "out": str(out_dir), "clips": clips, "log": (result.get("stdout") or "")[-1500:]})
+    stdout = result.get("stdout") or ""
+    head = stdout.split("\ndone", 1)[0]
+    brace = head.rfind("\n{")
+    try:
+        parsed = json.loads(head[brace + 1:] if brace >= 0 else head[head.index("{"):])
+        clips = parsed.get("clips") or []
+    except Exception:
+        manifest = out_dir / "manifest.json"
+        if manifest.is_file():
+            try:
+                clips = json.loads(manifest.read_text()).get("clips") or []
+            except Exception:
+                clips = []
+    return json.dumps({"ok": True, "out": str(out_dir), "mode": mode, "files": clips, "clips": clips, "log": stdout[-1500:]})
 
 
 def hermesclip_captions(
@@ -348,27 +358,34 @@ def register(ctx) -> None:
         toolset="hermesclip",
         schema={
             "name": "hermesclip_run",
-            "description": "HermesClip: cut a local video or URL into captioned 9:16 shorts. Does not post.",
+            "description": "Hermes Studio tools on a local video or URL: mode=clip (hook-first shorts), captions, reframe (change aspect), tighten (cut ums and dead air), transcript (SRT/VTT/TXT). whisper=fast|balanced|accurate. Does not post.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "src": {"type": "string", "description": "Local video path or http(s) URL"},
                     "out": {"type": "string", "description": "Output directory"},
                     "max_clips": {"type": "integer", "default": 3},
-                    "whisper": {"type": "string", "default": "tiny"},
+                    "whisper": {"type": "string", "default": "fast", "description": "fast | balanced | accurate (or a faster-whisper model)"},
                     "pacing": {"type": "string", "enum": ["tight", "natural"], "default": "tight"},
-                    "style": {"type": "string", "enum": ["pop", "impact", "clean"], "default": "pop"},
+                    "style": {"type": "string", "enum": ["pop", "impact", "clean", "glow", "neon", "boxed"], "default": "pop"},
                     "plan": {"type": "string", "enum": ["heuristic", "grok", "auto"], "default": "heuristic"},
                     "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
                     "prompt": {"type": "string"},
                     "keywords": {"type": "string", "description": "Words to highlight in captions"},
-                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"]},
+                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5", "source"]},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["clip", "captions", "reframe", "tighten", "transcript"],
+                        "default": "clip",
+                        "description": "Studio tool: clip=hook-first shorts; captions=caption full take; reframe=change aspect; tighten=cut filler/pauses; transcript=SRT/VTT/TXT only",
+                    },
+                    "captions": {"type": "boolean", "description": "Burn captions (default on for clip/captions)"},
                 },
                 "required": ["src"],
             },
         },
-        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout", "prompt", "keywords", "aspect") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
-        description="HermesClip: cut a local video or URL into captioned 9:16 shorts. Does not post.",
+        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout", "prompt", "keywords", "aspect", "mode", "captions") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
+        description="HermesClip (Hermes Studio): clips, captions, reframe, tighten or transcript. Local only. Does not post.",
     )
     ctx.register_tool(
         name="hermesclip_transcribe",
@@ -479,7 +496,7 @@ def register(ctx) -> None:
                     "whisper": {"type": "string", "default": "tiny"},
                     "style": {"type": "string", "default": "pop"},
                     "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
-                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1"], "default": "9:16"},
+                    "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"], "default": "9:16"},
                     "hook": {"type": "boolean", "default": True},
                 },
                 "required": ["src"],

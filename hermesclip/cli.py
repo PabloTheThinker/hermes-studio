@@ -105,17 +105,18 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--max-clips", type=int, default=3)
     run.add_argument("--min-sec", type=float, default=12)
     run.add_argument("--max-sec", type=float, default=45)
-    run.add_argument("--whisper", default="tiny")
+    run.add_argument("--whisper", default="tiny", help="fast | balanced | accurate, or a faster-whisper model name")
     run.add_argument("--transcript", default="", help="reuse transcript.json")
     run.add_argument("--plan", choices=["auto", "heuristic", "grok"], default="auto")
     run.add_argument("--pacing", choices=["tight", "natural"], default="tight")
     run.add_argument("--prompt", default="", help="ClipAnything-lite hunt words")
     run.add_argument("--keywords", default="", help="Words to highlight in captions (Opus-style)")
     run.add_argument("--recommend", action="store_true", help="Hermes picks settings after analyzing the source")
-    run.add_argument("--mode", choices=["clip", "captions"], default="clip")
+    run.add_argument("--mode", choices=["clip", "captions", "reframe", "tighten", "transcript"], default="clip")
     run.add_argument("--no-hook", action="store_true")
-    run.add_argument("--aspect", choices=["9:16", "16:9", "1:1", "4:5"], default="9:16")
+    run.add_argument("--aspect", choices=["9:16", "16:9", "1:1", "4:5", "source"], default="9:16")
     run.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
+    run.add_argument("--no-captions", action="store_true", help="Cut and frame without burning captions")
     run.add_argument(
         "--layout",
         choices=["fit", "fill"],
@@ -153,6 +154,7 @@ def _run(args: argparse.Namespace) -> int:
         mode=getattr(args, "mode", "clip"),
         aspect=getattr(args, "aspect", "9:16"),
         keywords=getattr(args, "keywords", "") or "",
+        captions=not getattr(args, "no_captions", False),
         on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
     if getattr(args, "recommend", False):

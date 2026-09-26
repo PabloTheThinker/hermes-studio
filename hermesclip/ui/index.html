@@ -4,114 +4,217 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Hermes Studio</title>
+  <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
+    /* Hermes Studio: house structure (Vektra v3) in Hermes colors.
+       Black canvas, warm ink, hairlines, rows not cards, one accent per screen.
+       Accent = Hermes amber (from the Hermes Agent wordmark), not Vektra gold.
+       Ember = the wordmark's echo outline; used only for the brand echo and live state. */
     :root {
-      --ink: #0a0b0e; --surface: #0f1117; --fg: #ececf1; --fg2: #9a9ab2;
-      --mute: #6b6b82; --signal: #3b82f6; --ice: #93c5fd; --hair: rgba(255,255,255,.08);
-      --danger: #f87171; --ok: #34d399;
+      --bg: #0b0b0c;
+      --panel: #111112;
+      --ink: #f2efe8;
+      --mute: rgba(242,239,232,.64);
+      --dim: rgba(242,239,232,.5);
+      --line: rgba(242,239,232,.12);
+      --line-2: rgba(242,239,232,.2);
+      --amber: #ffc83d;
+      --amber-ink: #110c00;
+      --ember: #cd8032;
+      --bad: #ff6b5b;
+      --ease: cubic-bezier(.2,.7,.1,1);
+      --mono: "JetBrains Mono", ui-monospace, monospace;
+      --sans: "Archivo", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; background: var(--ink); color: var(--fg); font-family: Geist, system-ui, sans-serif; }
-    #app { display: grid; grid-template-columns: 200px 1fr; grid-template-rows: 56px 1fr; min-height: 100%; }
-    .top {
-      grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem;
-      padding: 0 1.1rem; border-bottom: 1px solid var(--hair); height: 56px;
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 400 15px/1.5 var(--sans); font-variation-settings: "wdth" 100; -webkit-font-smoothing: antialiased; }
+    ::selection { background: var(--amber); color: var(--amber-ink); }
+    :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+    a { color: inherit; }
+    button { font: inherit; color: inherit; }
+
+    #app { display: grid; grid-template-columns: 248px 1fr; grid-template-rows: 64px 1fr; min-height: 100%; }
+
+    /* Top bar */
+    .top { grid-column: 1 / -1; display: flex; align-items: center; gap: 1.25rem; padding: 0 1.25rem; border-bottom: 1px solid var(--line); background: var(--bg); position: sticky; top: 0; z-index: 5; }
+    .word { position: relative; font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; letter-spacing: .04em; font-size: 15px; line-height: 1; white-space: nowrap; }
+    .word b { color: var(--amber); font-weight: 800; }
+    /* the Hermes echo: one offset outline, like the Agent wordmark */
+    .word::after { content: attr(data-t); position: absolute; left: 3px; top: 3px; color: transparent; -webkit-text-stroke: 1px var(--ember); opacity: .55; z-index: -1; pointer-events: none; }
+    .search { flex: 1; max-width: 440px; }
+    .search input { height: 36px; margin: 0; }
+    .top-meta { margin-left: auto; display: flex; align-items: center; gap: 1rem; font: 500 11px var(--mono); color: var(--dim); letter-spacing: .04em; }
+    .top-meta .run { color: var(--ember); }
+
+    /* Rail */
+    aside { border-right: 1px solid var(--line); padding: 1rem 0 1.5rem; display: flex; flex-direction: column; gap: 1.4rem; overflow: auto; }
+    .rail-h { font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); padding: 0 1.25rem; margin: 0 0 .35rem; }
+    .rail button { display: flex; align-items: baseline; gap: .6rem; width: 100%; background: none; border: 0; border-left: 2px solid transparent; padding: .5rem 1.25rem .5rem calc(1.25rem - 2px); text-align: left; cursor: pointer; color: var(--mute); transition: color .2s var(--ease); }
+    .rail button:hover { color: var(--ink); }
+    .rail button.on { color: var(--ink); border-left-color: var(--amber); }
+    .rail .nm { font-weight: 600; font-size: 14px; }
+    .rail .ct { margin-left: auto; font: 500 11px var(--mono); color: var(--dim); }
+    .rail .ct.live { color: var(--ember); }
+    .rail-foot { margin-top: auto; padding: 0 1.25rem; font-size: 12px; color: var(--dim); line-height: 1.45; }
+
+    main { padding: 2rem clamp(1.25rem, 3vw, 3rem) 4rem; overflow: auto; }
+    .wrap { max-width: 980px; }
+
+    /* Type */
+    .kicker { font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin: 0 0 .6rem; }
+    .kicker a { color: var(--mute); text-decoration: none; border-bottom: 1px solid var(--line-2); }
+    .kicker a:hover { color: var(--ink); border-color: var(--amber); }
+    h1 { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: clamp(30px, 3.6vw, 52px); line-height: .9; letter-spacing: -.01em; margin: 0 0 .8rem; text-wrap: balance; }
+    h2 { font-weight: 600; font-variation-settings: "wdth" 104; font-size: 20px; letter-spacing: -.01em; margin: 0; }
+    .lede { color: var(--mute); max-width: 60ch; margin: 0 0 1.6rem; text-wrap: pretty; }
+    .hint { color: var(--dim); font-size: 13px; }
+    .mono { font-family: var(--mono); font-size: 12px; }
+    .err { color: var(--bad); white-space: pre-wrap; border-left: 2px solid var(--bad); padding: .4rem .8rem; margin: 0 0 1rem; }
+    .ok { color: var(--ink); }
+
+    /* Forms */
+    label.f { display: block; font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin: 0 0 .45rem; }
+    input, select { width: 100%; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 0; padding: .7rem .85rem; font: 14px var(--sans); margin: 0 0 1rem; transition: border-color .2s var(--ease); }
+    input:focus, select:focus { border-color: var(--amber); outline: none; }
+    input::placeholder { color: var(--dim); }
+    .check { display: flex; align-items: center; gap: .6rem; font-size: 14px; color: var(--mute); margin: 0 0 .8rem; cursor: pointer; }
+    .check input { width: 16px; height: 16px; margin: 0; accent-color: var(--amber); }
+    .row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+    .row > input { margin: 0; }
+
+    /* Buttons: one primary per screen */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-height: 44px; padding: 0 1.1rem; border: 1px solid var(--line-2); background: transparent; color: var(--ink); font: 600 12px var(--sans); letter-spacing: .2em; text-transform: uppercase; cursor: pointer; transition: background .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease); }
+    .btn:hover { border-color: var(--ink); }
+    .btn:disabled { opacity: .4; cursor: default; }
+    .btn.primary { border-color: var(--amber); }
+    .btn.primary:hover { background: var(--amber); color: var(--amber-ink); }
+    .btn.sm { min-height: 32px; padding: 0 .7rem; font-size: 11px; letter-spacing: .14em; }
+    .btn.quiet { border-color: transparent; color: var(--mute); padding: 0 .4rem; }
+    .btn.quiet:hover { color: var(--ink); }
+
+    /* Tool picker: index rows */
+    .index { border-top: 1px solid var(--line); margin: 0 0 2rem; }
+    .index-row { display: grid; grid-template-columns: 180px 1fr 160px 20px; gap: 1.25rem; align-items: baseline; width: 100%; background: none; border: 0; border-bottom: 1px solid var(--line); padding: 1.15rem 0; text-align: left; cursor: pointer; color: var(--ink); }
+    .index-row .name { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 22px; line-height: 1; letter-spacing: .01em; transition: color .2s var(--ease); }
+    .index-row .desc { color: var(--mute); }
+    .index-row .desc b { display: block; color: var(--ink); font-weight: 600; margin-bottom: .15rem; }
+    .index-row .out { font: 500 12px var(--mono); color: var(--dim); }
+    .index-row .arw { color: var(--dim); transition: transform .2s var(--ease), color .2s var(--ease); }
+    .index-row:hover .name, .index-row.on .name { color: var(--amber); }
+    .index-row:hover .arw { transform: translateX(4px); color: var(--amber); }
+
+    /* Settings: hairline sections */
+    .sec { border-top: 1px solid var(--line); padding: 1.25rem 0 .4rem; display: grid; grid-template-columns: 180px 1fr; gap: 1.25rem; }
+    .sec > h3 { margin: 0; font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--mute); padding-top: .3rem; }
+    .opts { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); margin: 0 0 1rem; width: fit-content; max-width: 100%; }
+    .opt { background: none; border: 0; border-right: 1px solid var(--line); padding: .6rem .9rem; cursor: pointer; text-align: left; color: var(--mute); min-width: 92px; transition: color .2s var(--ease), background .2s var(--ease); }
+    .opt:last-child { border-right: 0; }
+    .opt:hover { color: var(--ink); }
+    .opt.on { color: var(--ink); background: rgba(255,200,61,.08); box-shadow: inset 0 -2px 0 var(--amber); }
+    .opt small { display: block; font: 500 11px var(--mono); color: var(--dim); margin-top: .15rem; }
+
+    .picked { display: flex; align-items: baseline; gap: 1rem; margin: 0 0 1.4rem; }
+    .picked .name { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: clamp(30px, 3.6vw, 52px); line-height: .9; }
+    .why { list-style: none; padding: 0; margin: 0 0 1rem; }
+    .why li { color: var(--mute); padding: .3rem 0 .3rem 1rem; border-left: 1px solid var(--amber); margin-bottom: .3rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; border-top: 1px solid var(--line); padding-top: 1.25rem; margin-top: .6rem; }
+    .actions .spacer { flex: 1; }
+
+    /* Library rows */
+    .runs { border-top: 1px solid var(--line); }
+    .run-row { display: grid; grid-template-columns: 72px 1fr 110px 90px; gap: 1rem; align-items: center; padding: .8rem 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .run-row img, .run-row .ph { width: 72px; height: 72px; object-fit: cover; background: var(--panel); display: block; }
+    .run-row h3 { margin: 0 0 .15rem; font-size: 15px; font-weight: 600; transition: color .2s var(--ease); }
+    .run-row p { margin: 0; color: var(--dim); font-size: 13px; }
+    .run-row:hover h3 { color: var(--amber); }
+    .tag { font: 600 11px var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--mute); }
+    .score { font: 500 13px var(--mono); color: var(--ink); text-align: right; }
+
+    /* Run detail */
+    .files { border-top: 1px solid var(--line); margin: 0 0 1.5rem; }
+    .files a { display: flex; justify-content: space-between; padding: .7rem 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+    .files a:hover { color: var(--amber); }
+    .files a span { font: 500 12px var(--mono); color: var(--dim); }
+    .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 1.5rem 1.25rem; }
+    .clip video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; display: block; border: 1px solid var(--line); }
+    .clip.wide video { aspect-ratio: 16/9; }
+    .clip h3 { margin: .7rem 0 .15rem; font-size: 14px; font-weight: 600; }
+    .clip p { margin: 0 0 .5rem; color: var(--dim); font: 500 12px var(--mono); }
+    .clip .row { gap: .3rem; }
+    .clip input { width: 88px; height: 32px; padding: 0 .5rem; font-size: 12px; margin: 0; }
+    .copy { border-left: 2px solid var(--amber); padding: .2rem 0 .2rem 1rem; margin: 0 0 1.5rem; }
+    .copy ul { margin: 0 0 .6rem; padding-left: 1.1rem; }
+    pre.tx { white-space: pre-wrap; font: 14px/1.6 var(--sans); color: var(--mute); background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.2rem; max-height: 420px; overflow: auto; margin: 0 0 1.5rem; }
+
+    /* Jobs */
+    .job { border-bottom: 1px solid var(--line); padding: 1rem 0; }
+    .job:first-of-type { border-top: 1px solid var(--line); }
+    .job .head { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+    .job strong { font-weight: 600; }
+    .st { font: 500 12px var(--mono); color: var(--dim); white-space: nowrap; }
+    .st.running { color: var(--ember); }
+    .st.failed { color: var(--bad); }
+    .bar { height: 2px; background: var(--line); margin: .7rem 0 0; }
+    .bar > i { display: block; height: 2px; background: var(--amber); transition: width .6s var(--ease); }
+    .empty { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 2.5rem 0; color: var(--mute); }
+
+    @media (max-width: 860px) {
+      #app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+      .top { flex-wrap: wrap; height: auto; padding: .8rem 1rem; gap: .7rem; }
+      .search { order: 3; max-width: none; flex-basis: 100%; }
+      aside { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--line); padding: 0; overflow-x: auto; gap: 0; }
+      .rail-h, .rail-foot, .rail.tools-rail { display: none; }
+      .rail { display: flex; }
+      .rail button { border-left: 0; border-bottom: 2px solid transparent; padding: .8rem 1rem; }
+      .rail button.on { border-bottom-color: var(--amber); }
+      .index-row { grid-template-columns: 1fr 20px; }
+      .index-row .desc { grid-column: 1; }
+      .index-row .out { display: none; }
+      .sec { grid-template-columns: 1fr; gap: .5rem; }
+      .run-row { grid-template-columns: 56px 1fr 60px; }
+      .run-row img, .run-row .ph { width: 56px; height: 56px; }
+      .run-row .tag { display: none; }
     }
-    .top .brand { padding: 0; }
-    .top-search { flex: 1; max-width: 480px; margin: 0; }
-    .top-search input { margin: 0; height: 36px; padding: .45rem .75rem; }
-    .pill {
-      font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .12em;
-      text-transform: uppercase; color: var(--ice); border: 1px solid var(--hair);
-      padding: 4px 8px; white-space: nowrap;
-    }
-    .top-actions { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
-    aside { border-right: 1px solid var(--hair); padding: 1rem .7rem; display: flex; flex-direction: column; gap: .35rem; }
-    .brand { display: flex; align-items: center; gap: .6rem; padding: .35rem .55rem 1rem; }
-    .mark { width: 12px; height: 22px; border: 1px solid var(--signal); background: linear-gradient(180deg, var(--signal), #0a1f6b); }
-    .brand-name { font-family: "Instrument Serif", serif; font-size: 1.05rem; }
-    .brand-sub { font-family: "Geist Mono", monospace; font-size: 9px; letter-spacing: .16em; color: var(--mute); text-transform: uppercase; }
-    nav button { display: flex; width: 100%; background: transparent; border: 0; color: var(--fg2); font: 500 13px Geist, system-ui; padding: .55rem .7rem; cursor: pointer; text-align: left; }
-    nav button.active { color: var(--fg); background: rgba(59,130,246,.12); }
-    .badge { margin-left: auto; font-family: "Geist Mono", monospace; font-size: 10px; background: var(--signal); color: #061018; padding: 1px 6px; }
-    main { padding: 1.6rem 2rem 3rem; overflow: auto; max-width: 920px; }
-    .fig { font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .18em; color: var(--signal); text-transform: uppercase; margin: 0 0 .4rem; }
-    h1 { font-family: "Instrument Serif", serif; font-size: 2.2rem; font-weight: 400; margin: 0 0 .4rem; }
-    .lede { color: var(--fg2); margin: 0 0 1.2rem; line-height: 1.5; }
-    label { display: block; font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); margin: 0 0 .35rem; }
-    input, select { width: 100%; background: var(--surface); color: var(--fg); border: 1px solid var(--hair); padding: .7rem .8rem; font: 14px Geist, system-ui; margin: 0 0 1rem; }
-    .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
-    .btn { display: inline-flex; align-items: center; min-height: 40px; padding: .55rem 1rem; border: 1px solid var(--hair); background: transparent; color: var(--fg); font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
-    .btn-signal { background: var(--signal); border-color: var(--signal); color: #061018; }
-    .hint { color: var(--mute); font-size: 13px; }
-    .live { color: var(--danger); font-family: "Geist Mono", monospace; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
-    .ok { color: var(--ok); }
-    .err { color: var(--danger); white-space: pre-wrap; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
-    .chip {
-      position: absolute; top: .5rem; right: .5rem;
-      font-family: "Geist Mono", monospace; font-size: 10px; letter-spacing: .08em;
-      background: #0a0b0e; color: var(--ice); border: 1px solid var(--hair); padding: 2px 6px;
-    }
-    .card { position: relative; border: 1px solid var(--hair); background: var(--surface); cursor: pointer; }
-    .card img, .card .ph { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; display: block; }
-    .card .meta, .clip .meta { padding: .75rem .85rem 1rem; }
-    .card h3, .clip h3 { margin: 0 0 .25rem; font-size: 14px; font-weight: 500; }
-    .card p, .clip p { margin: 0; color: var(--mute); font-size: 12px; }
-    .clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1rem; }
-    .clip { border: 1px solid var(--hair); background: var(--surface); }
-    .clip video { width: 100%; aspect-ratio: 9/16; object-fit: cover; background: #000; display: block; }
-    .job { border: 1px solid var(--hair); padding: 1rem 1.1rem; margin: 0 0 .7rem; background: var(--surface); }
-    .bar { height: 3px; background: var(--hair); margin: .7rem 0 0; }
-    .bar > i { display: block; height: 3px; background: var(--signal); }
-    .empty { border: 1px dashed var(--hair); padding: 2.5rem 1rem; text-align: center; color: var(--fg2); }
-    .steps { display: flex; gap: .35rem; margin: 0 0 1.4rem; flex-wrap: wrap; }
-    .steps button { border: 1px solid var(--hair); background: transparent; color: var(--mute); font: 500 12px Geist, system-ui; padding: .4rem .7rem; cursor: pointer; }
-    .steps button.on { color: var(--fg); border-color: var(--signal); }
-    .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin: 0 0 1rem; }
-    .tile { border: 1px solid var(--hair); background: var(--surface); padding: .85rem .9rem; cursor: pointer; text-align: left; color: var(--fg); }
-    .tile.on { border-color: var(--signal); }
-    .tile small { display: block; color: var(--mute); font-size: 12px; margin-top: .25rem; }
-    .foot { display: flex; justify-content: space-between; margin-top: 1.2rem; }
-    @media (max-width: 800px) {
-      #app { grid-template-columns: 1fr; }
-      aside { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--hair); overflow-x: auto; }
-      nav { display: flex; }
-      .tiles { grid-template-columns: 1fr; }
-    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
   </style>
 </head>
 <body>
   <div id="app">
     <header class="top">
-      <div class="brand"><span class="mark"></span><div><div class="brand-name">Hermes Studio</div><div class="brand-sub">HermesClip</div></div></div>
-      <div class="top-search"><input id="q" placeholder="Search clips, titles, sources" /></div>
-      <div class="top-actions">
-        <span class="pill" id="top-where">Create</span>
-        <span class="pill" id="top-live" hidden></span>
-        <span class="pill">Local · no post</span>
-        <button class="btn btn-signal" id="new-clip">New clip</button>
-      </div>
+      <span class="word" data-t="Hermes Studio">Hermes <b>Studio</b></span>
+      <div class="search"><input id="q" placeholder="Search runs, titles, sources" aria-label="Search library" /></div>
+      <div class="top-meta"><span id="top-live" class="run" hidden></span><span>Local · never posts</span></div>
     </header>
     <aside>
-      <nav>
-        <button data-page="create" class="active">Create</button>
-        <button data-page="library">Library</button>
-        <button data-page="jobs">Jobs <span class="badge" id="job-badge" hidden>0</span></button>
-      </nav>
+      <div>
+        <p class="rail-h">Desk</p>
+        <nav class="rail" id="pages">
+          <button data-page="create" class="on"><span class="nm">New</span></button>
+          <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct"></span></button>
+          <button data-page="jobs"><span class="nm">Jobs</span><span class="ct" id="job-ct"></span></button>
+        </nav>
+      </div>
+      <div>
+        <p class="rail-h">Tools</p>
+        <nav class="rail tools-rail" id="tool-rail"></nav>
+      </div>
+      <p class="rail-foot">Whisper and FFmpeg on this machine. Files stay here. You post.</p>
     </aside>
-    <main id="main"></main>
+    <main id="main"><div class="wrap"></div></main>
   </div>
   <script>
-    const STEPS = [
-      { id: "video", label: "Video" },
-      { id: "format", label: "Format" },
-      { id: "clips", label: "Clips" },
-      { id: "captions", label: "Captions" },
-      { id: "review", label: "Review" },
+    const FALLBACK_TOOLS = [
+      { id: "clip", name: "Clips", verb: "Find the moments", line: "Long video in. Hook-first shorts out, scored and captioned.", output: "3–8 short clips", defaults: { aspect: "9:16", layout: "fit", captions: true, hook: true, pacing: "tight" }, settings: ["hunt","range","format","length","captions"] },
+      { id: "captions", name: "Captions", verb: "Caption the whole take", line: "Word-by-word captions on the full video. No cutting.", output: "1 captioned video", defaults: { aspect: "9:16", layout: "fit", captions: true, hook: false, pacing: "natural" }, settings: ["range","format","captions"] },
+      { id: "reframe", name: "Reframe", verb: "Change the shape", line: "16:9 to 9:16, 4:5 or 1:1.", output: "1 reshaped video", defaults: { aspect: "9:16", layout: "fill", captions: false, hook: false, pacing: "natural" }, settings: ["range","format","captions"] },
+      { id: "tighten", name: "Tighten", verb: "Cut the dead air", line: "Drops ums and long pauses.", output: "1 tighter video", defaults: { aspect: "source", layout: "fit", captions: false, hook: false, pacing: "tight" }, settings: ["range","format","captions"] },
+      { id: "transcript", name: "Transcript", verb: "Get the words", line: "SRT, VTT and text.", output: ".srt · .vtt · .txt", defaults: { captions: false, hook: false }, settings: ["range","quality"] },
+    ];
+    const FALLBACK_QUALITY = [
+      { id: "fast", name: "Fast", line: "Quickest" }, { id: "balanced", name: "Balanced", line: "Accents, noise" }, { id: "accurate", name: "Accurate", line: "Best words" },
     ];
     const DUR = [
       { id: "xshort", label: "Extra short", hint: "10–30s", min: 10, max: 30 },
@@ -120,153 +223,179 @@
       { id: "long", label: "Long", hint: "2–5m", min: 120, max: 300 },
       { id: "midform", label: "Mid-form", hint: "3–15m", min: 180, max: 900 },
     ];
+    const ASPECTS = [
+      { v: "9:16", l: "Vertical", h: "Shorts · Reels · TikTok" },
+      { v: "4:5", l: "Portrait", h: "Instagram feed" },
+      { v: "1:1", l: "Square", h: "Feed" },
+      { v: "16:9", l: "Horizontal", h: "YouTube · X" },
+    ];
+    const STYLES = ["pop", "impact", "clean", "glow", "neon", "boxed"];
+    const TOOL_LABEL = { clip: "Clips", captions: "Captions", reframe: "Reframe", tighten: "Tighten", transcript: "Transcript" };
+
     const state = {
-      page: "create", step: "video", src: "", probe: null, err: "",
+      page: "create", tool: null, tools: FALLBACK_TOOLS, quality: FALLBACK_QUALITY,
+      src: "", probe: null, err: "",
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
-      style: "pop", captions: true, pacing: "tight",
+      style: "pop", captions: true, pacing: "tight", whisper: "fast",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
-      prompt: "", q: "", hook: true, mode: "clip", path: "wizard", why: [], keywords: "",
-      jobs: [], library: [], open: null, copy: null,
+      prompt: "", q: "", hook: true, why: [], keywords: "", picked: false,
+      jobs: [], library: [], open: null, copy: null, trash: [], tx: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-    function fmt(n) { if (!n && n !== 0) return ""; const s = Math.floor(n % 60).toString().padStart(2,"0"); return Math.floor(n/60) + ":" + s; }
+    const fmt = (n) => { if (!n && n !== 0) return ""; const s = Math.floor(n % 60).toString().padStart(2, "0"); return Math.floor(n / 60) + ":" + s; };
+    const toolById = (id) => state.tools.find(t => t.id === id);
     async function api(path, opts) {
       const res = await fetch(path, opts);
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
       return data;
     }
+
+    async function loadTools() {
+      try { const d = await api("/api/tools"); if (d.tools && d.tools.length) state.tools = d.tools; if (d.quality) state.quality = d.quality; } catch {}
+      renderRail(); render();
+    }
+    function renderRail() {
+      $("#tool-rail").innerHTML = state.tools.map(t => `<button data-tool="${t.id}" class="${state.page==="create"&&state.tool===t.id?"on":""}"><span class="nm">${esc(t.name)}</span></button>`).join("");
+      document.querySelectorAll("#tool-rail [data-tool]").forEach(b => b.onclick = () => pickTool(b.dataset.tool));
+      document.querySelectorAll("#pages [data-page]").forEach(b => b.classList.toggle("on", b.dataset.page === state.page && !(state.page === "create" && state.tool)));
+    }
+    function pickTool(id) {
+      grabForm();
+      const t = toolById(id); if (!t) return;
+      state.tool = id; state.page = "create"; state.open = null; state.err = ""; state.why = []; state.picked = false;
+      Object.assign(state, t.defaults || {});
+      renderRail(); render();
+    }
+
     async function refresh() {
-      const jobs = await api("/api/jobs");
-      state.jobs = jobs.jobs || [];
-      const lib = await api("/api/library");
-      state.library = lib.runs || [];
-      if (state.open && state.open.id) {
-        try {
-          const t = await api("/api/trash?job=" + encodeURIComponent(state.open.id));
-          state.trash = t.files || [];
-        } catch { state.trash = []; }
-      } else { state.trash = []; }
+      try {
+        const jobs = await api("/api/jobs"); state.jobs = jobs.jobs || [];
+        const lib = await api("/api/library"); state.library = lib.runs || [];
+      } catch { return; }
       const live = state.jobs.filter(j => j.status === "queued" || j.status === "running").length;
-      const b = $("#job-badge");
-      b.hidden = live === 0;
-      b.textContent = live;
-      const tl = $("#top-live");
-      if (tl) {
-        tl.textContent = live ? live + " running" : "";
-        tl.hidden = !live;
-      }
+      $("#job-ct").textContent = live ? live + " live" : (state.jobs.length || "");
+      $("#job-ct").classList.toggle("live", !!live);
+      $("#lib-ct").textContent = state.library.length || "";
+      const running = state.jobs.filter(j => j.status === "running").length, queued = live - running;
+      const tl = $("#top-live"); tl.textContent = [running ? running + " running" : "", queued ? queued + " queued" : ""].filter(Boolean).join(" · "); tl.hidden = !live;
       if (state.page === "create") return;
       if (state.page === "library" && state.open) return;
-      const sig = JSON.stringify(state.jobs.map(j => [j.id, j.status, j.progress, j.message]));
-      if (sig === state.sig && state.page === "jobs") return;
-      state.sig = sig;
-      render();
+      const sig = JSON.stringify([state.page, state.q, state.jobs.map(j => [j.id, j.status, j.progress, j.message]), state.library.length]);
+      if (sig === state.sig) return;
+      state.sig = sig; render();
     }
     function nav(page) {
-      state.page = page; state.open = null;
-      document.querySelectorAll("nav button").forEach(btn => btn.classList.toggle("active", btn.dataset.page === page));
-      render();
+      grabForm();
+      state.page = page; state.open = null; state.tx = null;
+      if (page === "create") state.tool = null;
+      renderRail(); render();
     }
-    document.querySelectorAll("nav button").forEach(btn => btn.addEventListener("click", () => nav(btn.dataset.page)));
+    document.querySelectorAll("#pages [data-page]").forEach(b => b.addEventListener("click", () => nav(b.dataset.page)));
+
     function render() {
-      const main = $("#main");
-      const where = $("#top-where");
-      if (state.page === "create") main.innerHTML = createPage();
-      else if (state.page === "library") main.innerHTML = libraryPage();
-      else main.innerHTML = jobsPage();
-      if (where) {
-        if (state.page === "library" && state.open) where.textContent = (state.open.title || "Run").slice(0, 40);
-        else if (state.page === "library") where.textContent = "Library · " + (state.library || []).length;
-        else if (state.page === "jobs") where.textContent = "Jobs · " + (state.jobs || []).length;
-        else where.textContent = "Create";
-      }
+      const main = $("#main .wrap");
+      main.innerHTML = state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : jobsPage();
       bind();
     }
-    function stepper() {
-      return `<div class="steps">${STEPS.map(s => `<button data-step="${s.id}" class="${state.step===s.id?"on":""}">${s.label}</button>`).join("")}</div>`;
-    }
+
+    /* ---------- Create ---------- */
     function createPage() {
-      const i = STEPS.findIndex(s => s.id === state.step);
-      const body = { video: videoStep, format: formatStep, clips: clipsStep, captions: capStep, review: reviewStep }[state.step]();
-      return `${stepper()}
+      if (!state.tool) return toolPicker();
+      const t = toolById(state.tool);
+      const on = (k) => (t.settings || []).includes(k);
+      return `<p class="kicker"><a href="#" id="all-tools">All tools</a></p>
+        <div class="picked"><span class="name">${esc(t.name)}</span><span class="hint">${esc(t.output)}</span></div>
+        <p class="lede">${esc(t.line)}</p>
         ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
-        ${body}
-        <div class="foot">
-          <button class="btn" id="back" ${i===0?"disabled":""}>Back</button>
-          ${state.step === "review"
-            ? `<button class="btn btn-signal" id="run-btn">Generate</button>`
-            : state.step === "video"
-            ? `<div class="row"><button class="btn" id="next">Settings</button><button class="btn btn-signal" id="best-btn">Best recommendation</button></div>`
-            : `<button class="btn btn-signal" id="next">Next</button>`}
+        ${sourceSec()}
+        ${state.why.length ? `<section class="sec"><h3>Hermes pick</h3><div><ul class="why">${state.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul></div></section>` : ""}
+        ${on("hunt") ? huntSec() : ""}
+        ${on("range") ? rangeSec() : ""}
+        ${on("format") ? formatSec(t) : ""}
+        ${on("length") ? lengthSec() : ""}
+        ${on("captions") ? captionSec(t) : ""}
+        ${qualitySec()}
+        <div class="actions">
+          ${t.id === "clip" ? `<button class="btn" id="best-btn">Let Hermes pick</button>` : ""}
+          <span class="spacer"></span>
+          <span class="hint">${summary(t)}</span>
+          <button class="btn primary" id="run-btn">Run ${esc(t.name)}</button>
         </div>`;
     }
-    function videoStep() {
+    function toolPicker() {
+      return `<p class="kicker">New run</p><h1>Pick a tool.</h1>
+        <p class="lede">Each tool is one job on your video. Everything runs on this machine, and nothing is posted.</p>
+        <div class="index">${state.tools.map(t => `<button class="index-row" data-tool="${t.id}">
+          <span class="name">${esc(t.name)}</span>
+          <span class="desc"><b>${esc(t.verb)}</b>${esc(t.line)}</span>
+          <span class="out">${esc(t.output)}</span><span class="arw" aria-hidden="true">→</span></button>`).join("")}</div>`;
+    }
+    function sourceSec() {
       const p = state.probe;
-      return `<p class="fig">01 · Video</p><h1>Choose a video</h1>
-        <p class="lede">Local file, YouTube, X, Twitch, or a livestream. Pick <em>Best recommendation</em> and Hermes analyzes the source, or walk Settings yourself. Nothing is posted.</p>
-        <label>Source</label>
-        <input id="src" value="${esc(state.src)}" placeholder="https://youtube.com/…  ·  /path/to/file.mp4" />
-        <p class="hint">${p ? (p.ok ? `<span class="ok">${esc(p.title)}</span>${p.is_live?` <span class="live">live</span>`:""}` : `<span class="err">${esc(p.error)}</span>`) : "Paste a link, then Probe."}</p>
-        <div class="row" style="margin:1rem 0"><button class="btn" id="probe-btn">Probe</button></div>
-        <label><input type="checkbox" id="trim" ${state.trim?"checked":""} style="width:auto"> Clip only part of it</label>
-        ${state.trim ? `<div class="row"><input id="start" placeholder="start 90 or 1:30" value="${esc(state.start)}" style="max-width:180px"><input id="end" placeholder="end" value="${esc(state.end)}" style="max-width:180px"></div>` : ""}
-        <label>Job</label>
-        <div class="tiles">
-          <button class="tile ${state.mode==="clip"?"on":""}" data-k="mode" data-v="clip">Clips<small>Hook-first shorts</small></button>
-          <button class="tile ${state.mode==="captions"?"on":""}" data-k="mode" data-v="captions">Captions only<small>Burn on the full take</small></button>
-        </div>
-        <label>Hunt (optional)</label>
-        <input id="prompt" value="${esc(state.prompt)}" placeholder="ClipAnything-lite: e.g. money, mistake, wait what" />
-        <label>Live slice</label>
-        <select id="live_seconds"><option value="600">10 min</option><option value="1200" ${state.live_seconds==1200?"selected":""}>20 min</option><option value="1800">30 min</option><option value="3600">60 min</option></select>
-        <label><input type="checkbox" id="live_from_start" ${state.live_from_start?"checked":""} style="width:auto"> YouTube live from start</label>`;
+      const probeLine = p ? (p.ok ? `<span class="ok">${esc(p.title)}</span>${p.duration ? ` <span class="mono">${fmt(p.duration)}</span>` : ""}${p.is_live ? ` <span class="mono" style="color:var(--ember)">LIVE</span>` : ""}` : `<span style="color:var(--bad)">${esc(p.error)}</span>`) : "File path, YouTube, X, Twitch or a livestream.";
+      return `<section class="sec"><h3>Source</h3><div>
+        <div class="row" style="flex-wrap:nowrap"><input id="src" value="${esc(state.src)}" placeholder="https://youtube.com/…  or  /path/to/video.mp4" /><button class="btn" id="probe-btn" style="margin-bottom:1rem">Check</button></div>
+        <p class="hint" style="margin:-.4rem 0 1rem">${probeLine}</p></div></section>`;
     }
-    function formatStep() {
-      return `<p class="fig">02 · Format</p><h1>Format and framing</h1>
-        <p class="lede">Where the clips run, and how each shot is framed — Classic Fit is the whole-frame blur pad.</p>
-        <label>Aspect</label>
-        <div class="tiles">
-          <button class="tile ${state.aspect==="9:16"?"on":""}" data-k="aspect" data-v="9:16">Vertical<small>Shorts, Reels, TikTok · 9:16</small></button>
-          <button class="tile ${state.aspect==="4:5"?"on":""}" data-k="aspect" data-v="4:5">Portrait<small>Instagram feed · 4:5</small></button>
-          <button class="tile ${state.aspect==="1:1"?"on":""}" data-k="aspect" data-v="1:1">Square<small>Feed · 1:1</small></button>
-          <button class="tile ${state.aspect==="16:9"?"on":""}" data-k="aspect" data-v="16:9">Horizontal<small>YouTube, X · 16:9</small></button>
-        </div>
-        <label>Framing</label>
-        <div class="tiles">
-          <button class="tile ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic<small>Whole frame, blurred pad</small></button>
-          <button class="tile ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Full frame<small>Punch-in on the speaker</small></button>
-        </div>`;
+    function huntSec() {
+      return `<section class="sec"><h3>Hunt</h3><div>
+        <input id="prompt" value="${esc(state.prompt)}" placeholder="Optional. Words to hunt for: money, mistake, wait what" />
+        </div></section>`;
     }
-    function clipsStep() {
-      return `<p class="fig">03 · Clips</p><h1>Length and count</h1>
-        <div class="tiles">${DUR.map(d => `<button class="tile ${state.dur===d.id?"on":""}" data-k="dur" data-v="${d.id}">${d.label}<small>${d.hint}</small></button>`).join("")}</div>
-        <label>How many</label>
-        <select id="max_clips"><option>3</option><option ${state.max_clips==5?"selected":""}>5</option><option ${state.max_clips==8?"selected":""}>8</option></select>
-        <label>Pacing</label>
-        <select id="pacing"><option value="tight">Tight (cut filler)</option><option value="natural" ${state.pacing==="natural"?"selected":""}>Natural</option></select>`;
+    function rangeSec() {
+      return `<section class="sec"><h3>Range</h3><div>
+        <label class="check"><input type="checkbox" id="trim" ${state.trim ? "checked" : ""}> Only part of the video</label>
+        ${state.trim ? `<div class="row" style="margin-bottom:1rem"><input id="start" placeholder="start · 90 or 1:30" value="${esc(state.start)}" style="max-width:180px"><input id="end" placeholder="end" value="${esc(state.end)}" style="max-width:180px"></div>` : ""}
+        <label class="f">If it's live, record</label>
+        <div class="opts">${[[600,"10 min"],[1200,"20 min"],[1800,"30 min"],[3600,"60 min"]].map(([v,l]) => `<button class="opt ${state.live_seconds==v?"on":""}" data-k="live_seconds" data-v="${v}" data-n="1">${l}</button>`).join("")}</div>
+        <label class="check"><input type="checkbox" id="live_from_start" ${state.live_from_start ? "checked" : ""}> YouTube live from the start</label>
+        </div></section>`;
     }
-    function capStep() {
-      const styles = ["pop","impact","clean","glow","neon","boxed"];
-      return `<p class="fig">04 · Captions</p><h1>Word-by-word captions</h1>
-        <label><input type="checkbox" id="captions" ${state.captions?"checked":""} style="width:auto"> Burn captions into each clip</label>
-        <label><input type="checkbox" id="hook" ${state.hook?"checked":""} style="width:auto"> Hook title overlay (first 3s)</label>
-        <div class="tiles">${styles.map(s => `<button class="tile ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>
-        <label>Highlight words</label>
-        <input id="keywords" placeholder="money, mistake, never" value="${esc(state.keywords||"")}" />`;
+    function formatSec(t) {
+      const aspects = t.id === "tighten" ? [{ v: "source", l: "Keep", h: "Source frame" }, ...ASPECTS] : ASPECTS;
+      return `<section class="sec"><h3>Format</h3><div>
+        <div class="opts">${aspects.map(a => `<button class="opt ${state.aspect===a.v?"on":""}" data-k="aspect" data-v="${a.v}">${a.l}<small>${a.v === "source" ? a.h : a.v}</small></button>`).join("")}</div>
+        ${state.aspect !== "source" ? `<label class="f">Framing</label>
+        <div class="opts"><button class="opt ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic<small>whole frame · blur pad</small></button><button class="opt ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Speaker<small>punch in on the face</small></button></div>` : ""}
+        </div></section>`;
     }
-    function reviewStep() {
+    function lengthSec() {
+      return `<section class="sec"><h3>Length</h3><div>
+        <div class="opts">${DUR.map(d => `<button class="opt ${state.dur===d.id?"on":""}" data-k="dur" data-v="${d.id}">${d.label}<small>${d.hint}</small></button>`).join("")}</div>
+        <label class="f">How many</label>
+        <div class="opts">${[3,5,8].map(n => `<button class="opt ${state.max_clips==n?"on":""}" data-k="max_clips" data-v="${n}" data-n="1">${n}</button>`).join("")}</div>
+        <label class="f">Pacing</label>
+        <div class="opts"><button class="opt ${state.pacing==="tight"?"on":""}" data-k="pacing" data-v="tight">Tight<small>cut filler</small></button><button class="opt ${state.pacing==="natural"?"on":""}" data-k="pacing" data-v="natural">Natural<small>as spoken</small></button></div>
+        </div></section>`;
+    }
+    function captionSec(t) {
+      return `<section class="sec"><h3>Captions</h3><div>
+        <label class="check"><input type="checkbox" id="captions" ${state.captions ? "checked" : ""}> Burn word-by-word captions</label>
+        ${state.captions ? `<div class="opts">${STYLES.map(s => `<button class="opt ${state.style===s?"on":""}" data-k="style" data-v="${s}">${s}</button>`).join("")}</div>
+        <input id="keywords" placeholder="Highlight words: money, mistake, never" value="${esc(state.keywords || "")}" />` : ""}
+        ${t.id === "clip" ? `<label class="check"><input type="checkbox" id="hook" ${state.hook ? "checked" : ""}> Hook title for the first 3 seconds</label>` : ""}
+        </div></section>`;
+    }
+    function qualitySec() {
+      return `<section class="sec"><h3>Transcription</h3><div>
+        <div class="opts">${state.quality.map(q => `<button class="opt ${state.whisper===q.id?"on":""}" data-k="whisper" data-v="${q.id}">${esc(q.name)}<small>${esc(q.model || q.line)}</small></button>`).join("")}</div>
+        </div></section>`;
+    }
+    function summary(t) {
       const d = DUR.find(x => x.id === state.dur);
-      return `<p class="fig">05 · Review</p><h1>Generate</h1>
-        <p class="lede">${esc(state.src || "(no source)")}</p>
-        <p class="hint">${state.mode==="captions"?"Captions only · ":""}${state.aspect} · ${state.layout} · ${d?d.hint:""} · ${state.mode==="captions"?"1 file":state.max_clips+" clips"} · ${state.captions?state.style:"no captions"}${state.hook?" · hook":""}${state.keywords?" · highlight":""}${state.path==="best"?" · Hermes pick":""}</p>
-        ${(state.why||[]).length ? `<ul class="lede">${state.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
-        <p class="hint">Up to two jobs run at once. Queue another right after.</p>`;
+      const bits = [];
+      if (t.settings.includes("format")) bits.push(state.aspect === "source" ? "source frame" : state.aspect);
+      if (t.settings.includes("length")) bits.push(`${state.max_clips} × ${d ? d.hint : ""}`);
+      if (t.settings.includes("captions")) bits.push(state.captions ? state.style : "no captions");
+      bits.push(state.whisper);
+      return esc(bits.join(" · "));
     }
+
+    /* ---------- Library ---------- */
     function viral(j) {
-      const clips = j.clips || [];
-      const scores = clips.map(c => (c.virality != null ? c.virality : Math.round((c.score || 0) * 100)));
+      const scores = (j.clips || []).map(c => (c.virality != null ? c.virality : Math.round((c.score || 0) * 100)));
       return scores.length ? Math.max(...scores) : 0;
     }
     function libraryPage() {
@@ -274,59 +403,95 @@
       const q = (state.q || "").trim().toLowerCase();
       let runs = state.library.slice();
       if (q) runs = runs.filter(j => (j.title || "").toLowerCase().includes(q) || (j.src || "").toLowerCase().includes(q));
-      runs.sort((a, b) => viral(b) - viral(a));
-      if (!runs.length) return `<p class="fig">Library</p><h1>Every finished run.</h1><div class="empty">Generate clips. They land here, newest first.</div>`;
-      return `<p class="fig">Library</p><h1>${runs.length} run${runs.length===1?"":"s"}.</h1><div class="cards">${runs.map(j => {
-        const thumb = (j.clips||[]).find(c => c.thumb);
-        const v = viral(j);
-        return `<article class="card" data-open="${j.id}">${v?`<span class="chip">${v}</span>`:""}${thumb?`<img src="/media/${j.id}/${thumb.thumb}" alt="">`:`<div class="ph"></div>`}<div class="meta"><h3>${esc(j.title||j.id)}</h3><p>${(j.clips||[]).length} clips${j.is_live?" · live":""}</p></div></article>`;
-      }).join("")}</div>`;
+      if (!runs.length) return `<p class="kicker">Library</p><h1>${q ? "No match." : "Nothing yet."}</h1><div class="empty">${q ? "Try another word." : "Finished runs land here, newest first."}</div>`;
+      return `<p class="kicker">Library</p><h1>${runs.length} run${runs.length === 1 ? "" : "s"}.</h1>
+        <div class="runs">${runs.map(j => {
+          const thumb = (j.clips || []).find(c => c.thumb);
+          const v = viral(j);
+          const n = (j.clips || []).length, f = (j.files || []).length;
+          return `<div class="run-row" data-open="${j.id}" role="button" tabindex="0">
+            ${thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="">` : `<div class="ph"></div>`}
+            <div><h3>${esc(j.title || j.id)}</h3><p>${n ? n + " video" + (n === 1 ? "" : "s") : ""}${n && f ? " · " : ""}${f ? f + " files" : ""}${j.is_live ? " · live" : ""}</p></div>
+            <span class="tag">${esc(TOOL_LABEL[j.mode] || "Clips")}</span>
+            <span class="score">${j.mode === "clip" && v ? v : ""}</span></div>`;
+        }).join("")}</div>`;
     }
     function runDetail(j) {
       const copy = state.copy && state.copy.job === j.id ? state.copy : null;
-      return `<p class="fig"><a href="#" id="back-lib">Library</a> · ${esc(j.id)}</p><h1>${esc(j.title)}</h1>
-        <p class="lede">${esc(j.src)}</p>
-        <div class="row" style="margin:0 0 1rem"><button class="btn" id="copy-btn" data-job="${j.id}">Social copy</button><span class="hint">Local pack. You seal any post.</span></div>
-        ${copy ? `<article class="job"><p class="fig">${esc(copy.source || "copy")}</p><ul class="lede">${(copy.titles||[]).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede">${esc(copy.description||"")}</p><p class="hint">${esc((copy.hashtags||[]).join(" "))}</p></article>` : ""}
-        <div class="clips">${(j.clips||[]).map(c => `<article class="clip"><video controls playsinline preload="none" poster="${c.thumb?`/media/${j.id}/${c.thumb}`:""}" src="/media/${j.id}/${c.file}"></video><div class="meta"><h3>${esc(c.title||c.file)}</h3><p>${fmt(c.start)}–${fmt(c.end)} · ${Number(c.score||0).toFixed(2)}</p><div class="row"><button class="btn" data-up="${esc(c.file)}">Up</button><button class="btn" data-down="${esc(c.file)}">Down</button><input data-split-at="${esc(c.file)}" placeholder="split at sec" style="max-width:120px;margin:0"><button class="btn" data-split="${esc(c.file)}">Split</button><button class="btn" data-dup="${esc(c.file)}">Duplicate</button><button class="btn" data-drop="${esc(c.file)}">Drop</button></div></div></article>`).join("")}</div>
-        ${(state.trash||[]).length ? `<p class="fig" style="margin-top:1.4rem">Dropped</p><div class="row">${state.trash.map(t => `<button class="btn" data-restore="${esc(t.file)}">Restore ${esc(t.file)}</button>`).join("")}</div>` : ""}`;
+      const wide = j.aspect === "16:9" || j.aspect === "source";
+      const files = j.files || [];
+      return `<p class="kicker"><a href="#" id="back-lib">Library</a> · ${esc(TOOL_LABEL[j.mode] || "Clips")}</p>
+        <h1>${esc(j.title)}</h1>
+        <p class="lede mono">${esc(j.src)}</p>
+        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
+        ${files.length ? `<div class="files">${files.map(f => `<a href="/media/${j.id}/${encodeURIComponent(f.file)}" download>${esc(f.label || f.file)}<span>${esc(f.file)}</span></a>`).join("")}</div>` : ""}
+        ${j.mode === "transcript" ? `<pre class="tx">${esc(state.tx || "Loading transcript…")}</pre>` : ""}
+        ${(j.clips || []).length ? `<div class="row" style="margin:0 0 1.25rem"><button class="btn" id="copy-btn" data-job="${j.id}">Write social copy</button><span class="hint">Titles, description, hashtags. You post.</span></div>` : ""}
+        ${copy ? `<div class="copy"><p class="kicker">${esc(copy.source || "copy")}</p><ul>${(copy.titles || []).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede" style="margin:0 0 .4rem">${esc(copy.description || "")}</p><p class="hint mono">${esc((copy.hashtags || []).join(" "))}</p></div>` : ""}
+        <div class="clips">${(j.clips || []).map(c => `<article class="clip ${wide ? "wide" : ""}">
+          <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}` : ""}" src="/media/${j.id}/${c.file}"></video>
+          <h3>${esc(c.title || c.file)}</h3>
+          <p>${fmt(c.start)}–${fmt(c.end)}${c.virality ? " · " + c.virality : ""}${c.saved ? " · " + c.saved + "s cut" : ""}</p>
+          <div class="row">
+            <button class="btn sm" data-up="${esc(c.file)}" aria-label="Move up">↑</button>
+            <button class="btn sm" data-down="${esc(c.file)}" aria-label="Move down">↓</button>
+            <input data-split-at="${esc(c.file)}" placeholder="split s" />
+            <button class="btn sm" data-split="${esc(c.file)}">Split</button>
+            <button class="btn sm" data-dup="${esc(c.file)}">Copy</button>
+            <button class="btn sm quiet" data-drop="${esc(c.file)}">Drop</button>
+          </div></article>`).join("")}</div>
+        ${(state.trash || []).length ? `<p class="kicker" style="margin-top:2rem">Dropped</p><div class="row">${state.trash.map(t => `<button class="btn sm" data-restore="${esc(t.file)}">Restore ${esc(t.file)}</button>`).join("")}</div>` : ""}`;
     }
+
+    /* ---------- Jobs ---------- */
     function jobsPage() {
       const jobs = state.jobs;
-      if (!jobs.length) return `<p class="fig">Jobs</p><h1>Queue.</h1><div class="empty">Nothing running.</div>`;
-      return `<p class="fig">Jobs</p><h1>Queue and history.</h1>${jobs.map(j => {
-        const pct = Math.round((j.progress||0)*100);
-        const retry = (j.status==="failed"||j.status==="cancelled") ? `<button class="btn" data-retry="${j.id}">Retry</button>` : "";
-        const cancel = j.status==="queued" ? `<button class="btn" data-cancel="${j.id}">Cancel</button>` : "";
-        return `<article class="job"><div class="row" style="justify-content:space-between"><strong>${esc(j.title||j.id)}</strong><span class="hint">${esc(j.status)} · ${esc(j.stage||"")}</span></div>
-          <p class="hint">${esc(j.message||j.error||j.src)}</p>
-          <div class="bar"><i style="width:${pct}%"></i></div>
-          <div class="row" style="margin-top:.6rem">${retry}${cancel}</div></article>`;
+      if (!jobs.length) return `<p class="kicker">Jobs</p><h1>Quiet.</h1><div class="empty">Nothing running. Pick a tool to start.</div>`;
+      return `<p class="kicker">Jobs</p><h1>Queue and history.</h1><p class="lede">Two jobs run at once. The rest wait their turn.</p>${jobs.map(j => {
+        const pct = Math.round((j.progress || 0) * 100);
+        const retry = (j.status === "failed" || j.status === "cancelled") ? `<button class="btn sm" data-retry="${j.id}">Retry</button>` : "";
+        const cancel = j.status === "queued" ? `<button class="btn sm" data-cancel="${j.id}">Cancel</button>` : "";
+        const done = j.status === "completed" ? `<button class="btn sm" data-view="${j.id}">Open</button>` : "";
+        return `<article class="job"><div class="head"><strong>${esc(j.title || j.id)}</strong><span class="st ${esc(j.status)}">${esc(TOOL_LABEL[j.mode] || "Clips")} · ${esc(j.status)}${j.stage && j.stage !== "done" ? " · " + esc(j.stage) : ""}</span></div>
+          <p class="hint" style="margin:.3rem 0 0">${esc(j.message || j.error || j.src)}</p>
+          ${j.status === "running" || j.status === "queued" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
+          ${retry || cancel || done ? `<div class="row" style="margin-top:.6rem">${done}${retry}${cancel}</div>` : ""}</article>`;
       }).join("")}`;
     }
+
+    /* ---------- Wiring ---------- */
     function grabForm() {
-      const src = $("#src"); if (src) state.src = src.value.trim();
-      const live = $("#live_seconds"); if (live) state.live_seconds = Number(live.value);
-      const lfs = $("#live_from_start"); if (lfs) state.live_from_start = lfs.checked;
-      const trim = $("#trim"); if (trim) state.trim = trim.checked;
-      const st = $("#start"); if (st) state.start = st.value;
-      const en = $("#end"); if (en) state.end = en.value;
-      const mc = $("#max_clips"); if (mc) state.max_clips = Number(mc.value);
-      const pc = $("#pacing"); if (pc) state.pacing = pc.value;
-      const cap = $("#captions"); if (cap) state.captions = cap.checked;
-      const hk = $("#hook"); if (hk) state.hook = hk.checked;
-      const pr = $("#prompt"); if (pr) state.prompt = pr.value;
-      const kw = $("#keywords"); if (kw) state.keywords = kw.value;
-      const qq = $("#q"); if (qq) state.q = qq.value;
+      const v = (id) => { const el = $("#" + id); return el ? el : null; };
+      if (v("src")) state.src = v("src").value.trim();
+      if (v("trim")) state.trim = v("trim").checked;
+      if (v("start")) state.start = v("start").value;
+      if (v("end")) state.end = v("end").value;
+      if (v("live_from_start")) state.live_from_start = v("live_from_start").checked;
+      if (v("captions")) state.captions = v("captions").checked;
+      if (v("hook")) state.hook = v("hook").checked;
+      if (v("prompt")) state.prompt = v("prompt").value;
+      if (v("keywords")) state.keywords = v("keywords").value;
+    }
+    async function openRun(id) {
+      state.page = "library"; state.open = state.library.find(j => j.id === id) || null; state.tx = null; state.err = "";
+      renderRail();
+      try { const t = await api("/api/trash?job=" + encodeURIComponent(id)); state.trash = t.files || []; } catch { state.trash = []; }
+      render();
+      if (state.open && state.open.mode === "transcript") {
+        try { const r = await fetch(`/media/${id}/transcript.txt`); state.tx = r.ok ? await r.text() : "Transcript file missing."; } catch { state.tx = "Transcript file missing."; }
+        render();
+      }
     }
     function bind() {
-      document.querySelectorAll("[data-step]").forEach(el => el.onclick = () => { grabForm(); state.step = el.dataset.step; render(); });
-      document.querySelectorAll("[data-k]").forEach(el => el.onclick = () => { state[el.dataset.k] = el.dataset.v; render(); });
-      const back = $("#back"); if (back) back.onclick = () => { grabForm(); const i = STEPS.findIndex(s => s.id === state.step); if (i>0) { state.step = STEPS[i-1].id; render(); } };
-      const next = $("#next"); if (next) next.onclick = () => { grabForm(); const i = STEPS.findIndex(s => s.id === state.step); if (i<STEPS.length-1) { state.step = STEPS[i+1].id; render(); } };
+      document.querySelectorAll("main [data-tool]").forEach(el => el.onclick = () => pickTool(el.dataset.tool));
+      const all = $("#all-tools"); if (all) all.onclick = (e) => { e.preventDefault(); grabForm(); state.tool = null; renderRail(); render(); };
+      document.querySelectorAll("[data-k]").forEach(el => el.onclick = () => { grabForm(); state[el.dataset.k] = el.dataset.n ? Number(el.dataset.v) : el.dataset.v; render(); });
+      ["trim", "captions"].forEach(id => { const el = $("#" + id); if (el) el.onchange = () => { grabForm(); render(); }; });
       const probeBtn = $("#probe-btn");
       if (probeBtn) probeBtn.onclick = async () => {
         grabForm(); state.err = "";
+        if (!state.src) { state.err = "Paste a source first."; render(); return; }
+        probeBtn.disabled = true; probeBtn.textContent = "Checking…";
         try { state.probe = await api("/api/probe?src=" + encodeURIComponent(state.src)); }
         catch (e) { state.probe = { ok: false, error: e.message }; }
         render();
@@ -335,113 +500,89 @@
       if (bestBtn) bestBtn.onclick = async () => {
         grabForm(); state.err = "";
         if (!state.src) { state.err = "Paste a source first."; render(); return; }
-        bestBtn.disabled = true; bestBtn.textContent = "Analyzing…";
+        bestBtn.disabled = true; bestBtn.textContent = "Reading the video…";
         try {
           const data = await api("/api/recommend?src=" + encodeURIComponent(state.src));
           const r = data.recommendation || {};
           state.probe = { ok: true, title: data.title, is_live: data.is_live, duration: data.duration };
-          state.path = "best";
-          state.aspect = r.aspect || "9:16";
-          state.layout = r.layout || "fit";
-          state.dur = r.dur || "short";
-          state.max_clips = r.max_clips || 3;
-          state.pacing = r.pacing || "tight";
-          state.style = r.style || "pop";
-          state.captions = r.captions !== false;
-          state.hook = r.hook !== false;
-          state.mode = r.mode || "clip";
-          state.live_seconds = r.live_seconds || 1200;
+          const tool = r.mode === "captions" ? "captions" : "clip";
+          state.tool = tool;
+          Object.assign(state, {
+            aspect: r.aspect || "9:16", layout: r.layout || "fit", dur: r.dur || "short", max_clips: r.max_clips || 3,
+            pacing: r.pacing || "tight", style: r.style || "pop", captions: r.captions !== false, hook: r.hook !== false,
+            live_seconds: r.live_seconds || 1200, why: r.why || [], picked: true,
+          });
           if (r.prompt) state.prompt = r.prompt;
           if (r.keywords) state.keywords = r.keywords;
-          state.why = r.why || [];
-          state.step = "review";
+          renderRail();
         } catch (e) { state.err = e.message; }
         render();
       };
       const runBtn = $("#run-btn");
       if (runBtn) runBtn.onclick = async () => {
         grabForm(); state.err = "";
+        if (!state.src) { state.err = "Paste a source first."; render(); return; }
+        const t = toolById(state.tool);
         const d = DUR.find(x => x.id === state.dur) || DUR[1];
+        runBtn.disabled = true; runBtn.textContent = "Queuing…";
         try {
           await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-            src: state.src, layout: state.layout, aspect: state.aspect, max_clips: state.max_clips,
-            min_sec: d.min, max_sec: d.max, style: state.style, captions: state.captions, pacing: state.pacing,
-            live_seconds: state.live_seconds, live_from_start: state.live_from_start,
+            src: state.src, mode: t.id, layout: state.layout, aspect: state.aspect || "9:16", max_clips: state.max_clips,
+            min_sec: d.min, max_sec: d.max, style: state.style, captions: t.id === "captions" ? true : state.captions,
+            pacing: state.pacing, live_seconds: state.live_seconds, live_from_start: state.live_from_start,
             start_time: state.trim && state.start ? state.start : null,
             end_time: state.trim && state.end ? state.end : null,
-            prompt: state.prompt,
-            keywords: state.keywords,
-            hook: state.hook,
-            mode: state.mode,
-            plan: "heuristic", whisper: "tiny",
+            prompt: t.id === "clip" ? state.prompt : "", keywords: state.captions ? state.keywords : "",
+            hook: t.id === "clip" ? state.hook : false,
+            plan: "heuristic", whisper: state.whisper,
           })});
-          state.step = "video"; nav("jobs"); await refresh();
+          state.why = [];
+          nav("jobs"); await refresh();
         } catch (e) { state.err = e.message; render(); }
       };
-      document.querySelectorAll("[data-open]").forEach(el => el.onclick = async () => {
-        state.open = state.library.find(j => j.id === el.dataset.open);
-        try {
-          const t = await api("/api/trash?job=" + encodeURIComponent(el.dataset.open));
-          state.trash = t.files || [];
-        } catch { state.trash = []; }
-        render();
+      document.querySelectorAll("[data-open]").forEach(el => {
+        el.onclick = () => openRun(el.dataset.open);
+        el.onkeydown = (e) => { if (e.key === "Enter") openRun(el.dataset.open); };
       });
-      document.querySelectorAll("video").forEach(v => {
-        v.addEventListener("play", () => {
-          document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); });
-        });
-      });
-      const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; render(); };
-      document.querySelectorAll("[data-split]").forEach(el => el.onclick = async () => {
-        const file = el.dataset.split;
-        const inp = document.querySelector(`[data-split-at="${CSS.escape(file)}"]`);
-        const at = Number(inp && inp.value);
-        const jobId = state.open && state.open.id;
-        if (!jobId) return;
-        if (!at) { state.err = "Split needs a time in seconds."; render(); return; }
-        el.disabled = true;
-        try {
-          await api("/api/edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: jobId, file, op: "split", at }) });
-          await refresh();
-          state.open = state.library.find(x => x.id === jobId) || state.open;
-        } catch (e) { state.err = e.message; }
-        render();
-      });
+      document.querySelectorAll("[data-view]").forEach(el => el.onclick = async () => { await refresh(); openRun(el.dataset.view); });
+      document.querySelectorAll("video").forEach(v => v.addEventListener("play", () => document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); })));
+      const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; state.tx = null; render(); };
       const clipOp = async (file, op, extra) => {
-        const jobId = state.open && state.open.id;
-        if (!jobId) return;
+        const jobId = state.open && state.open.id; if (!jobId) return;
+        state.err = "";
         try {
           await api("/api/edit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: jobId, file, op, ...(extra || {}) }) });
           await refresh();
           state.open = state.library.find(x => x.id === jobId) || state.open;
+          const t = await api("/api/trash?job=" + encodeURIComponent(jobId)); state.trash = t.files || [];
         } catch (e) { state.err = e.message; }
         render();
       };
+      document.querySelectorAll("[data-split]").forEach(el => el.onclick = () => {
+        const file = el.dataset.split;
+        const inp = document.querySelector(`[data-split-at="${CSS.escape(file)}"]`);
+        const at = Number(inp && inp.value);
+        if (!at) { state.err = "Split needs a time in seconds."; render(); return; }
+        clipOp(file, "split", { at });
+      });
       document.querySelectorAll("[data-up]").forEach(el => el.onclick = () => clipOp(el.dataset.up, "reorder", { dir: "up" }));
       document.querySelectorAll("[data-down]").forEach(el => el.onclick = () => clipOp(el.dataset.down, "reorder", { dir: "down" }));
       document.querySelectorAll("[data-dup]").forEach(el => el.onclick = () => clipOp(el.dataset.dup, "duplicate"));
-      document.querySelectorAll("[data-drop]").forEach(el => el.onclick = () => {
-        if (!confirm("Drop this clip from the run? File goes to .trash in the job folder.")) return;
-        clipOp(el.dataset.drop, "drop");
-      });
+      document.querySelectorAll("[data-drop]").forEach(el => el.onclick = () => { if (confirm("Drop this clip? It moves to the run's .trash and can be restored.")) clipOp(el.dataset.drop, "drop"); });
       document.querySelectorAll("[data-restore]").forEach(el => el.onclick = () => clipOp(el.dataset.restore, "restore"));
       const copyBtn = $("#copy-btn");
       if (copyBtn) copyBtn.onclick = async () => {
         const id = copyBtn.dataset.job;
         copyBtn.disabled = true; copyBtn.textContent = "Writing…";
-        try {
-          const data = await api("/api/copy?job=" + encodeURIComponent(id));
-          state.copy = { job: id, ...data };
-        } catch (e) { state.err = e.message; }
+        try { const data = await api("/api/copy?job=" + encodeURIComponent(id)); state.copy = { job: id, ...data }; }
+        catch (e) { state.err = e.message; }
         render();
       };
-      document.querySelectorAll("[data-retry]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.retry+"/retry", { method: "POST" }); refresh(); });
-      document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/"+el.dataset.cancel+"/cancel", { method: "POST" }); refresh(); });
-      const trim = $("#trim"); if (trim) trim.onchange = () => { grabForm(); render(); };
+      document.querySelectorAll("[data-retry]").forEach(el => el.onclick = async () => { await api("/api/jobs/" + el.dataset.retry + "/retry", { method: "POST" }); state.sig = ""; refresh(); });
+      document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/" + el.dataset.cancel + "/cancel", { method: "POST" }); state.sig = ""; refresh(); });
     }
-    document.getElementById("new-clip").onclick = () => { state.step = "video"; nav("create"); };
-    document.getElementById("q").oninput = (e) => { state.q = e.target.value; if (state.page === "library" && !state.open) render(); };
-    render(); refresh(); setInterval(refresh, 2500);
+    $("#q").oninput = (e) => { state.q = e.target.value; if (state.page !== "library" || state.open) { state.page = "library"; state.open = null; renderRail(); } render(); };
+    renderRail(); render(); loadTools(); refresh(); setInterval(refresh, 2500);
   </script>
 </body>
 </html>
