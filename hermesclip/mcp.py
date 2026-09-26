@@ -81,6 +81,15 @@ TOOLS = [
             "required": ["src"],
         },
     },
+    {
+        "name": "name",
+        "description": "AI-name every clip in a library run from its words (Opus Clip-style). Or rename one clip with file+title. Local Ollama first. Does not post.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"job": {"type": "string"}, "file": {"type": "string"}, "title": {"type": "string"}},
+            "required": ["job"],
+        },
+    },
 ]
 
 
@@ -143,6 +152,11 @@ def _call(name: str, args: dict) -> str:
         return _cli(["captions", str(args.get("src") or ""), "--out", str(args.get("out") or str(Path.home() / ".hermes" / "clips"))])
     if name == "probe":
         return _cli(["probe", str(args.get("src") or "")])
+    if name == "name":
+        argv = ["name", str(args.get("job") or "")]
+        if args.get("file"):
+            argv += ["--file", str(args["file"]), "--title", str(args.get("title") or "")]
+        return _cli(argv)
     if name == "list":
         return _cli(["list"])
     if name == "edit":

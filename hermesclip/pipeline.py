@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -424,6 +425,14 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                     if w not in have:
                         item.emphasis.append(w)
                         have.add(w)
+        if os.environ.get("HERMESCLIP_NAMER", "ollama").lower() != "off":
+            bump("name", 0.58, "Naming clips")
+            from hermesclip.namer import ai_titles, clip_text
+
+            names, _src = ai_titles([clip_text(tr, pl.start, pl.end) for pl in plans], job.title)
+            for pl, nm in zip(plans, names):
+                if nm:
+                    pl.title = nm
         save_plan(plans, work / "plan.json")
 
         width, height = canvas(job.aspect)
@@ -550,3 +559,64 @@ def run_once(
         "message": job.message,
         "error": job.error,
     }
+
+
+def name_job(job_id: str) -> dict:
+    """AI-name every clip in an existing run from its transcript. Returns {ok, titles, source}."""
+    from hermesclip.namer import ai_titles, clip_text
+    from hermesclip.transcribe import load_transcript
+
+    job = load_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job not found"}
+    clips = list(job.clips or [])
+    if not clips:
+        return {"ok": False, "error": "no clips to name"}
+    from hermesclip.transcribe import transcribe
+
+    tpath = Path(job.dir) / "work" / "transcript.json"
+    tr = load_transcript(tpath) if tpath.is_file() else None
+    texts: list[str] = []
+    for c in clips:
+        start, end = float(c.get("start") or 0), float(c.get("end") or 0)
+        text = clip_text(tr, start, end) if tr and end > start else ""
+        if not text:
+            # No run transcript (imported/old run): listen to the clip file itself.
+            media = Path(job.dir) / str(c.get("file") or "")
+            if media.is_file():
+                cw = Path(job.dir) / "work" / "names" / media.stem
+                cw.mkdir(parents=True, exist_ok=True)
+                try:
+                    text = transcribe(media, cw, whisper_model(job.whisper or "fast")).text
+                except Exception:
+                    text = ""
+        texts.append(text)
+    if not any(texts):
+        return {"ok": False, "error": "no words found in these clips"}
+    names, src = ai_titles(texts, job.title)
+    for c, nm in zip(clips, names):
+        if nm:
+            c["title"] = nm
+    job.clips = clips
+    job.save()
+    return {"ok": True, "titles": names, "source": src}
+
+
+def rename_clip(job_id: str, file: str, title: str) -> dict:
+    from hermesclip.namer import clean
+
+    job = load_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job not found"}
+    t = clean(title)
+    if not t:
+        return {"ok": False, "error": "title is empty"}
+    hit = False
+    for c in job.clips or []:
+        if c.get("file") == file:
+            c["title"] = t
+            hit = True
+    if not hit:
+        return {"ok": False, "error": "clip not in run"}
+    job.save()
+    return {"ok": True, "file": file, "title": t}
