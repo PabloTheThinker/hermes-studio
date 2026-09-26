@@ -133,6 +133,18 @@
     .tag { font: 600 11px var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--mute); }
     .score { font: 500 13px var(--mono); color: var(--ink); text-align: right; }
 
+    /* Folders */
+    .folders { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); width: fit-content; max-width: 100%; margin: 0 0 1.75rem; }
+    .folders button { background: none; border: 0; border-right: 1px solid var(--line); padding: .65rem 1rem; cursor: pointer; color: var(--mute); font: 600 12px var(--sans); letter-spacing: .14em; text-transform: uppercase; transition: color .2s var(--ease), background .2s var(--ease); }
+    .folders button:last-child { border-right: 0; }
+    .folders button:hover { color: var(--ink); }
+    .folders button.on { color: var(--ink); background: rgba(255,200,61,.08); box-shadow: inset 0 -2px 0 var(--amber); }
+    .folders b { font: 500 11px var(--mono); color: var(--dim); margin-left: .45rem; letter-spacing: 0; }
+    .fold-h { display: flex; align-items: baseline; gap: .8rem; margin: 2rem 0 .6rem; }
+    .fold-h:first-of-type { margin-top: 0; }
+    .fold-h h2 { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 22px; line-height: 1; }
+    .fold-h span { font: 500 12px var(--mono); color: var(--dim); }
+
     /* Run detail */
     .files { border-top: 1px solid var(--line); margin: 0 0 1.5rem; }
     .files a { display: flex; justify-content: space-between; padding: .7rem 0; border-bottom: 1px solid var(--line); text-decoration: none; color: var(--ink); }
@@ -242,7 +254,7 @@
       style: "pop", captions: true, pacing: "tight", whisper: "fast",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
       prompt: "", q: "", hook: true, why: [], keywords: "", picked: false,
-      jobs: [], library: [], open: null, copy: null, trash: [], tx: null,
+      jobs: [], library: [], folders: [], folder: "", open: null, copy: null, trash: [], tx: null,
     };
     const $ = (s, el = document) => el.querySelector(s);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
@@ -276,7 +288,7 @@
     async function refresh() {
       try {
         const jobs = await api("/api/jobs"); state.jobs = jobs.jobs || [];
-        const lib = await api("/api/library"); state.library = lib.runs || [];
+        const lib = await api("/api/library"); state.library = lib.runs || []; state.folders = lib.folders || [];
       } catch { return; }
       const live = state.jobs.filter(j => j.status === "queued" || j.status === "running").length;
       $("#job-ct").textContent = live ? live + " live" : (state.jobs.length || "");
@@ -406,25 +418,39 @@
       if (state.open) return runDetail(state.open);
       const q = (state.q || "").trim().toLowerCase();
       let runs = state.library.slice();
-      if (q) runs = runs.filter(j => (j.title || "").toLowerCase().includes(q) || (j.src || "").toLowerCase().includes(q));
-      if (!runs.length) return `<p class="kicker">Library</p><h1>${q ? "No match." : "Nothing yet."}</h1><div class="empty">${q ? "Try another word." : "Finished runs land here, newest first."}</div>`;
-      return `<p class="kicker">Library</p><h1>${runs.length} run${runs.length === 1 ? "" : "s"}.</h1>
-        <div class="runs">${runs.map(j => {
-          const thumb = (j.clips || []).find(c => c.thumb);
-          const v = viral(j);
-          const n = (j.clips || []).length, f = (j.files || []).length;
-          return `<div class="run-row" data-open="${j.id}" role="button" tabindex="0">
-            ${thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="">` : `<div class="ph"></div>`}
-            <div><h3>${esc(j.title || j.id)}</h3><p>${n ? n + " video" + (n === 1 ? "" : "s") : ""}${n && f ? " · " : ""}${f ? f + " files" : ""}${j.is_live ? " · live" : ""}</p></div>
-            <span class="tag">${esc(TOOL_LABEL[j.mode] || "Clips")}</span>
-            <span class="score">${j.mode === "clip" && v ? v : ""}</span></div>`;
-        }).join("")}</div>`;
+      if (q) runs = runs.filter(j => (j.title || "").toLowerCase().includes(q) || (j.src || "").toLowerCase().includes(q) || (j.platform || "").toLowerCase().includes(q) || (j.clips || []).some(c => (c.title || "").toLowerCase().includes(q)));
+      if (!state.library.length) return `<p class="kicker">Library</p><h1>Nothing yet.</h1><div class="empty">Finished runs land here, sorted into a folder per platform.</div>`;
+      const folders = state.folders.length ? state.folders : [...new Set(state.library.map(j => j.platform))].map(n => ({ name: n, runs: state.library.filter(j => j.platform === n).length }));
+      if (state.folder && !folders.some(f => f.name === state.folder)) state.folder = "";
+      if (state.folder) runs = runs.filter(j => j.platform === state.folder);
+      const chips = `<div class="folders" role="tablist">
+        <button data-folder="" class="${!state.folder ? "on" : ""}">All<b>${state.library.length}</b></button>
+        ${folders.map(f => `<button data-folder="${esc(f.name)}" class="${state.folder === f.name ? "on" : ""}">${esc(f.name)}<b>${f.runs}</b></button>`).join("")}
+      </div>`;
+      const head = `<p class="kicker">Library</p><h1>${state.folder ? esc(state.folder) + "." : folders.length + " folder" + (folders.length === 1 ? "" : "s") + "."}</h1>${chips}`;
+      if (!runs.length) return head + `<div class="empty">${q ? "No match. Try another word." : "Nothing in this folder yet."}</div>`;
+      const order = folders.map(f => f.name);
+      const groups = order.map(name => [name, runs.filter(j => j.platform === name)]).filter(([, rs]) => rs.length);
+      return head + groups.map(([name, rs]) => `
+        ${state.folder ? "" : `<div class="fold-h"><h2>${esc(name)}</h2><span>${rs.length} run${rs.length === 1 ? "" : "s"}</span></div>`}
+        <div class="runs">${rs.map(runRow).join("")}</div>`).join("");
+    }
+    function runRow(j) {
+      const thumb = (j.clips || []).find(c => c.thumb);
+      const v = viral(j);
+      const n = (j.clips || []).length, f = (j.files || []).length;
+      const names = (j.clips || []).slice(0, 2).map(c => c.title).filter(Boolean).join(" · ");
+      return `<div class="run-row" data-open="${j.id}" role="button" tabindex="0">
+        ${thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="">` : `<div class="ph"></div>`}
+        <div><h3>${esc(j.title || j.id)}</h3><p>${n ? n + " clip" + (n === 1 ? "" : "s") : ""}${n && f ? " · " : ""}${f ? f + " files" : ""}${j.is_live ? " · live" : ""}${names ? " · " + esc(names) : ""}</p></div>
+        <span class="tag">${esc(TOOL_LABEL[j.mode] || "Clips")}</span>
+        <span class="score">${j.mode === "clip" && v ? v : ""}</span></div>`;
     }
     function runDetail(j) {
       const copy = state.copy && state.copy.job === j.id ? state.copy : null;
       const wide = j.aspect === "16:9" || j.aspect === "source";
       const files = j.files || [];
-      return `<p class="kicker"><a href="#" id="back-lib">Library</a> · ${esc(TOOL_LABEL[j.mode] || "Clips")}</p>
+      return `<p class="kicker"><a href="#" id="back-lib">Library</a> · <a href="#" id="back-folder" data-folder-go="${esc(j.platform || "")}">${esc(j.platform || "Other")}</a> · ${esc(TOOL_LABEL[j.mode] || "Clips")}</p>
         <h1>${esc(j.title)}</h1>
         <p class="lede mono">${esc(j.src)}</p>
         ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
@@ -551,6 +577,8 @@
       });
       document.querySelectorAll("[data-view]").forEach(el => el.onclick = async () => { await refresh(); openRun(el.dataset.view); });
       document.querySelectorAll("video").forEach(v => v.addEventListener("play", () => document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); })));
+      document.querySelectorAll("[data-folder]").forEach(el => el.onclick = () => { state.folder = el.dataset.folder; render(); });
+      const backFolder = $("#back-folder"); if (backFolder) backFolder.onclick = (e) => { e.preventDefault(); state.folder = backFolder.dataset.folderGo; state.open = null; state.tx = null; render(); };
       const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; state.tx = null; render(); };
       const clipOp = async (file, op, extra) => {
         const jobId = state.open && state.open.id; if (!jobId) return;

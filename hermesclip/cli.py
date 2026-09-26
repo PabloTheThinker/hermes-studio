@@ -59,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     edt.add_argument("--at", type=float, default=None, help="split point in seconds")
     edt.add_argument("--out", default="")
 
+    sub.add_parser("organize", help="sort the library into platform folders (YouTube, Twitch, Kick, X, Local files …)")
     nmp = sub.add_parser("name", help="AI-name every clip in a library run (Opus-style titles; local Ollama first)")
     nmp.add_argument("job", help="library job id")
     nmp.add_argument("--file", default="", help="rename one clip file instead")
@@ -85,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.cmd == "edit":
         return _edit_cmd(args)
+    if args.cmd == "organize":
+        from hermesclip.pipeline import organize_library
+
+        print(json.dumps({"ok": True, "moved": organize_library()}, indent=2))
+        return 0
     if args.cmd == "name":
         from hermesclip.pipeline import name_job, rename_clip
 
@@ -236,7 +242,7 @@ def _edit_cmd(args: argparse.Namespace) -> int:
 
 def _copy_cmd(args: argparse.Namespace) -> int:
     from hermesclip.copy import copy_from_job_dir, copy_pack
-    from hermesclip.pipeline import library_root, load_job
+    from hermesclip.pipeline import job_dir, load_job
 
     src = Path(args.src).expanduser()
     try:
@@ -248,8 +254,8 @@ def _copy_cmd(args: argparse.Namespace) -> int:
         else:
             job = load_job(args.src)
             if not job:
-                root = library_root() / args.src
-                if root.is_dir():
+                root = job_dir(args.src)
+                if root and root.is_dir():
                     pack = copy_from_job_dir(root, args.clip_title)
                 else:
                     print(json.dumps({"ok": False, "error": "not a job dir or id"}))

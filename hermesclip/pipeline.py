@@ -65,6 +65,7 @@ class Job:
     is_live: bool = False
     live_status: str | None = None
     extractor: str = ""
+    platform: str = ""
     layout: str = "fit"
     style: str = "pop"
     pacing: str = "tight"
@@ -102,26 +103,98 @@ def job_from_dict(data: dict) -> Job:
     return Job(**{k: v for k, v in data.items() if k in Job.__dataclass_fields__} | {"clips": clips})
 
 
-def load_job(job_id: str) -> Job | None:
-    path = library_root() / job_id / "job.json"
-    if not path.is_file():
+def _manifests() -> list[Path]:
+    """job.json files: <library>/<Platform>/<Title [id]>/ and legacy flat <library>/<id>/."""
+    root = library_root()
+    out = list(root.glob("*/job.json")) + list(root.glob("*/*/job.json"))
+    return [m for m in out if ".trash" not in m.parts]
+
+
+def job_dir(job_id: str) -> Path | None:
+    """Folder for a job id, wherever it lives in the library."""
+    if not job_id or "/" in job_id or "\\" in job_id or job_id.startswith("."):
         return None
-    return job_from_dict(json.loads(path.read_text()))
+    root = library_root()
+    flat = root / job_id
+    if (flat / "job.json").is_file():
+        return flat
+    for m in root.glob(f"*/*[[]{job_id}[]]/job.json"):
+        return m.parent
+    for m in _manifests():
+        try:
+            if json.loads(m.read_text()).get("id") == job_id:
+                return m.parent
+        except Exception:
+            continue
+    return None
+
+
+def load_job(job_id: str) -> Job | None:
+    d = job_dir(job_id)
+    if not d:
+        return None
+    job = job_from_dict(json.loads((d / "job.json").read_text()))
+    if Path(job.dir) != d:  # folder moved: trust where it is now
+        job.dir = str(d)
+    return job
 
 
 def list_jobs() -> list[Job]:
     rows: list[Job] = []
-    root = library_root()
-    for child in root.iterdir():
-        man = child / "job.json"
-        if not man.is_file():
-            continue
+    for man in _manifests():
         try:
-            rows.append(job_from_dict(json.loads(man.read_text())))
+            job = job_from_dict(json.loads(man.read_text()))
         except Exception:
             continue
+        job.dir = str(man.parent)
+        if not job.platform:
+            from hermesclip.folders import platform_of
+
+            job.platform = platform_of(job.src, job.extractor)
+        rows.append(job)
     rows.sort(key=lambda j: j.created_at, reverse=True)
     return rows
+
+
+def organize_library() -> list[dict]:
+    """Move every run into <Platform>/<Clear Title [id]>/. Fills missing titles. Idempotent."""
+    from hermesclip.folders import folder_name, platform_of, pretty_title, youtube_id, youtube_title
+
+    root = library_root()
+    moved: list[dict] = []
+    for man in _manifests():
+        d = man.parent
+        try:
+            data = json.loads(man.read_text())
+        except Exception:
+            continue
+        job = job_from_dict(data)
+        if job.status in ("queued", "running"):
+            continue
+        plat = job.platform or platform_of(job.src, job.extractor)
+        title = job.title
+        title = pretty_title(title, job.src)
+        if plat == "YouTube":
+            yid = youtube_id(job.src, job.title) or youtube_id("", job.id)
+            if yid and (yid in title or not title or title == job.id):
+                title = youtube_title(yid) or title
+        dest = root / plat / folder_name(title, job.id)
+        job.platform, job.title = plat, title
+        if d.resolve() != dest.resolve():
+            if dest.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            old = str(d)
+            shutil.move(str(d), str(dest))
+            if job.work.startswith(old):
+                job.work = str(dest) + job.work[len(old):]
+            moved.append({"id": job.id, "from": d.name, "to": f"{plat}/{dest.name}"})
+        job.dir = str(dest)
+        job.save()
+    for child in root.iterdir():  # drop empty platform folders
+        if child.is_dir() and not any(child.iterdir()):
+            child.rmdir()
+    return moved
 
 
 def import_legacy() -> int:
@@ -137,9 +210,9 @@ def import_legacy() -> int:
         if not man.is_file():
             continue
         job_id = child.name
-        dest = library_root() / job_id
-        if (dest / "job.json").is_file():
+        if job_dir(job_id):
             continue
+        dest = library_root() / job_id
         try:
             data = json.loads(man.read_text())
         except Exception:
@@ -221,8 +294,16 @@ def new_job(
         extractor = info.extractor
     except Exception:
         info = None
+    from hermesclip.folders import folder_name, platform_of, pretty_title, youtube_title, youtube_id
+
     job_id = uuid.uuid4().hex[:12]
-    dest = library_root() / job_id
+    platform = platform_of(src, extractor)
+    title = pretty_title(title, src)
+    if platform == "YouTube":
+        yid = youtube_id(src, title)
+        if yid and (yid in title or not title):
+            title = youtube_title(yid) or title
+    dest = library_root() / platform / folder_name(title, job_id)
     dest.mkdir(parents=True, exist_ok=True)
     job = Job(
         id=job_id,
@@ -234,6 +315,7 @@ def new_job(
         is_live=is_live,
         live_status=live_status,
         extractor=extractor,
+        platform=platform,
         layout=layout,
         style=style,
         pacing=pacing,
