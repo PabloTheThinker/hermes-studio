@@ -520,6 +520,9 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         width, height = canvas(job.aspect)
         layout = job.layout if job.layout in ("fit", "fill") else "fit"
         style = job.style if job.captions else "clean"
+        from hermesclip.namer import clip_text
+        from hermesclip.plan import score_parts
+
         written: list[dict] = []
         n = max(len(plans), 1)
         for i, plan in enumerate(plans, 1):
@@ -547,7 +550,9 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                     "start": plan.start,
                     "end": plan.end,
                     "score": plan.score,
-                    "virality": int(round(plan.score * 100)),
+                    "virality": min(99, int(round(plan.score * 100))),
+                    "parts": plan.parts or score_parts([w for w in tr.words if w.start >= plan.start - 0.05 and w.end <= plan.end + 0.05], plan.end - plan.start),
+                    "text": clip_text(tr, plan.start, plan.end)[:900],
                     "thumb": thumb,
                 }
             )
@@ -669,9 +674,26 @@ def name_job(job_id: str) -> dict:
                 cw = Path(job.dir) / "work" / "names" / media.stem
                 cw.mkdir(parents=True, exist_ok=True)
                 try:
-                    text = transcribe(media, cw, whisper_model(job.whisper or "fast")).text
+                    ctr = transcribe(media, cw, whisper_model(job.whisper or "fast"))
+                    text = ctr.text
+                    if ctr.words and not c.get("virality"):
+                        from hermesclip.plan import _rubric, score_parts
+
+                        dur = ctr.words[-1].end - ctr.words[0].start
+                        c["virality"] = min(99, int(round(_rubric(ctr.words, dur)[0] * 100)))
+                        c["score"] = c["virality"] / 100
+                        c["parts"] = score_parts(ctr.words, dur)
+                        c.setdefault("end", 0)
+                        if not c.get("end"):
+                            c["start"], c["end"] = 0.0, round(ctr.duration or dur, 2)
                 except Exception:
                     text = ""
+        elif tr and not c.get("parts"):
+            from hermesclip.plan import score_parts
+
+            c["parts"] = score_parts([w for w in tr.words if w.start >= start - 0.05 and w.end <= end + 0.05], end - start)
+        if text and not c.get("text"):
+            c["text"] = text[:900]
         texts.append(text)
     if not any(texts):
         return {"ok": False, "error": "no words found in these clips"}
@@ -702,3 +724,16 @@ def rename_clip(job_id: str, file: str, title: str) -> dict:
         return {"ok": False, "error": "clip not in run"}
     job.save()
     return {"ok": True, "file": file, "title": t}
+
+
+def set_clip_meta(job_id: str, file: str, liked) -> dict:
+    """Like (True), dislike/hide (False) or clear (None) a clip."""
+    job = load_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job not found"}
+    for c in job.clips or []:
+        if c.get("file") == file:
+            c["liked"] = liked
+            job.save()
+            return {"ok": True, "file": file, "liked": liked}
+    return {"ok": False, "error": "clip not in run"}

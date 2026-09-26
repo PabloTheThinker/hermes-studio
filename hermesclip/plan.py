@@ -4,7 +4,7 @@ import json
 import os
 import re
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from hermesclip.transcribe import Transcript, Word
@@ -61,6 +61,7 @@ class ClipPlan:
     title: str
     emphasis: list[str]
     score: float
+    parts: dict = field(default_factory=dict)
 
 
 def plan_heuristic(
@@ -98,7 +99,7 @@ def plan_heuristic(
             score, title, emp = _rubric(words, dur)
             if score < 0.22:
                 continue
-            candidates.append(ClipPlan(start, end, title, emp, score))
+            candidates.append(ClipPlan(start, end, title, emp, score, score_parts(words, dur)))
 
     if not candidates:
         # Fallback: first min_sec–max_sec on sentence bounds.
@@ -220,7 +221,24 @@ def _ends_thought(w: Word) -> bool:
     return t[-1:] in ".?!" or len(t) > 12
 
 
+def score_parts(words: list[Word], dur: float) -> dict:
+    """Opus-style breakdown, 0-99 each: hook (first 3s), flow (arc + clean ending), value (stands alone + quotable)."""
+    if not words:
+        return {}
+    p = _rubric_full(words, dur)[3]
+    return {
+        "hook": int(round(99 * p["hook"])),
+        "flow": int(round(99 * (0.6 * p["arc"] + 0.4 * p["ending"]))),
+        "value": int(round(99 * (0.55 * p["standalone"] + 0.45 * p["quotability"]))),
+    }
+
+
 def _rubric(words: list[Word], dur: float) -> tuple[float, str, list[str]]:
+    score, title, emp, _ = _rubric_full(words, dur)
+    return score, title, emp
+
+
+def _rubric_full(words: list[Word], dur: float) -> tuple[float, str, list[str], dict]:
     blob = _text(words).lower()
     open_w = [w for w in words if w.start <= words[0].start + 3.0]
     open_t = _text(open_w).lower()
@@ -264,7 +282,8 @@ def _rubric(words: list[Word], dur: float) -> tuple[float, str, list[str]]:
     ending = 0.85 if words[-1].text.strip()[-1:] in ".?!" else 0.35
 
     score = 0.28 * hook + 0.22 * standalone + 0.2 * arc + 0.18 * quotability + 0.12 * ending
-    return round(score, 3), _title(open_w or words), _emphasis(words)
+    parts = dict(hook=hook, standalone=standalone, arc=arc, quotability=quotability, ending=ending)
+    return round(score, 3), _title(open_w or words), _emphasis(words), parts
 
 
 def _overlap_sec(a: ClipPlan, b: ClipPlan) -> float:
