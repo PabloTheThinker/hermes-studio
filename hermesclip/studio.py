@@ -13,7 +13,9 @@ from hermesclip.download import LIVE_DEFAULT_SEC, LIVE_MAX_SEC, probe
 from hermesclip.pipeline import (
     execute_job,
     import_legacy,
+    job_dir,
     library_root,
+    organize_library,
     list_jobs,
     load_job,
     new_job,
@@ -90,7 +92,10 @@ def _safe_media(job_id: str, name: str) -> Path | None:
     if "/" in name or "\\" in name or name.startswith("."):
         return None
     root = library_root().resolve()
-    path = (root / job_id / name).resolve()
+    d = job_dir(job_id)
+    if not d:
+        return None
+    path = (d / name).resolve()
     try:
         path.relative_to(root)
     except ValueError:
@@ -106,7 +111,10 @@ def _safe_trash(job_id: str, name: str) -> Path | None:
     if "/" in name or "\\" in name or name.startswith("."):
         return None
     root = library_root().resolve()
-    trash = (root / job_id / ".trash").resolve()
+    d = job_dir(job_id)
+    if not d:
+        return None
+    trash = (d / ".trash").resolve()
     path = (trash / name).resolve()
     try:
         path.relative_to(trash)
@@ -222,7 +230,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 200, {"ok": True, **catalogue()})
         if path == "/api/library":
             jobs = [asdict(j) for j in list_jobs() if j.status == "completed"]
-            return _json(self, 200, {"ok": True, "runs": jobs})
+            counts: dict[str, int] = {}
+            for j in jobs:
+                counts[j["platform"]] = counts.get(j["platform"], 0) + 1
+            folders = [{"name": k, "runs": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+            return _json(self, 200, {"ok": True, "runs": jobs, "folders": folders, "root": "library"})
         if path.startswith("/api/trash"):
             qs = parse_qs(parsed.query)
             job = load_job((qs.get("job") or [""])[0])
@@ -462,6 +474,10 @@ class StudioHandler(BaseHTTPRequestHandler):
 
 def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
     import_legacy()
+    try:
+        organize_library()
+    except Exception:
+        pass
     _start_worker()
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
     print(f"Hermes Studio  http://{host}:{port}/", flush=True)
