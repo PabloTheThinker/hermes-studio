@@ -301,6 +301,18 @@ class StudioHandler(BaseHTTPRequestHandler):
                 job.save()
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
+        if path == "/api/name":
+            body = _read_json(self)
+            from hermesclip.pipeline import name_job
+
+            res = name_job(str(body.get("job") or ""))
+            return _json(self, 200 if res.get("ok") else 400, res)
+        if path == "/api/rename":
+            body = _read_json(self)
+            from hermesclip.pipeline import rename_clip
+
+            res = rename_clip(str(body.get("job") or ""), str(body.get("file") or ""), str(body.get("title") or ""))
+            return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/edit":
             body = _read_json(self)
             job = load_job(str(body.get("job") or ""))

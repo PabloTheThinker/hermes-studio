@@ -206,6 +206,22 @@ def hermesclip_edit(
         return json.dumps({"ok": True, "log": result.get("stdout", "")[-1500:]})
 
 
+def hermesclip_name(job: str, file: str = "", title: str = "") -> str:
+    if not job:
+        return json.dumps({"ok": False, "error": "job is required"})
+    argv = ["name", job]
+    if file:
+        argv += ["--file", file, "--title", title]
+    result = _run_mod(argv, timeout=900)
+    if not result.get("ok"):
+        return json.dumps(result)
+    out = result.get("stdout") or ""
+    try:
+        return json.dumps(json.loads(out[out.index("{"):]))
+    except Exception:
+        return json.dumps({"ok": True, "log": out[-1500:]})
+
+
 def hermesclip_recommend(src: str) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -541,6 +557,25 @@ def register(ctx) -> None:
             at=(args or {}).get("at"),
         ),
         description="HermesClip: trim or split a clip. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_name",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_name",
+            "description": "Hermes Studio: AI-name every clip in a library run from its own words (Opus Clip-style titles, local Ollama first), or set one clip's name with file+title. Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job": {"type": "string", "description": "Library run id"},
+                    "file": {"type": "string", "description": "Optional: one clip file to rename"},
+                    "title": {"type": "string", "description": "Title for that file"},
+                },
+                "required": ["job"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_name(job=(args or {}).get("job") or "", file=(args or {}).get("file") or "", title=(args or {}).get("title") or ""),
+        description="Hermes Studio: AI clip names. Does not post.",
     )
     ctx.register_tool(
         name="hermesclip_recommend",

@@ -142,6 +142,9 @@
     .clip video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; display: block; border: 1px solid var(--line); }
     .clip.wide video { aspect-ratio: 16/9; }
     .clip h3 { margin: .7rem 0 .15rem; font-size: 14px; font-weight: 600; }
+    .clip .ttl { display: block; width: 100%; margin: .7rem 0 .15rem; padding: .2rem 0; background: none; border: 0; border-bottom: 1px solid transparent; font: 600 15px/1.3 var(--sans); color: var(--ink); height: auto; resize: none; overflow: hidden; }
+    .clip .ttl:hover { border-bottom-color: var(--line-2); }
+    .clip .ttl:focus { border-bottom-color: var(--amber); outline: none; }
     .clip p { margin: 0 0 .5rem; color: var(--dim); font: 500 12px var(--mono); }
     .clip .row { gap: .3rem; }
     .clip input { width: 88px; height: 32px; padding: 0 .5rem; font-size: 12px; margin: 0; }
@@ -243,6 +246,7 @@
     };
     const $ = (s, el = document) => el.querySelector(s);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    const slugify = (t) => String(t || "clip").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "clip";
     const fmt = (n) => { if (!n && n !== 0) return ""; const s = Math.floor(n % 60).toString().padStart(2, "0"); return Math.floor(n / 60) + ":" + s; };
     const toolById = (id) => state.tools.find(t => t.id === id);
     async function api(path, opts) {
@@ -426,11 +430,12 @@
         ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
         ${files.length ? `<div class="files">${files.map(f => `<a href="/media/${j.id}/${encodeURIComponent(f.file)}" download>${esc(f.label || f.file)}<span>${esc(f.file)}</span></a>`).join("")}</div>` : ""}
         ${j.mode === "transcript" ? `<pre class="tx">${esc(state.tx || "Loading transcript…")}</pre>` : ""}
-        ${(j.clips || []).length ? `<div class="row" style="margin:0 0 1.25rem"><button class="btn" id="copy-btn" data-job="${j.id}">Write social copy</button><span class="hint">Titles, description, hashtags. You post.</span></div>` : ""}
+        ${(j.clips || []).length ? `<div class="row" style="margin:0 0 1.25rem"><button class="btn" id="name-btn" data-job="${j.id}">AI name clips</button><button class="btn" id="copy-btn" data-job="${j.id}">Write social copy</button><span class="hint">${state.nameSrc ? "Named by " + esc(state.nameSrc) + ". Click a name to edit." : "Names come from each clip's words. Click a name to edit."}</span></div>` : ""}
         ${copy ? `<div class="copy"><p class="kicker">${esc(copy.source || "copy")}</p><ul>${(copy.titles || []).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede" style="margin:0 0 .4rem">${esc(copy.description || "")}</p><p class="hint mono">${esc((copy.hashtags || []).join(" "))}</p></div>` : ""}
         <div class="clips">${(j.clips || []).map(c => `<article class="clip ${wide ? "wide" : ""}">
           <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}` : ""}" src="/media/${j.id}/${c.file}"></video>
-          <h3>${esc(c.title || c.file)}</h3>
+          <a class="hint mono" style="float:right;margin-top:.8rem;text-decoration:none" href="/media/${j.id}/${c.file}" download="${esc(slugify(c.title || c.file))}.mp4">Save ↓</a>
+          <textarea class="ttl" rows="2" data-title="${esc(c.file)}" aria-label="Clip name" maxlength="90">${esc(c.title || c.file)}</textarea>
           <p>${fmt(c.start)}–${fmt(c.end)}${c.virality ? " · " + c.virality : ""}${c.saved ? " · " + c.saved + "s cut" : ""}</p>
           <div class="row">
             <button class="btn sm" data-up="${esc(c.file)}" aria-label="Move up">↑</button>
@@ -473,7 +478,7 @@
       if (v("keywords")) state.keywords = v("keywords").value;
     }
     async function openRun(id) {
-      state.page = "library"; state.open = state.library.find(j => j.id === id) || null; state.tx = null; state.err = "";
+      state.page = "library"; state.open = state.library.find(j => j.id === id) || null; state.tx = null; state.err = ""; state.nameSrc = "";
       renderRail();
       try { const t = await api("/api/trash?job=" + encodeURIComponent(id)); state.trash = t.files || []; } catch { state.trash = []; }
       render();
@@ -570,6 +575,30 @@
       document.querySelectorAll("[data-dup]").forEach(el => el.onclick = () => clipOp(el.dataset.dup, "duplicate"));
       document.querySelectorAll("[data-drop]").forEach(el => el.onclick = () => { if (confirm("Drop this clip? It moves to the run's .trash and can be restored.")) clipOp(el.dataset.drop, "drop"); });
       document.querySelectorAll("[data-restore]").forEach(el => el.onclick = () => clipOp(el.dataset.restore, "restore"));
+      const nameBtn = $("#name-btn");
+      if (nameBtn) nameBtn.onclick = async () => {
+        const id = nameBtn.dataset.job;
+        nameBtn.disabled = true; nameBtn.textContent = "Naming…"; state.err = "";
+        try {
+          const r = await api("/api/name", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: id }) });
+          state.nameSrc = r.source;
+          await refresh(); state.open = state.library.find(x => x.id === id) || state.open;
+        } catch (e) { state.err = e.message; }
+        render();
+      };
+      document.querySelectorAll("[data-title]").forEach(el => {
+        const save = async () => {
+          const jobId = state.open && state.open.id; const file = el.dataset.title;
+          const clip = (state.open.clips || []).find(c => c.file === file);
+          if (!jobId || !clip || el.value.trim() === (clip.title || "")) return;
+          try {
+            const r = await api("/api/rename", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: jobId, file, title: el.value }) });
+            clip.title = r.title; el.value = r.title;
+          } catch (e) { state.err = e.message; render(); }
+        };
+        el.onblur = save;
+        el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } if (e.key === "Escape") { const c = (state.open.clips || []).find(x => x.file === el.dataset.title); el.value = c ? c.title : el.value; el.blur(); } };
+      });
       const copyBtn = $("#copy-btn");
       if (copyBtn) copyBtn.onclick = async () => {
         const id = copyBtn.dataset.job;

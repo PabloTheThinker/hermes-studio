@@ -59,6 +59,10 @@ def main(argv: list[str] | None = None) -> int:
     edt.add_argument("--at", type=float, default=None, help="split point in seconds")
     edt.add_argument("--out", default="")
 
+    nmp = sub.add_parser("name", help="AI-name every clip in a library run (Opus-style titles; local Ollama first)")
+    nmp.add_argument("job", help="library job id")
+    nmp.add_argument("--file", default="", help="rename one clip file instead")
+    nmp.add_argument("--title", default="", help="title for --file")
     cop = sub.add_parser("copy", help="titles / description / hashtags from a job or transcript (does not post)")
     cop.add_argument("src", help="job directory, job id, or transcript.json")
     cop.add_argument("--clip-title", default="")
@@ -81,6 +85,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.cmd == "edit":
         return _edit_cmd(args)
+    if args.cmd == "name":
+        from hermesclip.pipeline import name_job, rename_clip
+
+        res = rename_clip(args.job, args.file, args.title) if args.file else name_job(args.job)
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") else 1
     if args.cmd == "copy":
         return _copy_cmd(args)
     if args.cmd == "transcribe":
