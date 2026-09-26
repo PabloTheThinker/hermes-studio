@@ -11,12 +11,22 @@ from pathlib import Path
 from typing import Callable
 
 from hermesclip.download import LIVE_DEFAULT_SEC, SourceInfo, fetch, probe
-from hermesclip.layout import canvas
+from hermesclip.layout import canvas, even, probe_size
 from hermesclip.plan import ClipPlan, plan_grok, plan_heuristic, save_plan
 from hermesclip.render import probe_duration, render_clip
 from hermesclip.transcribe import Transcript, Word, load_transcript, transcribe
 
 Progress = Callable[[str, float, str], None]
+
+
+MODES = ("clip", "captions", "reframe", "tighten", "transcript")
+WHISPER_PRESETS = {"fast": "tiny", "balanced": "base.en", "accurate": "small.en"}
+
+
+def whisper_model(value: str) -> str:
+    """Map a quality preset (fast/balanced/accurate) or raw model name to a faster-whisper model."""
+    v = (value or "tiny").strip()
+    return WHISPER_PRESETS.get(v, v)
 
 
 def library_root() -> Path:
@@ -73,6 +83,7 @@ class Job:
     mode: str = "clip"
     keywords: str = ""
     clips: list[dict] = field(default_factory=list)
+    files: list[dict] = field(default_factory=list)
     work: str = ""
     dir: str = ""
 
@@ -226,11 +237,11 @@ def new_job(
         style=style,
         pacing=pacing,
         plan=plan,
-        whisper=whisper,
+        whisper=whisper_model(whisper),
         max_clips=max_clips,
         live_seconds=live_seconds,
         live_from_start=live_from_start,
-        aspect=aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
+        aspect=aspect if aspect in ("9:16", "16:9", "1:1", "4:5", "source") else "9:16",
         captions=bool(captions),
         min_sec=float(min_sec),
         max_sec=float(max_sec),
@@ -238,7 +249,7 @@ def new_job(
         end_time=end_time,
         prompt=prompt or "",
         hook=bool(hook),
-        mode=mode if mode in ("clip", "captions") else "clip",
+        mode=mode if mode in MODES else "clip",
         keywords=keywords or "",
         dir=str(dest),
         work=str(dest / "work"),
@@ -268,6 +279,17 @@ def _thumb(clip: Path, dest: Path) -> str:
         text=True,
     )
     return dest.name if proc.returncode == 0 and dest.is_file() else ""
+
+
+def _finish(job: Job, clips: list[dict], message: str) -> Job:
+    job.clips = clips
+    job.status = "completed"
+    job.stage = "done"
+    job.progress = 1.0
+    job.message = message
+    job.finished_at = utcnow()
+    job.save()
+    return job
 
 
 def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
@@ -311,6 +333,48 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         width, height = canvas(job.aspect)
         layout = job.layout if job.layout in ("fit", "fill") else "fit"
         style = job.style if job.captions else "clean"
+
+        from hermesclip.export import write_exports
+
+        job.files = write_exports(tr, out_dir)
+        job.save()
+
+        if job.mode == "transcript":
+            bump("export", 0.9, "Transcript files")
+            return _finish(job, [], f"{len(job.files)} files")
+
+        if job.mode in ("reframe", "tighten"):
+            dur = probe_duration(video)
+            lo = float(job.start_time or 0.0)
+            hi = float(job.end_time or dur)
+            label = "Reframe" if job.mode == "reframe" else "Tighten"
+            bump("render", 0.6, label)
+            plan = ClipPlan(lo, hi, job.title[:60], [], 0.5)
+            if job.mode == "reframe":
+                w_, h_, pace = width, height, "natural"
+            else:
+                # Tighten keeps the source frame unless a canvas was picked.
+                if job.aspect == "source":
+                    sw, sh = probe_size(video)
+                    w_, h_ = even(sw), even(sh)
+                else:
+                    w_, h_ = width, height
+                pace = "tight"
+            dest = out_dir / f"{job.mode}.mp4"
+            render_clip(
+                video, plan, tr, dest, work,
+                width=w_, height=h_, pacing=pace, style=style, layout=layout,
+                hook="", captions=job.captions,
+            )
+            thumb = _thumb(dest, out_dir / f"{job.mode}.jpg")
+            out_len = probe_duration(dest)
+            row = {"file": dest.name, "title": label, "start": lo, "end": hi, "score": 1.0, "virality": 0, "thumb": thumb}
+            msg = label
+            if job.mode == "tighten":
+                saved = max(0.0, (hi - lo) - out_len)
+                row["saved"] = round(saved, 1)
+                msg = f"Tightened · {saved:.0f}s cut"
+            return _finish(job, [row], msg)
 
         if job.mode == "captions":
             bump("render", 0.6, "Captions only")
@@ -370,11 +434,10 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         for i, plan in enumerate(plans, 1):
             bump("render", 0.6 + 0.35 * (i - 1) / n, f"Render clip {i:02d}")
             dest = out_dir / f"clip-{i:02d}.mp4"
-            use_tr = tr if job.captions else Transcript(tr.language, tr.duration, tr.text, [])
             render_clip(
                 video,
                 plan,
-                use_tr,
+                tr,
                 dest,
                 work,
                 width=width,
@@ -383,6 +446,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                 style=style,
                 layout=layout,
                 hook=plan.title if job.hook else "",
+                captions=job.captions,
             )
             thumb = _thumb(dest, out_dir / f"clip-{i:02d}.jpg")
             written.append(
@@ -465,7 +529,7 @@ def run_once(
         job.save()
     job = execute_job(job, on_progress=on_progress)
     dest = Path(job.dir)
-    files = [str(dest / c["file"]) for c in job.clips]
+    files = [str(dest / c["file"]) for c in job.clips] + [str(dest / f["file"]) for f in (job.files or [])]
     if out_dir.resolve() != dest.resolve():
         out_dir.mkdir(parents=True, exist_ok=True)
         copied = []
@@ -483,5 +547,6 @@ def run_once(
         "work": job.work,
         "title": job.title,
         "mode": job.mode,
+        "message": job.message,
         "error": job.error,
     }
