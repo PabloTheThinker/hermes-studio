@@ -52,7 +52,7 @@
     /* Rail */
     aside { border-right: 1px solid var(--line); padding: 1rem 0 1.5rem; display: flex; flex-direction: column; gap: 1.4rem; overflow: auto; }
     .rail-h { font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); padding: 0 1.25rem; margin: 0 0 .35rem; }
-    .rail button { display: flex; align-items: baseline; gap: .6rem; width: 100%; background: none; border: 0; border-left: 2px solid transparent; padding: .5rem 1.25rem .5rem calc(1.25rem - 2px); text-align: left; cursor: pointer; color: var(--mute); transition: color .2s var(--ease); }
+    .rail button { white-space: nowrap; display: flex; align-items: baseline; gap: .6rem; width: 100%; background: none; border: 0; border-left: 2px solid transparent; padding: .5rem 1.25rem .5rem calc(1.25rem - 2px); text-align: left; cursor: pointer; color: var(--mute); transition: color .2s var(--ease); }
     .rail button:hover { color: var(--ink); }
     .rail button.on { color: var(--ink); border-left-color: var(--amber); }
     .rail .nm { font-weight: 600; font-size: 14px; }
@@ -154,9 +154,9 @@
     .clip video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; display: block; border: 1px solid var(--line); }
     .clip.wide video { aspect-ratio: 16/9; }
     .clip h3 { margin: .7rem 0 .15rem; font-size: 14px; font-weight: 600; }
-    .clip .ttl { display: block; width: 100%; margin: .7rem 0 .15rem; padding: .2rem 0; background: none; border: 0; border-bottom: 1px solid transparent; font: 600 15px/1.3 var(--sans); color: var(--ink); height: auto; resize: none; overflow: hidden; }
-    .clip .ttl:hover { border-bottom-color: var(--line-2); }
-    .clip .ttl:focus { border-bottom-color: var(--amber); outline: none; }
+    textarea.ttl { display: block; width: 100%; margin: .7rem 0 .15rem; padding: .2rem 0; background: none; border: 0; border-bottom: 1px solid transparent; border-radius: 0; font: 600 15px/1.3 var(--sans); color: var(--ink); height: auto; resize: none; overflow: hidden; box-shadow: none; }
+    textarea.ttl:hover { border-bottom-color: var(--line-2); }
+    textarea.ttl:focus { border-bottom-color: var(--amber); outline: none; }
     .clip p { margin: 0 0 .5rem; color: var(--dim); font: 500 12px var(--mono); }
     .clip .row { gap: .3rem; }
     .clip input { width: 88px; height: 32px; padding: 0 .5rem; font-size: 12px; margin: 0; }
@@ -176,6 +176,72 @@
     .bar > i { display: block; height: 2px; background: var(--amber); transition: width .6s var(--ease); }
     .empty { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 2.5rem 0; color: var(--mute); }
 
+
+    /* ---------- Clips page (Opus-style) ---------- */
+    .drop { border: 1px solid var(--line-2); background: var(--panel); padding: 1.1rem; margin: 0 0 1rem; }
+    .drop .row { flex-wrap: nowrap; }
+    .drop input { margin: 0; height: 52px; font-size: 16px; background: var(--bg); }
+    .drop .btn.primary { min-height: 52px; white-space: nowrap; }
+    .drop .probe { margin: .7rem 0 0; }
+    .setbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0; border: 1px solid var(--line); margin: 0 0 .8rem; }
+    .setbar > div { padding: .8rem 1rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; }
+    .setbar label.f { margin-bottom: .45rem; }
+    .setbar select, .setbar input { margin: 0; height: 38px; padding: 0 .6rem; background: var(--bg); }
+    .setbar .opts { margin: 0; }
+    .setbar .opt { min-width: 0; padding: .45rem .6rem; font-size: 13px; }
+    .more { background: none; border: 0; color: var(--mute); cursor: pointer; font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; padding: .4rem 0; }
+    .more:hover { color: var(--ink); }
+    .proj-h { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 2.6rem 0 1rem; border-bottom: 1px solid var(--line); padding-bottom: .6rem; }
+    .proj-h h2 { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 22px; }
+    .projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 1.5rem 1.25rem; }
+    .proj { cursor: pointer; }
+    .proj .cover { position: relative; aspect-ratio: 16/10; background: var(--panel); border: 1px solid var(--line); overflow: hidden; }
+    .proj .cover img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .9; transition: opacity .2s var(--ease), transform .4s var(--ease); }
+    .proj:hover .cover img { opacity: 1; transform: scale(1.02); }
+    .proj .badge { position: absolute; left: .5rem; top: .5rem; background: rgba(11,11,12,.85); padding: .2rem .45rem; font: 600 10px var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--ink); }
+    .proj .best { position: absolute; right: .5rem; bottom: .5rem; background: rgba(11,11,12,.85); padding: .2rem .45rem; font: 500 12px var(--mono); color: var(--amber); }
+    .proj h3 { margin: .7rem 0 .2rem; font-size: 15px; font-weight: 600; line-height: 1.3; transition: color .2s var(--ease); }
+    .proj:hover h3 { color: var(--amber); }
+    .proj p { margin: 0; color: var(--dim); font-size: 13px; }
+    .proj .bar { margin-top: .5rem; }
+
+    .ptool { display: flex; flex-wrap: wrap; align-items: center; gap: .8rem 1.2rem; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: .7rem 0; margin: 0 0 1.5rem; }
+    .ptool .opts { margin: 0; }
+    .ptool .opt { min-width: 0; padding: .45rem .75rem; font-size: 13px; }
+    .ptool .spacer { flex: 1; }
+    .clist { display: flex; flex-direction: column; }
+    .crow { display: grid; grid-template-columns: 34px 240px 1fr; gap: 1.5rem; padding: 1.5rem 0; border-bottom: 1px solid var(--line); }
+    .crow:first-child { padding-top: 0; }
+    .crow .rank { font: 500 13px var(--mono); color: var(--dim); padding-top: .2rem; }
+    .crow video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; border: 1px solid var(--line); display: block; }
+    .crow.wide video { aspect-ratio: 16/9; }
+    .crow textarea.ttl { margin-top: 0; font-size: 21px; line-height: 1.2; font-variation-settings: "wdth" 104; }
+    .crow .meta { font: 500 12px var(--mono); color: var(--dim); margin: .2rem 0 1rem; }
+    .vscore { display: flex; align-items: flex-end; gap: 1.75rem; margin: 0 0 1rem; }
+    .vscore .big { font-weight: 800; font-variation-settings: "wdth" 125; font-size: 44px; line-height: .85; color: var(--amber); }
+    .vscore .big small { font: 500 12px var(--mono); color: var(--dim); margin-left: .2rem; }
+    .parts { display: grid; grid-template-columns: repeat(3, minmax(80px, 120px)); gap: 1.4rem; }
+    .parts div { font: 600 10px var(--sans); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); }
+    .parts i { display: block; height: 2px; background: var(--line); margin-top: .35rem; position: relative; }
+    .parts i b { position: absolute; left: 0; top: 0; height: 2px; background: var(--ink); }
+    .parts span { margin-left: .5rem; float: right; font: 500 11px var(--mono); color: var(--mute); letter-spacing: 0; }
+    .words { color: var(--mute); font-size: 14px; line-height: 1.6; max-width: 62ch; margin: 0 0 1rem; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+    .words.open { -webkit-line-clamp: unset; }
+    .cact { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+    .cact input { width: 84px; height: 32px; padding: 0 .5rem; font-size: 12px; margin: 0; }
+    .btn.on { border-color: var(--amber); color: var(--amber); }
+    .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.8rem 1.25rem; }
+    .cgrid .ccard video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; border: 1px solid var(--line); display: block; }
+    .cgrid .ccard.wide video { aspect-ratio: 16/9; }
+    .cgrid .ccard .top { display: flex; justify-content: space-between; align-items: baseline; margin-top: .6rem; }
+    .cgrid .ccard .top b { font: 500 13px var(--mono); color: var(--amber); }
+    .cgrid .ccard textarea.ttl { margin: .2rem 0 .5rem; }
+    @media (max-width: 860px) {
+      .drop .row { flex-wrap: wrap; }
+      .crow { grid-template-columns: 1fr; gap: .8rem; }
+      .crow .rank { display: none; }
+      .crow video { max-width: 280px; }
+    }
     @media (max-width: 860px) {
       #app { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
       .top { flex-wrap: wrap; height: auto; padding: .8rem 1rem; gap: .7rem; }
@@ -207,7 +273,8 @@
       <div>
         <p class="rail-h">Desk</p>
         <nav class="rail" id="pages">
-          <button data-page="create" class="on"><span class="nm">New</span></button>
+          <button data-page="clips" class="on"><span class="nm">Clips</span><span class="ct" id="clip-ct"></span></button>
+          <button data-page="create"><span class="nm">Other tools</span></button>
           <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct"></span></button>
           <button data-page="jobs"><span class="nm">Jobs</span><span class="ct" id="job-ct"></span></button>
         </nav>
@@ -248,7 +315,7 @@
     const TOOL_LABEL = { clip: "Clips", captions: "Captions", reframe: "Reframe", tighten: "Tighten", transcript: "Transcript" };
 
     const state = {
-      page: "create", tool: null, tools: FALLBACK_TOOLS, quality: FALLBACK_QUALITY,
+      page: "clips", tool: null, sort: "score", filter: "all", view: "list", moreSet: false, clipInit: false, tools: FALLBACK_TOOLS, quality: FALLBACK_QUALITY,
       src: "", probe: null, err: "",
       aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
       style: "pop", captions: true, pacing: "tight", whisper: "fast",
@@ -273,16 +340,16 @@
       renderRail(); render();
     }
     function renderRail() {
-      $("#tool-rail").innerHTML = state.tools.map(t => `<button data-tool="${t.id}" class="${state.page==="create"&&state.tool===t.id?"on":""}"><span class="nm">${esc(t.name)}</span></button>`).join("");
+      $("#tool-rail").innerHTML = state.tools.filter(t => t.id !== "clip").map(t => `<button data-tool="${t.id}" class="${state.page==="create"&&state.tool===t.id?"on":""}"><span class="nm">${esc(t.name)}</span></button>`).join("");
       document.querySelectorAll("#tool-rail [data-tool]").forEach(b => b.onclick = () => pickTool(b.dataset.tool));
       document.querySelectorAll("#pages [data-page]").forEach(b => b.classList.toggle("on", b.dataset.page === state.page && !(state.page === "create" && state.tool)));
+      const mc = document.querySelector("main"); if (mc) mc.scrollTop = 0;
     }
     function pickTool(id) {
-      grabForm();
-      const t = toolById(id); if (!t) return;
-      state.tool = id; state.page = "create"; state.open = null; state.err = ""; state.why = []; state.picked = false;
-      Object.assign(state, t.defaults || {});
-      renderRail(); render();
+      if (id === "clip") { go("#/clips"); return; }
+      if (!toolById(id)) return;
+      state.why = []; state.picked = false;
+      go("#/tools/" + id);
     }
 
     async function refresh() {
@@ -296,32 +363,184 @@
       $("#lib-ct").textContent = state.library.length || "";
       const running = state.jobs.filter(j => j.status === "running").length, queued = live - running;
       const tl = $("#top-live"); tl.textContent = [running ? running + " running" : "", queued ? queued + " queued" : ""].filter(Boolean).join(" · "); tl.hidden = !live;
+      if (state.open && state.open.pending) { const f = state.library.find(j => j.id === state.open.id); if (f) { state.open = f; try { const t = await api("/api/trash?job=" + encodeURIComponent(f.id)); state.trash = t.files || []; } catch {} render(); } }
+      const clipRuns = state.library.filter(j => (j.mode || "clip") === "clip").length;
+      $("#clip-ct").textContent = clipRuns || "";
+      if (state.page === "clips" && !state.open) { const pj = $("#projects"); if (pj) { pj.innerHTML = projectsHtml(); bindProjects(); } return; }
+      if (state.page === "clips" && state.open) {
+        const live = state.library.find(x => x.id === state.open.id);
+        if (live && JSON.stringify(live.clips.map(c => [c.file, c.title])) !== JSON.stringify(state.open.clips.map(c => [c.file, c.title]))) { state.open = live; render(); }
+        return;
+      }
       if (state.page === "create") return;
       if (state.page === "library" && state.open) return;
       const sig = JSON.stringify([state.page, state.q, state.jobs.map(j => [j.id, j.status, j.progress, j.message]), state.library.length]);
       if (sig === state.sig) return;
       state.sig = sig; render();
     }
-    function nav(page) {
+    function nav(page) { go(page === "create" ? "#/tools" : "#/" + page); }
+    function go(hash) {
       grabForm();
-      state.page = page; state.open = null; state.tx = null;
-      if (page === "create") state.tool = null;
-      renderRail(); render();
+      if (location.hash !== hash) history.pushState(null, "", hash);
+      applyRoute();
     }
+    function applyRoute() {
+      const parts = (location.hash || "#/clips").replace(/^#\/?/, "").split("/").map(decodeURIComponent);
+      const [page, arg] = [parts[0] || "clips", parts[1] || ""];
+      state.err = ""; state.tx = null;
+      if (page === "tools") { state.page = "create"; state.open = null; if (arg && toolById(arg)) { state.tool = arg; Object.assign(state, toolById(arg).defaults || {}); } else state.tool = null; }
+      else if (page === "library" || page === "jobs") { state.page = page; state.open = arg ? (state.library.find(j => j.id === arg) || null) : null; }
+      else { state.page = "clips"; state.open = arg ? (state.library.find(j => j.id === arg) || { id: arg, clips: [], pending: true }) : null; if (!state.clipInit) { Object.assign(state, (toolById("clip") || {}).defaults || {}); state.clipInit = true; } }
+      renderRail(); render();
+      if (state.page === "library" && state.open) openRun(state.open.id, true);
+    }
+    window.addEventListener("popstate", applyRoute);
     document.querySelectorAll("#pages [data-page]").forEach(b => b.addEventListener("click", () => nav(b.dataset.page)));
 
     function render() {
       const main = $("#main .wrap");
-      main.innerHTML = state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : jobsPage();
+      main.innerHTML = state.page === "clips" ? clipsPage() : state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : jobsPage();
       bind();
     }
 
+
+    /* ---------- Clips (Opus-style) ---------- */
+    function clipsPage() {
+      if (state.open) return projectPage(state.open);
+      const p = state.probe;
+      const probeLine = p ? (p.ok ? `<span class="ok">${esc(p.title)}</span>${p.duration ? ` <span class="mono">${fmt(p.duration)}</span>` : ""}${p.is_live ? ` <span class="mono" style="color:var(--ember)">LIVE</span>` : ""}` : `<span style="color:var(--bad)">${esc(p.error)}</span>`) : "YouTube, Twitch, Kick, X, TikTok, a live stream, or a file on this machine.";
+      const d = DUR.find(x => x.id === state.dur) || DUR[1];
+      return `<p class="kicker">Clips</p><h1>Long video in.<br>Shorts out.</h1>
+        <p class="lede">Paste a link. Hermes finds the moments, scores them, names them and captions them. You pick what to post.</p>
+        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
+        <div class="drop">
+          <div class="row"><input id="src" value="${esc(state.src)}" placeholder="Paste a link or a file path" autocomplete="off" />
+          <button class="btn" id="probe-btn">Check</button><button class="btn primary" id="clip-run">Get clips</button></div>
+          <p class="hint probe">${probeLine}</p>
+        </div>
+        ${state.why.length ? `<ul class="why">${state.why.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+        <div class="setbar">
+          <div><label class="f">Find</label><input id="prompt" value="${esc(state.prompt)}" placeholder="Best moments, or a topic" /></div>
+          <div><label class="f">Clip length</label><select id="dur-sel">${DUR.map(x => `<option value="${x.id}" ${state.dur === x.id ? "selected" : ""}>${x.label} · ${x.hint}</option>`).join("")}</select></div>
+          <div><label class="f">How many</label><div class="opts">${[3,5,8,12].map(n => `<button class="opt ${state.max_clips==n?"on":""}" data-k="max_clips" data-v="${n}" data-n="1">${n}</button>`).join("")}</div></div>
+          <div><label class="f">Format</label><div class="opts">${ASPECTS.map(a => `<button class="opt ${state.aspect===a.v?"on":""}" data-k="aspect" data-v="${a.v}" title="${a.h}">${a.v}</button>`).join("")}</div></div>
+        </div>
+        <button class="more" id="more-btn">${state.moreSet ? "Fewer settings −" : "More settings +"}</button>
+        ${state.moreSet ? `<div class="setbar" style="margin-top:.6rem">
+          <div><label class="f">Timeframe</label><div class="row" style="flex-wrap:nowrap"><input id="start" placeholder="start 0:00" value="${esc(state.start)}" /><input id="end" placeholder="end" value="${esc(state.end)}" /></div></div>
+          <div><label class="f">Framing</label><div class="opts"><button class="opt ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic</button><button class="opt ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Speaker</button></div></div>
+          <div><label class="f">Captions</label><select id="style-sel"><option value="off" ${!state.captions ? "selected" : ""}>Off</option>${STYLES.map(x => `<option value="${x}" ${state.captions && state.style === x ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></div>
+          <div><label class="f">Highlight words</label><input id="keywords" value="${esc(state.keywords || "")}" placeholder="money, never, secret" /></div>
+          <div><label class="f">Pacing</label><div class="opts"><button class="opt ${state.pacing==="tight"?"on":""}" data-k="pacing" data-v="tight">Tight</button><button class="opt ${state.pacing==="natural"?"on":""}" data-k="pacing" data-v="natural">Natural</button></div></div>
+          <div><label class="f">Transcription</label><div class="opts">${state.quality.map(q => `<button class="opt ${state.whisper===q.id?"on":""}" data-k="whisper" data-v="${q.id}">${esc(q.name)}</button>`).join("")}</div></div>
+          <div><label class="f">Hook title</label><label class="check" style="margin:.5rem 0 0"><input type="checkbox" id="hook" ${state.hook ? "checked" : ""}> Name on screen, first 3s</label></div>
+          <div><label class="f">If it's live</label><select id="live-sel">${[[600,"Record 10 min"],[1200,"Record 20 min"],[1800,"Record 30 min"],[3600,"Record 60 min"]].map(([v,l]) => `<option value="${v}" ${state.live_seconds==v?"selected":""}>${l}</option>`).join("")}</select></div>
+        </div>` : ""}
+        <div class="row" style="margin-top:.6rem"><button class="btn sm" id="best-btn">Auto settings</button><span class="hint">${esc(state.max_clips + " × " + d.hint + " · " + state.aspect + " · " + (state.captions ? state.style : "no captions") + " · " + state.whisper)}</span></div>
+        <div class="proj-h"><h2>Projects</h2><span class="hint">Newest first</span></div>
+        <div id="projects">${projectsHtml()}</div>`;
+    }
+    function projectsHtml() {
+      const live = state.jobs.filter(j => (j.mode || "clip") === "clip" && (j.status === "queued" || j.status === "running" || j.status === "failed"));
+      const done = state.library.filter(j => (j.mode || "clip") === "clip");
+      if (!live.length && !done.length) return `<div class="empty">No projects yet. Paste a link above.</div>`;
+      const card = (j, busy) => {
+        const thumb = (j.clips || []).find(c => c.thumb);
+        const best = viral(j);
+        const kept = (j.clips || []).filter(c => c.liked !== false).length;
+        return `<article class="proj" ${busy ? "" : `data-proj="${j.id}" role="button" tabindex="0"`}>
+          <div class="cover">${thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="" loading="lazy">` : ""}<span class="badge">${esc(j.platform || "")}</span>${best ? `<span class="best">${best}</span>` : ""}</div>
+          <h3>${esc(j.title || j.id)}</h3>
+          <p>${busy ? `<span class="st ${esc(j.status)}">${esc(j.status === "failed" ? "Failed · " + (j.error || j.message || "") : (j.stage || j.status) + (j.message ? " · " + j.message : ""))}</span>` : `${kept} clip${kept === 1 ? "" : "s"} · ${esc(j.aspect || "9:16")}${j.layout === "fill" ? " speaker" : ""}${j.created_at ? " · " + esc(ago(j.created_at)) : ""}`}</p>
+          ${busy && j.status !== "failed" ? `<div class="bar"><i style="width:${Math.round((j.progress || 0) * 100)}%"></i></div>` : ""}
+          ${j.status === "failed" ? `<div class="row" style="margin-top:.5rem"><button class="btn sm" data-retry="${j.id}">Retry</button></div>` : ""}
+        </article>`;
+      };
+      return `<div class="projects">${live.map(j => card(j, true)).join("")}${done.map(j => card(j, false)).join("")}</div>`;
+    }
+    function ago(iso) {
+      const s = (Date.now() - Date.parse(iso)) / 1000;
+      if (!isFinite(s)) return "";
+      if (s < 3600) return Math.max(1, Math.round(s / 60)) + " min ago";
+      if (s < 86400) return Math.round(s / 3600) + " h ago";
+      return Math.round(s / 86400) + " d ago";
+    }
+    function bindProjects() {
+      document.querySelectorAll("[data-proj]").forEach(el => {
+        el.onclick = () => go("#/clips/" + encodeURIComponent(el.dataset.proj));
+        el.onkeydown = (e) => { if (e.key === "Enter") el.onclick(); };
+      });
+      document.querySelectorAll("#projects [data-retry]").forEach(el => el.onclick = async (e) => { e.stopPropagation(); await api("/api/jobs/" + el.dataset.retry + "/retry", { method: "POST" }); refresh(); });
+    }
+    function sortedClips(j) {
+      let clips = (j.clips || []).map((c, i) => ({ ...c, _i: i }));
+      const hidden = clips.filter(c => c.liked === false).length;
+      if (state.filter === "liked") clips = clips.filter(c => c.liked === true);
+      else if (state.filter === "hidden") clips = clips.filter(c => c.liked === false);
+      else clips = clips.filter(c => c.liked !== false);
+      if (state.sort === "score") clips.sort((a, b) => (b.virality || 0) - (a.virality || 0) || a._i - b._i);
+      else clips.sort((a, b) => ((a.start || 0) - (b.start || 0)) || a._i - b._i);
+      return { clips, hidden };
+    }
+    function partsHtml(c) {
+      const p = c.parts || {};
+      if (p.hook == null) return "";
+      return `<div class="parts">${[["Hook", p.hook], ["Flow", p.flow], ["Value", p.value]].map(([k, v]) => `<div>${k}<span>${v}</span><i><b style="width:${Math.min(100, v)}%"></b></i></div>`).join("")}</div>`;
+    }
+    function projectPage(j) {
+      if (j.pending) return `<p class="kicker"><a href="#/clips">Clips</a></p><h1>Loading…</h1>`;
+      const wide = j.aspect === "16:9" || j.aspect === "source";
+      const { clips, hidden } = sortedClips(j);
+      const liked = (j.clips || []).filter(c => c.liked === true).length;
+      const copy = state.copy && state.copy.job === j.id ? state.copy : null;
+      const actions = (c) => `<div class="cact">
+          <a class="btn sm" href="/media/${j.id}/${c.file}" download="${esc(slugify(c.title || c.file))}.mp4">Download</a>
+          <button class="btn sm ${c.liked === true ? "on" : ""}" data-like="${esc(c.file)}" aria-label="Like">♥</button>
+          <button class="btn sm" data-hide="${esc(c.file)}">${c.liked === false ? "Unhide" : "Hide"}</button>
+          <input data-split-at="${esc(c.file)}" placeholder="split s" />
+          <button class="btn sm" data-split="${esc(c.file)}">Split</button>
+          <button class="btn sm" data-dup="${esc(c.file)}">Copy</button>
+          <button class="btn sm quiet" data-drop="${esc(c.file)}">Drop</button></div>`;
+      const title = (c) => `<textarea class="ttl" rows="2" data-title="${esc(c.file)}" aria-label="Clip name" maxlength="90">${esc(c.title || c.file)}</textarea>`;
+      const list = clips.map((c, n) => `<article class="crow ${wide ? "wide" : ""}">
+          <span class="rank">#${n + 1}</span>
+          <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}` : ""}" src="/media/${j.id}/${c.file}"></video>
+          <div>
+            ${title(c)}
+            <p class="meta">${c.end ? fmt(c.start) + "–" + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s" : esc(c.file)}</p>
+            ${c.virality ? `<div class="vscore"><span class="big">${c.virality}<small>/99</small></span>${partsHtml(c)}</div>` : ""}
+            ${c.text ? `<p class="words" data-words>${esc(c.text)}</p>` : ""}
+            ${actions(c)}
+          </div></article>`).join("");
+      const grid = clips.map((c, n) => `<article class="ccard ${wide ? "wide" : ""}">
+          <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}` : ""}" src="/media/${j.id}/${c.file}"></video>
+          <div class="top"><span class="mono hint">#${n + 1}${c.end ? " · " + Math.round(c.end - c.start) + "s" : ""}</span>${c.virality ? `<b>${c.virality}</b>` : ""}</div>
+          ${title(c)}<div class="cact">
+            <a class="btn sm" href="/media/${j.id}/${c.file}" download="${esc(slugify(c.title || c.file))}.mp4">Download</a>
+            <button class="btn sm ${c.liked === true ? "on" : ""}" data-like="${esc(c.file)}" aria-label="Like">♥</button>
+            <button class="btn sm" data-hide="${esc(c.file)}">${c.liked === false ? "Unhide" : "Hide"}</button></div></article>`).join("");
+      return `<p class="kicker"><a href="#/clips">Clips</a> · <a href="#/library" id="to-folder" data-folder-go="${esc(j.platform || "")}">${esc(j.platform || "Other")}</a></p>
+        <h1 style="font-size:clamp(26px,3vw,40px)">${esc(j.title)}</h1>
+        <p class="hint" style="margin:0 0 1.2rem">${(j.clips || []).length} clips · ${esc(j.aspect || "9:16")} · ${esc(j.style || "")}${j.created_at ? " · " + esc(ago(j.created_at)) : ""}</p>
+        ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
+        <div class="ptool">
+          <div class="opts"><button class="opt ${state.sort==="score"?"on":""}" data-view-k="sort" data-v="score">By score</button><button class="opt ${state.sort==="time"?"on":""}" data-view-k="sort" data-v="time">Timeline</button></div>
+          <div class="opts"><button class="opt ${state.filter==="all"?"on":""}" data-view-k="filter" data-v="all">All</button><button class="opt ${state.filter==="liked"?"on":""}" data-view-k="filter" data-v="liked">Liked ${liked || ""}</button><button class="opt ${state.filter==="hidden"?"on":""}" data-view-k="filter" data-v="hidden">Hidden ${hidden || ""}</button></div>
+          <div class="opts"><button class="opt ${state.view==="list"?"on":""}" data-view-k="view" data-v="list">List</button><button class="opt ${state.view==="grid"?"on":""}" data-view-k="view" data-v="grid">Grid</button></div>
+          <span class="spacer"></span>
+          <button class="btn sm" id="name-btn" data-job="${j.id}">AI name</button>
+          <button class="btn sm" id="copy-btn" data-job="${j.id}">Social copy</button>
+        </div>
+        ${copy ? `<div class="copy"><p class="kicker">${esc(copy.source || "copy")}</p><ul>${(copy.titles || []).map(t => `<li>${esc(t)}</li>`).join("")}</ul><p class="lede" style="margin:0 0 .4rem">${esc(copy.description || "")}</p><p class="hint mono">${esc((copy.hashtags || []).join(" "))}</p></div>` : ""}
+        ${clips.length ? (state.view === "grid" ? `<div class="cgrid">${grid}</div>` : `<div class="clist">${list}</div>`) : `<div class="empty">${state.filter === "liked" ? "No liked clips yet. Tap ♥ on the ones you want." : state.filter === "hidden" ? "Nothing hidden." : "No clips in this project."}</div>`}
+        ${(state.trash || []).length ? `<p class="kicker" style="margin-top:2rem">Dropped</p><div class="row">${state.trash.map(t => `<button class="btn sm" data-restore="${esc(t.file)}">Restore ${esc(t.file)}</button>`).join("")}</div>` : ""}`;
+    }
     /* ---------- Create ---------- */
     function createPage() {
       if (!state.tool) return toolPicker();
       const t = toolById(state.tool);
       const on = (k) => (t.settings || []).includes(k);
-      return `<p class="kicker"><a href="#" id="all-tools">All tools</a></p>
+      return `<p class="kicker"><a href="#/tools" id="all-tools">Other tools</a></p>
         <div class="picked"><span class="name">${esc(t.name)}</span><span class="hint">${esc(t.output)}</span></div>
         <p class="lede">${esc(t.line)}</p>
         ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
@@ -341,9 +560,9 @@
         </div>`;
     }
     function toolPicker() {
-      return `<p class="kicker">New run</p><h1>Pick a tool.</h1>
-        <p class="lede">Each tool is one job on your video. Everything runs on this machine, and nothing is posted.</p>
-        <div class="index">${state.tools.map(t => `<button class="index-row" data-tool="${t.id}">
+      return `<p class="kicker">Other tools</p><h1>One job each.</h1>
+        <p class="lede">For clips, use the Clips page. These tools do one job on the whole video. Everything runs on this machine, and nothing is posted.</p>
+        <div class="index">${state.tools.filter(t => t.id !== "clip").map(t => `<button class="index-row" data-tool="${t.id}">
           <span class="name">${esc(t.name)}</span>
           <span class="desc"><b>${esc(t.verb)}</b>${esc(t.line)}</span>
           <span class="out">${esc(t.output)}</span><span class="arw" aria-hidden="true">→</span></button>`).join("")}</div>`;
@@ -450,7 +669,7 @@
       const copy = state.copy && state.copy.job === j.id ? state.copy : null;
       const wide = j.aspect === "16:9" || j.aspect === "source";
       const files = j.files || [];
-      return `<p class="kicker"><a href="#" id="back-lib">Library</a> · <a href="#" id="back-folder" data-folder-go="${esc(j.platform || "")}">${esc(j.platform || "Other")}</a> · ${esc(TOOL_LABEL[j.mode] || "Clips")}</p>
+      return `<p class="kicker"><a href="#/library" id="back-lib">Library</a> · <a href="#" id="back-folder" data-folder-go="${esc(j.platform || "")}">${esc(j.platform || "Other")}</a> · ${esc(TOOL_LABEL[j.mode] || "Clips")}</p>
         <h1>${esc(j.title)}</h1>
         <p class="lede mono">${esc(j.src)}</p>
         ${state.err ? `<p class="err">${esc(state.err)}</p>` : ""}
@@ -503,7 +722,10 @@
       if (v("prompt")) state.prompt = v("prompt").value;
       if (v("keywords")) state.keywords = v("keywords").value;
     }
-    async function openRun(id) {
+    async function openRun(id, fromRoute) {
+      const jj = state.library.find(j => j.id === id);
+      if (!fromRoute && jj && (jj.mode || "clip") === "clip") { go("#/clips/" + encodeURIComponent(id)); return; }
+      if (!fromRoute) { history.pushState(null, "", "#/library/" + encodeURIComponent(id)); }
       state.page = "library"; state.open = state.library.find(j => j.id === id) || null; state.tx = null; state.err = ""; state.nameSrc = "";
       renderRail();
       try { const t = await api("/api/trash?job=" + encodeURIComponent(id)); state.trash = t.files || []; } catch { state.trash = []; }
@@ -513,9 +735,50 @@
         render();
       }
     }
+    function bindClips() {
+      if (state.page !== "clips") return;
+      bindProjects();
+      const more = $("#more-btn"); if (more) more.onclick = () => { grabForm(); state.moreSet = !state.moreSet; render(); };
+      const ds = $("#dur-sel"); if (ds) ds.onchange = () => { grabForm(); state.dur = ds.value; render(); };
+      const ss = $("#style-sel"); if (ss) ss.onchange = () => { grabForm(); if (ss.value === "off") state.captions = false; else { state.captions = true; state.style = ss.value; } render(); };
+      const ls = $("#live-sel"); if (ls) ls.onchange = () => { state.live_seconds = Number(ls.value); };
+      const src = $("#src"); if (src) src.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("#clip-run").click(); } };
+      const run = $("#clip-run");
+      if (run) run.onclick = async () => {
+        grabForm(); state.err = "";
+        if (!state.src) { state.err = "Paste a link or a file path first."; render(); return; }
+        const d = DUR.find(x => x.id === state.dur) || DUR[1];
+        run.disabled = true; run.textContent = "Starting…";
+        try {
+          await api("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            src: state.src, mode: "clip", layout: state.layout, aspect: state.aspect || "9:16", max_clips: state.max_clips,
+            min_sec: d.min, max_sec: d.max, style: state.style, captions: state.captions, pacing: state.pacing,
+            live_seconds: state.live_seconds, live_from_start: state.live_from_start,
+            start_time: state.start ? state.start : null, end_time: state.end ? state.end : null,
+            prompt: state.prompt, keywords: state.captions ? state.keywords : "", hook: state.hook, plan: "heuristic", whisper: state.whisper,
+          })});
+          state.src = ""; state.probe = null; state.why = [];
+          await refresh(); render();
+        } catch (e) { state.err = e.message; render(); }
+      };
+      document.querySelectorAll("[data-view-k]").forEach(el => el.onclick = () => { state[el.dataset.viewK] = el.dataset.v; render(); });
+      document.querySelectorAll("[data-words]").forEach(el => el.onclick = () => el.classList.toggle("open"));
+      const tf = $("#to-folder"); if (tf) tf.onclick = (e) => { e.preventDefault(); state.folder = tf.dataset.folderGo; go("#/library"); };
+      const clipMeta = async (file, liked) => {
+        const j = state.open; if (!j) return;
+        try {
+          await api("/api/clipmeta", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: j.id, file, liked }) });
+          const c = (j.clips || []).find(x => x.file === file); if (c) c.liked = liked;
+        } catch (e) { state.err = e.message; }
+        render();
+      };
+      document.querySelectorAll("[data-like]").forEach(el => el.onclick = () => { const c = state.open.clips.find(x => x.file === el.dataset.like); clipMeta(el.dataset.like, c && c.liked === true ? null : true); });
+      document.querySelectorAll("[data-hide]").forEach(el => el.onclick = () => { const c = state.open.clips.find(x => x.file === el.dataset.hide); clipMeta(el.dataset.hide, c && c.liked === false ? null : false); });
+    }
     function bind() {
+      bindClips();
       document.querySelectorAll("main [data-tool]").forEach(el => el.onclick = () => pickTool(el.dataset.tool));
-      const all = $("#all-tools"); if (all) all.onclick = (e) => { e.preventDefault(); grabForm(); state.tool = null; renderRail(); render(); };
+      const all = $("#all-tools"); if (all) all.onclick = (e) => { e.preventDefault(); go("#/tools"); };
       document.querySelectorAll("[data-k]").forEach(el => el.onclick = () => { grabForm(); state[el.dataset.k] = el.dataset.n ? Number(el.dataset.v) : el.dataset.v; render(); });
       ["trim", "captions"].forEach(id => { const el = $("#" + id); if (el) el.onchange = () => { grabForm(); render(); }; });
       const probeBtn = $("#probe-btn");
@@ -537,7 +800,7 @@
           const r = data.recommendation || {};
           state.probe = { ok: true, title: data.title, is_live: data.is_live, duration: data.duration };
           const tool = r.mode === "captions" ? "captions" : "clip";
-          state.tool = tool;
+          if (state.page !== "clips") state.tool = tool;
           Object.assign(state, {
             aspect: r.aspect || "9:16", layout: r.layout || "fit", dur: r.dur || "short", max_clips: r.max_clips || 3,
             pacing: r.pacing || "tight", style: r.style || "pop", captions: r.captions !== false, hook: r.hook !== false,
@@ -579,7 +842,7 @@
       document.querySelectorAll("video").forEach(v => v.addEventListener("play", () => document.querySelectorAll("video").forEach(o => { if (o !== v) o.pause(); })));
       document.querySelectorAll("[data-folder]").forEach(el => el.onclick = () => { state.folder = el.dataset.folder; render(); });
       const backFolder = $("#back-folder"); if (backFolder) backFolder.onclick = (e) => { e.preventDefault(); state.folder = backFolder.dataset.folderGo; state.open = null; state.tx = null; render(); };
-      const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); state.open = null; state.tx = null; render(); };
+      const backLib = $("#back-lib"); if (backLib) backLib.onclick = (e) => { e.preventDefault(); go("#/library"); };
       const clipOp = async (file, op, extra) => {
         const jobId = state.open && state.open.id; if (!jobId) return;
         state.err = "";
@@ -639,7 +902,7 @@
       document.querySelectorAll("[data-cancel]").forEach(el => el.onclick = async () => { await api("/api/jobs/" + el.dataset.cancel + "/cancel", { method: "POST" }); state.sig = ""; refresh(); });
     }
     $("#q").oninput = (e) => { state.q = e.target.value; if (state.page !== "library" || state.open) { state.page = "library"; state.open = null; renderRail(); } render(); };
-    renderRail(); render(); loadTools(); refresh(); setInterval(refresh, 2500);
+    loadTools().then(() => refresh()).then(applyRoute); setInterval(refresh, 2500);
   </script>
 </body>
 </html>

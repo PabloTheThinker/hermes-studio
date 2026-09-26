@@ -319,6 +319,13 @@ class StudioHandler(BaseHTTPRequestHandler):
 
             res = name_job(str(body.get("job") or ""))
             return _json(self, 200 if res.get("ok") else 400, res)
+        if path == "/api/clipmeta":
+            body = _read_json(self)
+            from hermesclip.pipeline import set_clip_meta
+
+            liked = body.get("liked")
+            res = set_clip_meta(str(body.get("job") or ""), str(body.get("file") or ""), liked if liked in (True, False) else None)
+            return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/rename":
             body = _read_json(self)
             from hermesclip.pipeline import rename_clip
