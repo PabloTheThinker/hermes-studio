@@ -84,6 +84,7 @@ def probe(src: str) -> SourceInfo:
         "--no-warnings",
         "--skip-download",
         *_node_args(),
+        "--",  # end of options: a source can never be read as a flag
         src,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
@@ -152,7 +153,6 @@ def fetch(
         *_node_args(),
         "-o",
         out_tmpl,
-        src,
     ]
 
     if meta.is_live:
@@ -174,7 +174,7 @@ def fetch(
         timeout = 4 * 60 * 60
 
     try:
-        subprocess.run(cmd, check=True, timeout=timeout)
+        subprocess.run([*cmd, "--", src], check=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         if not meta.is_live:
             raise

@@ -102,82 +102,24 @@ def make_look(data: dict | None = None, **over) -> Look:
     return lk
 
 
-def choose_layout(box: tuple | None, src_w: int, src_h: int, out_w: int, out_h: int) -> tuple[str, str]:
-    """Auto layout, Opus-style: pick from what is on screen.
+def choose_layout(face, src_w: int, src_h: int, out_w: int, out_h: int) -> tuple[str, str]:
+    """Auto layout, Opus-style: pick from what is on screen. Returns (layout, reason).
 
-    Returns (layout, reason).
+    face: hermesclip.face.Face (the clip's median subject) or None.
     - Source already as tall as the canvas: fill.
     - No face: fit (letterbox on blur, nothing is cut off).
-    - Small face in an outer third (streamer facecam over gameplay / screen): split, face on top.
-    - Otherwise a talking head: fill, pinned on the face.
+    - Small face parked off-centre (streamer facecam over game or screen): split.
+    - Otherwise a talking head: fill, framed on the eyes.
     """
+    from hermesclip.framing import is_facecam
+
     if src_w * out_h <= src_h * out_w * 1.05:
         return "fill", "source is already tall"
-    if not box:
+    if face is None:
         return "fit", "no face found"
-    nx, ny, nw, nh = box
-    cx, cy = nx + nw / 2, ny + nh / 2
-    # A facecam is a small face parked off-centre (usually a corner) over other content.
-    if nw < 0.16 and (cx < 0.34 or cx > 0.66 or cy > 0.7):
+    if is_facecam(face):
         return "split", "facecam in a corner"
     return "fill", "speaker in frame"
-
-
-def _even(v: float) -> int:
-    return max(2, int(v) // 2 * 2)
-
-
-def _crop_to(aspect: float, src_w: int, src_h: int, cx: float, cy: float, want_h: float) -> tuple[int, int, int, int]:
-    """Crop box (w, h, x, y) in source pixels with the given aspect (w/h), centred on (cx, cy) px."""
-    ch = min(float(src_h), max(want_h, 16.0))
-    cw = ch * aspect
-    if cw > src_w:
-        cw = float(src_w)
-        ch = cw / aspect
-    cw, ch = _even(cw), _even(ch)
-    x = min(max(cx - cw / 2, 0), src_w - cw)
-    y = min(max(cy - ch / 2, 0), src_h - ch)
-    # Offsets may be 0; _even() is for sizes (min 2).
-    return cw, ch, int(x) // 2 * 2, int(y) // 2 * 2
-
-
-def split_geometry(
-    src_w: int, src_h: int, out_w: int, out_h: int, look: Look, box: tuple | None,
-) -> dict:
-    """Two locked crops: the face band and the content band. No per-frame tracking (no drift)."""
-    face_h = _even(out_h * look.face_ratio)
-    body_h = out_h - face_h
-    face_aspect = out_w / face_h
-    body_aspect = out_w / body_h
-    if look.face_box:
-        bx, by, bw, bh = look.face_box
-        # Manual camera box: fill the band from inside that box.
-        cx, cy = (bx + bw / 2) * src_w, (by + bh / 2) * src_h
-        want_h = min(bh * src_h, (bw * src_w) / face_aspect)
-        fcrop = _crop_to(face_aspect, src_w, src_h, cx, cy, want_h)
-    elif box:
-        nx, ny, nw, nh = box
-        cx, cy = (nx + nw / 2) * src_w, (ny + nh / 2) * src_h
-        if nw < 0.16:
-            # Small face = a facecam box. Stay tight so the band shows the cam, not the screen around it.
-            want_h = max(nh * src_h * 1.35, 64)
-            fcrop = _crop_to(face_aspect, src_w, src_h, cx, cy + nh * src_h * 0.1, want_h)
-        else:
-            # Speaker in the frame: head and shoulders, ~2.6x the face height.
-            want_h = max(nh * src_h * 2.6, 64)
-            fcrop = _crop_to(face_aspect, src_w, src_h, cx, cy + nh * src_h * 0.35, want_h)
-    else:
-        fcrop = _crop_to(face_aspect, src_w, src_h, src_w / 2, src_h * 0.3, src_h * 0.45)
-    # Content: the widest band that fits, centred; skip the facecam corner when we know it.
-    ccx = src_w / 2
-    if box and not look.face_box:
-        fx = (box[0] + box[2] / 2) * src_w
-        cw_guess = src_h * body_aspect
-        if cw_guess < src_w:
-            # Push the content crop away from the camera side, still inside the frame.
-            ccx = src_w / 2 + (-1 if fx > src_w / 2 else 1) * min((src_w - cw_guess) / 2, src_w * 0.12)
-    ccrop = _crop_to(body_aspect, src_w, src_h, ccx, src_h / 2, float(src_h))
-    return {"face_h": face_h, "body_h": body_h, "face": fcrop, "body": ccrop}
 
 
 def post_chain(look: Look, clip_dur: float, out_h: int) -> str:
@@ -187,7 +129,7 @@ def post_chain(look: Look, clip_dur: float, out_h: int) -> str:
     if f:
         parts.append(f)
     if look.progress and clip_dur > 0:
-        bar = max(6, _even(out_h * 0.005))
+        bar = max(6, int(out_h * 0.005) // 2 * 2)
         parts.append(
             f"drawbox=x=0:y=ih-{bar}:w='iw*min(t/{clip_dur:.3f}\\,1)':h={bar}:color={PROGRESS_COLOR}@0.95:t=fill"
         )

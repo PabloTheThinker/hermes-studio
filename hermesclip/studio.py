@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 import json
 import mimetypes
+import os
 import queue
 import threading
+from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -15,15 +16,71 @@ from hermesclip.pipeline import (
     import_legacy,
     job_dir,
     library_root,
-    organize_library,
     list_jobs,
     load_job,
     new_job,
+    organize_library,
 )
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
 HOST_DEFAULT = "127.0.0.1"
 PORT_DEFAULT = 3870
+
+# --------------------------------------------------------------------------- security
+# The desk is a loopback app. These guards stop the classic attacks on local web apps:
+# - DNS rebinding: a web page re-points its own domain at 127.0.0.1 and calls the API.
+#   Blocked by the Host allow-list (only loopback names, *.ts.net, or HERMESCLIP_ALLOWED_HOSTS).
+# - CSRF from any open tab: POSTs need Content-Type application/json (forces a CORS
+#   preflight we never answer) and, when the browser sends Origin, it must match Host.
+# - Clickjacking / sniffing / injection: CSP, frame-ancestors none, nosniff, no referrer.
+# - Oversized bodies: 1 MB cap.
+MAX_BODY = 1024 * 1024
+LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}
+CSP = (
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+    "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+)
+SECURITY_HEADERS = {
+    "Content-Security-Policy": CSP,
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+def _extra_hosts() -> set[str]:
+    raw = os.environ.get("HERMESCLIP_ALLOWED_HOSTS", "")
+    return {h.strip().lower() for h in raw.split(",") if h.strip()}
+
+
+def host_allowed(host_header: str | None) -> bool:
+    """Host header without port must be loopback, a Tailscale name, or explicitly allowed."""
+    if not host_header:
+        return False
+    h = host_header.strip().lower()
+    name = h.rsplit(":", 1)[0] if not h.endswith("]") else h
+    if name.startswith("[") and "]" in name:
+        name = name[: name.index("]") + 1]
+    return name in LOOPBACK_NAMES or name.endswith(".ts.net") or name in _extra_hosts()
+
+
+def origin_ok(origin: str | None, host_header: str | None) -> bool:
+    """No Origin (curl, agents) is fine; a browser Origin must be this same host."""
+    if not origin:
+        return True
+    if origin == "null":
+        return False
+    return urlparse(origin).netloc.lower() == (host_header or "").strip().lower()
+
+
+def is_loopback(host: str) -> bool:
+    return host in LOOPBACK_NAMES or host.startswith("127.")
+
 
 _q: queue.Queue = queue.Queue()
 _lock = threading.Lock()
@@ -80,7 +137,12 @@ def _seconds(value):
 
 
 def _read_json(handler: BaseHTTPRequestHandler) -> dict:
-    length = int(handler.headers.get("Content-Length") or 0)
+    try:
+        length = int(handler.headers.get("Content-Length") or 0)
+    except ValueError:
+        length = 0
+    if length < 0 or length > MAX_BODY:
+        raise ValueError("request body too large")
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
         return {}
@@ -128,11 +190,49 @@ def _safe_trash(job_id: str, name: str) -> Path | None:
 
 class StudioHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    server_version = "HermesStudio"
+    sys_version = ""
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         return
 
+    def end_headers(self) -> None:
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
+        super().end_headers()
+
+    def _refuse(self, code: int, why: str) -> None:
+        body = json.dumps({"ok": False, "error": why}).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
+    def _guard(self, write: bool) -> bool:
+        """True if the request may go on. Refuses and answers otherwise."""
+        if not host_allowed(self.headers.get("Host")):
+            self._refuse(421, "host not allowed")
+            return False
+        if write:
+            if not origin_ok(self.headers.get("Origin"), self.headers.get("Host")):
+                self._refuse(403, "cross-origin request refused")
+                return False
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                self._refuse(415, "Content-Type must be application/json")
+                return False
+        return True
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        # No CORS: cross-site preflights get nothing to work with.
+        self._refuse(405, "no cross-origin access")
+
     def do_HEAD(self) -> None:  # noqa: N802
+        if not self._guard(write=False):
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path.startswith("/media/"):
@@ -154,6 +254,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        if not self._guard(write=False):
+            return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
         if path in {"/", "/index.html"}:
@@ -268,6 +370,14 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._guard(write=True):
+            return
+        try:
+            self._post()
+        except ValueError as exc:  # bad JSON, oversized body
+            return _json(self, 400, {"ok": False, "error": str(exc)[:200]})
+
+    def _post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/jobs":
@@ -500,6 +610,11 @@ class StudioHandler(BaseHTTPRequestHandler):
 
 
 def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
+    if not is_loopback(host) and os.environ.get("HERMESCLIP_ALLOW_REMOTE") != "1":
+        raise SystemExit(
+            f"Refusing to listen on {host}: the desk has no login. Keep it on 127.0.0.1 and use "
+            "`tailscale serve` for other devices, or set HERMESCLIP_ALLOW_REMOTE=1 if you really mean it."
+        )
     import_legacy()
     try:
         organize_library()

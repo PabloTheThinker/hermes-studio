@@ -5,11 +5,11 @@ Unknown sites get their own folder named after the site, so every source has a h
 """
 from __future__ import annotations
 
-import json
 import re
 import urllib.parse
-import urllib.request
 from pathlib import Path
+
+from hermesclip.net import get_json
 
 HOSTS = [
     ("YouTube", ("youtube.com", "youtu.be", "youtube-nocookie.com")),
@@ -90,8 +90,7 @@ def youtube_title(video_id: str, timeout: float = 6.0) -> str:
         return ""
     url = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(f"https://www.youtube.com/watch?v={video_id}")
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "hermesclip"}), timeout=timeout) as r:
-            return str(json.loads(r.read().decode()).get("title") or "")
+        return str(get_json(url, headers={"User-Agent": "hermesclip"}, timeout=timeout).get("title") or "")
     except Exception:
         return ""
 

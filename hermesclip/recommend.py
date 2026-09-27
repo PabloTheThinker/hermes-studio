@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from dataclasses import asdict, dataclass, field
 
 from hermesclip.download import LIVE_DEFAULT_SEC, SourceInfo, kind_of, probe
+from hermesclip.net import post_json
 from hermesclip.render import probe_duration
 
 
@@ -145,15 +145,11 @@ def recommend_grok(info: SourceInfo, base: Recommendation) -> Recommendation | N
             },
         ],
     }
-    req = urllib.request.Request(
-        os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions"),
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            body = json.loads(resp.read().decode())
+        body = post_json(
+            os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions"),
+            payload, headers={"Authorization": f"Bearer {key}"}, timeout=12,
+        )
         text = body["choices"][0]["message"]["content"]
         start, end = text.find("{"), text.rfind("}")
         if start < 0 or end <= start:

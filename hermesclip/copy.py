@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.request
 from pathlib import Path
+
+from hermesclip.net import post_json
 
 STOP = {
     "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for", "is", "it",
@@ -74,15 +75,11 @@ def copy_grok(title: str, transcript: str, clip_title: str = "") -> dict | None:
             },
         ],
     }
-    req = urllib.request.Request(
-        os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions"),
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
-            body = json.loads(resp.read().decode())
+        body = post_json(
+            os.environ.get("XAI_API_URL", "https://api.x.ai/v1/chat/completions"),
+            payload, headers={"Authorization": f"Bearer {key}"}, timeout=12,
+        )
         text = body["choices"][0]["message"]["content"]
         a, b = text.find("{"), text.rfind("}")
         data = json.loads(text[a : b + 1])

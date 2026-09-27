@@ -56,45 +56,39 @@ def frame_filters(
     ass_f: str,
     vin: str = "vin",
     vout: str = "outv",
-    face: tuple[float, float] | None = None,
     look=None,
-    box: tuple | None = None,
+    track=None,
     clip_dur: float = 0.0,
+    to_out=None,
 ) -> str:
     """Filter graph from [vin] to [vout].
 
-    layout: fit (letterbox on blur) | fill (crop, pinned on the face) | split (face band + content band).
-    look (hermesclip.look.Look): face top/bottom, band size, colour filter, progress bar.
+    layout: fit (whole frame on blur) | fill (crop framed on the eyes, locked or smooth pan)
+            | split (face band + content band).
+    track: hermesclip.face.FaceTrack for the clip (may be empty).
+    to_out: clip seconds -> output seconds, for camera keys after tight cuts.
     Order: frame -> colour filter -> progress bar -> captions, so caption colours stay true.
     """
-    from hermesclip.look import Look, post_chain, split_geometry
+    from hermesclip.framing import camera, split_geometry
+    from hermesclip.look import Look, post_chain
 
     lk = look or Look(layout=layout)
     post = post_chain(lk, clip_dur, out_h)
     tail = (post + "," if post else "") + f"setsar=1,subtitles='{ass_f}'[{vout}]"
     scale = "flags=lanczos"
     if layout == "split":
-        g = split_geometry(src_w, src_h, out_w, out_h, lk, box)
-        fw, fh, fx, fy = g["face"]
-        bw, bh, bx, by = g["body"]
+        face = track.median() if track else None
+        g = split_geometry(src_w, src_h, out_w, out_h, lk, face)
         top, bottom = ("fc", "bc") if lk.face == "top" else ("bc", "fc")
         return (
             f"[{vin}]split=2[fi][bi];"
-            f"[fi]crop={fw}:{fh}:{fx}:{fy},scale={out_w}:{g['face_h']}:{scale},setsar=1[fc];"
-            f"[bi]crop={bw}:{bh}:{bx}:{by},scale={out_w}:{g['body_h']}:{scale},setsar=1[bc];"
+            f"[fi]{g['face'].ffmpeg()},scale={out_w}:{g['face_h']}:{scale},setsar=1[fc];"
+            f"[bi]{g['body'].ffmpeg()},scale={out_w}:{g['body_h']}:{scale},setsar=1[bc];"
             f"[{top}][{bottom}]vstack=inputs=2,{tail}"
         )
     if layout == "fill":
-        crop = f"crop={out_w}:{out_h}"
-        if face:
-            from hermesclip.face import fill_crop_xy
-
-            x, y = fill_crop_xy(src_w, src_h, out_w, out_h, face[0], face[1])
-            crop = f"crop={out_w}:{out_h}:{x}:{y}"
-        return (
-            f"[{vin}]scale={out_w}:{out_h}:force_original_aspect_ratio=increase:{scale},"
-            f"{crop},{tail}"
-        )
+        cam = camera(src_w, src_h, out_w, out_h, track, to_out)
+        return f"[{vin}]{cam.ffmpeg()},scale={out_w}:{out_h}:{scale},{tail}"
     scaled_h, _y = letterbox_geometry(src_w, src_h, out_w, out_h)
     bg_w, bg_h = even(out_w // 4), even(out_h // 4)
     return (

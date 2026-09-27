@@ -149,9 +149,10 @@ def _write(msg: dict) -> None:
 
 
 def _cli(argv: list[str]) -> str:
-    from hermesclip.cli import main as cli_main
     import io
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from hermesclip.cli import main as cli_main
 
     buf = io.StringIO()
     err = io.StringIO()

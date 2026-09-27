@@ -60,16 +60,17 @@ def render_clip(
     lk = look or Look(layout=layout)
     if look is None or lk.layout not in ("auto", "fit", "fill", "split"):
         lk.layout = layout
-    box = None
+    from hermesclip.face import FaceTrack
+
+    track = FaceTrack()
     need_face = lk.layout in ("auto", "fill", "split") and not (lk.layout == "split" and lk.face_box)
     if need_face:
-        from hermesclip.face import face_box
+        from hermesclip.face import face_track
 
-        box = face_box(video, plan.start, plan.end)
+        track = face_track(video, plan.start, plan.end)
     used = lk.layout
     if used == "auto":
-        used, _why = choose_layout(box, src_w, src_h, width, height)
-    face = (box[0] + box[2] / 2, box[1] + box[3] / 2) if box else None
+        used, _why = choose_layout(track.median(), src_w, src_h, width, height)
     layout = used
     render_clip.last_layout = used  # type: ignore[attr-defined]
     if pacing == "tight":
@@ -111,7 +112,7 @@ def render_clip(
     out_dur = tm.duration if tm.keeps else (plan.end - plan.start)
     graph = frame_filters(
         src_w, src_h, width, height, layout, ass_f, vin="cv", vout="outv",
-        face=face, look=lk, box=box, clip_dur=out_dur,
+        look=lk, track=track, clip_dur=out_dur, to_out=tm.to_output,
     )
     audio = AUDIO_CLEAN if lk.audio == "clean" else ""
     if len(tm.keeps) <= 1:
@@ -183,7 +184,7 @@ def _concat(video: Path, clip_start: float, tm: TimeMap, graph: str, out_path: P
         parts_v.append(f"[v{i}]")
         parts_a.append(f"[a{i}]")
     n = len(tm.keeps)
-    streams = "".join(x + y for x, y in zip(parts_v, parts_a))
+    streams = "".join(x + y for x, y in zip(parts_v, parts_a, strict=True))
     if audio:
         fc.append(f"{streams}concat=n={n}:v=1:a=1[cv][cr]")
         fc.append(f"[cr]{audio}[ca]")

@@ -77,3 +77,7 @@ Built for [Hermes Agent](https://hermes-agent.nousresearch.com) by Nous Research
 ## License
 
 MIT. See [LICENSE](LICENSE). Third-party notices are in [NOTICE](NOTICE).
+
+## Security
+
+The desk is local-only and hardened against browser attacks. See [SECURITY.md](SECURITY.md), and report problems privately.

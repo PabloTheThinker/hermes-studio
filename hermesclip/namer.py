@@ -15,8 +15,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.request
 
+from hermesclip.net import post_json
 from hermesclip.transcribe import Transcript, Word
 
 SYSTEM = (
@@ -97,6 +97,10 @@ def offline_title(text: str) -> str:
     return clean(t)
 
 
+def _timeout() -> float:
+    return float(os.environ.get("HERMESCLIP_NAMER_TIMEOUT", "180"))
+
+
 def _ollama(url: str, model: str, prompt: str) -> str:
     body = {
         "model": model,
@@ -106,9 +110,7 @@ def _ollama(url: str, model: str, prompt: str) -> str:
         "options": {"temperature": 0.4},
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
     }
-    req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=float(os.environ.get("HERMESCLIP_NAMER_TIMEOUT", "180"))) as r:
-        return json.loads(r.read().decode())["message"]["content"]
+    return post_json(url.rstrip("/") + "/api/chat", body, timeout=_timeout())["message"]["content"]
 
 
 def _openai(url: str, model: str, key: str, prompt: str) -> str:
@@ -118,12 +120,10 @@ def _openai(url: str, model: str, key: str, prompt: str) -> str:
         "response_format": {"type": "json_object"},
         "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
     }
-    headers = {"Content-Type": "application/json"}
+    headers = {}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
-    with urllib.request.urlopen(req, timeout=float(os.environ.get("HERMESCLIP_NAMER_TIMEOUT", "180"))) as r:
-        return json.loads(r.read().decode())["choices"][0]["message"]["content"]
+    return post_json(url, body, headers=headers, timeout=_timeout())["choices"][0]["message"]["content"]
 
 
 def _parse(raw: str, n: int) -> list[str]:
@@ -179,7 +179,7 @@ def ai_titles(texts: list[str], context: str = "") -> tuple[list[str], str]:
     seen: set[str] = set()
     out = []
     used_ai = 0
-    for t, fb in zip(titles, fallback):
+    for t, fb in zip(titles, fallback, strict=False):
         if good(t) and t.lower() not in seen:
             pick = t
             used_ai += 1
