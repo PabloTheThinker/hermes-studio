@@ -68,6 +68,12 @@ Does not post.
 
 https://pablothethinker.github.io/hermes-studio/
 
+## Credits
+
+Inspired by and partly ported from [BridgeClip](https://github.com/bridge-mind/bridgeclip) by BridgeMind (MIT). The clip scoring rubric and the framing modes started there. See [NOTICE](NOTICE).
+
+Built for [Hermes Agent](https://hermes-agent.nousresearch.com) by Nous Research.
+
 ## License
 
-Use and share. Do not treat this as a hosted rendering service.
+MIT. See [LICENSE](LICENSE). Third-party notices are in [NOTICE](NOTICE).

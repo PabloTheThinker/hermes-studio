@@ -3,6 +3,7 @@ name = "hermesclip"
 version = "0.3.1"
 description = "Hermes Studio — HermesClip, local 9:16 clipper for Hermes Agent"
 requires-python = ">=3.11"
+license = { text = "MIT" }
 dependencies = [
   "faster-whisper>=1.0.0",
   "yt-dlp>=2026.8.0",
