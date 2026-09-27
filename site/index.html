@@ -90,6 +90,29 @@
     .ledger li { display: flex; justify-content: space-between; gap: 1rem; padding: .9rem 0; border-bottom: 1px solid var(--line); color: var(--mute); }
     .ledger li b { color: var(--ink); font-weight: 600; }
 
+
+    /* Examples: before -> after */
+    .ex { display: grid; grid-template-columns: 1fr; gap: clamp(3rem, 6vw, 5rem); }
+    .ex figure { margin: 0; display: grid; grid-template-columns: 1.7fr 1fr; gap: clamp(1.5rem, 4vw, 3.5rem); align-items: end; }
+    .ex .pair { display: grid; grid-template-columns: 1.55fr .75fr; gap: .9rem; align-items: end; }
+    .ex .pair.three { grid-template-columns: 1.4fr .6fr .6fr; }
+    .ex img { width: 100%; display: block; border: 1px solid var(--line); background: #000; }
+    .ex .tag { display: block; font: 500 12px var(--mono); color: var(--dim); margin-top: .5rem; }
+    .ex .tag b { color: var(--amber); font-weight: 500; }
+    .ex figcaption { border-top: 1px solid var(--line); padding-top: 1rem; }
+    .ex figcaption h3 { font-size: clamp(24px, 2.6vw, 34px) !important; }
+    .ex figcaption h3 { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 24px; line-height: .95; margin: 0 0 .5rem; }
+    .ex figcaption p { color: var(--mute); margin: 0; }
+    .credit { color: var(--dim); font-size: 13px; margin: 1.8rem 0 0; }
+    .credit a { color: var(--mute); }
+    /* Look controls */
+    .looks { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); margin-top: clamp(2.5rem, 5vw, 4rem); }
+    .looks div { padding: 1.4rem 1.4rem 0 0; }
+    .looks div + div { padding-left: 1.4rem; border-left: 1px solid var(--line); }
+    .looks b { display: block; font: 500 13px var(--mono); color: var(--amber); margin-bottom: .7rem; }
+    .looks h3 { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 20px; line-height: 1; margin: 0 0 .5rem; }
+    .looks p { color: var(--mute); margin: 0; font-size: 15px; }
+
     /* Install */
     pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--amber); padding: 1.3rem 1.5rem; overflow-x: auto; font: 14px/1.8 var(--mono); color: var(--ink); }
     pre .c { color: var(--dim); }
@@ -113,6 +136,10 @@
       .row .desc { grid-column: 2; }
       .row .out { grid-column: 2; text-align: left; }
       .steps { grid-template-columns: 1fr; }
+      .ex figure { grid-template-columns: 1fr; }
+      .looks { grid-template-columns: 1fr 1fr; }
+      .looks div + div { border-left: 0; padding-left: 0; }
+      .looks div:nth-child(even) { padding-left: 1.4rem; border-left: 1px solid var(--line); }
       .steps div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); margin-top: 1.6rem; }
     }
   </style>
@@ -120,7 +147,7 @@
 <body>
   <nav class="top"><div class="w">
     <a class="word" href="./">Hermes <b>Studio</b></a>
-    <div class="links"><a href="#tools">Tools</a><a href="#how">How it works</a><a href="#install">Install</a></div>
+    <div class="links"><a href="#tools">Tools</a><a href="#examples">Examples</a><a href="#how">How it works</a><a href="#install">Install</a></div>
     <a class="btn" href="https://github.com/PabloTheThinker/hermes-studio">GitHub</a>
   </div></nav>
 
@@ -143,12 +170,43 @@
       <p class="lede">Pick one job, not a wall of settings. Each tool opens with the right defaults and only the options that matter for it.</p>
     </div>
     <div class="index">
-      <div class="row reveal"><span class="n">01</span><span class="name">Clips</span><span class="desc"><b>Find the moments.</b><span>Scores hooks, payoffs and punchy lines, then cuts 3 to 8 shorts with captions and a hook title.</span></span><span class="out">3–8 shorts</span></div>
+      <div class="row reveal"><span class="n">01</span><span class="name">Clips</span><span class="desc"><b>Find the moments.</b><span>Scores hook, flow and value, names each clip, then cuts 3 to 8 shorts with captions, the right framing and a hook title.</span></span><span class="out">3–8 shorts</span></div>
       <div class="row reveal"><span class="n">02</span><span class="name">Captions</span><span class="desc"><b>Caption the whole take.</b><span>Word-by-word captions on the full video, in six styles, with your keywords highlighted.</span></span><span class="out">1 video</span></div>
-      <div class="row reveal"><span class="n">03</span><span class="name">Reframe</span><span class="desc"><b>Change the shape.</b><span>16:9 to vertical, portrait or square. Keep the whole frame, or punch in on the speaker.</span></span><span class="out">1 video</span></div>
+      <div class="row reveal"><span class="n">03</span><span class="name">Reframe</span><span class="desc"><b>Change the shape.</b><span>16:9 to vertical, portrait or square. Hermes picks the layout: speaker crop, facecam split, or the whole frame on a blur pad.</span></span><span class="out">1 video</span></div>
       <div class="row reveal"><span class="n">04</span><span class="name">Tighten</span><span class="desc"><b>Cut the dead air.</b><span>Removes ums, uhs and long pauses from word timings, so the take feels edited without an editor.</span></span><span class="out">1 video</span></div>
       <div class="row reveal"><span class="n">05</span><span class="name">Transcript</span><span class="desc"><b>Get the words.</b><span>SRT and VTT for any editor, plus clean text for notes and posts. No render needed.</span></span><span class="out">.srt · .vtt · .txt</span></div>
     </div>
+  </div></section>
+
+  <section class="ch" id="examples"><div class="w">
+    <div class="ch-head reveal">
+      <h2 class="display">Same video.<br><span class="amber">Right frame.</span></h2>
+      <p class="lede">Hermes looks at each clip before it cuts. A speaker gets cropped to the face. A stream with a facecam gets split, face on top or bottom, so nobody loses their head.</p>
+    </div>
+    <div class="ex">
+      <figure class="reveal">
+        <div class="pair">
+          <div><img src="assets/ex-talk-src.jpg" alt="Wide 16:9 interview frame of a NASA engineer" loading="lazy"><span class="tag">Source · 16:9</span></div>
+          <div><img src="assets/ex-talk-out.jpg" alt="Vertical 9:16 clip cropped to the speaker with captions" loading="lazy"><span class="tag"><b>Auto → Speaker</b></span></div>
+        </div>
+        <figcaption><h3>Talking head</h3><p>Face found, crop locked on it for the whole clip. Word-by-word captions sit clear of the app buttons. Audio cleaned and levelled to -14 LUFS.</p></figcaption>
+      </figure>
+      <figure class="reveal">
+        <div class="pair three">
+          <div><img src="assets/ex-stream-src.jpg" alt="Wide screen recording with a small facecam in the corner" loading="lazy"><span class="tag">Source · facecam in corner</span></div>
+          <div><img src="assets/ex-stream-out.jpg" alt="Vertical clip: facecam band on top, screen below" loading="lazy"><span class="tag"><b>Split · face top</b></span></div>
+          <div><img src="assets/ex-stream-bottom.jpg" alt="Vertical clip: screen on top, facecam band below, warm filter" loading="lazy"><span class="tag"><b>Face bottom</b> · warm</span></div>
+        </div>
+        <figcaption><h3>Stream or screen</h3><p>Small face in a corner means a facecam. Studio stacks it over the game or screen, both locked, no drifting tracker. Flip it to the bottom or set the band size in one click.</p></figcaption>
+      </figure>
+    </div>
+    <div class="looks reveal">
+      <div><b>Layout</b><h3>Auto · Speaker · Split · Classic</h3><p>Opus-style layouts. Face on top or bottom, band from 20 to 60%.</p></div>
+      <div><b>Look</b><h3>Eight filters</h3><p>Punch, warm, cool, cinematic, vintage, black and white, bright.</p></div>
+      <div><b>Captions</b><h3>Six styles · four spots</h3><p>Word-by-word highlight, your keywords in colour, fix any misheard word.</p></div>
+      <div><b>Edit after</b><h3>Re-cut any clip</h3><p>Move in and out, change the look, re-render. The old take waits in Dropped.</p></div>
+    </div>
+    <p class="credit reveal">Example footage: <a href="https://commons.wikimedia.org/wiki/File:Mamta_Patel_Nagaraja.ogv">“Mamta Patel Nagaraja”</a>, NASA, public domain via Wikimedia Commons. The stream example lays that clip over a Hermes Studio screen recording.</p>
   </div></section>
 
   <section class="ch" id="how"><div class="w">
@@ -157,14 +215,24 @@
       <p class="lede">Open the desk on localhost, or tell your agent. Same tools either way.</p>
     </div>
     <div class="steps reveal">
-      <div><b>01</b><h3>Drop a source</h3><p>A file, YouTube, X, Twitch or a live stream. Studio checks it first.</p></div>
+      <div><b>01</b><h3>Drop a source</h3><p>A file, YouTube, Twitch, Kick, X or a live stream. Studio checks it first.</p></div>
       <div><b>02</b><h3>Pick a tool</h3><p>Or let Hermes read the video and pick the tool, length and format for you.</p></div>
-      <div><b>03</b><h3>Take the files</h3><p>Reorder, split or drop clips in the library. Social copy on request. You post.</p></div>
+      <div><b>03</b><h3>Edit, then take</h3><p>Change the layout, filter or in and out of any clip and re-render. Social copy on request. You post.</p></div>
     </div>
   </div></section>
 
   <section class="ch"><div class="w proof">
-    <img class="reveal" src="assets/clip-frame.png" alt="A vertical short cut by Hermes Studio with captions" loading="lazy" />
+    <div class="reveal">
+      <p class="kicker">What Hermes can do with a clip</p>
+      <ul class="ledger">
+        <li><b>Cut</b><span>Hook-first windows, filler and pauses removed</span></li>
+        <li><b>Frame</b><span>Speaker crop, facecam split, blur pad</span></li>
+        <li><b>Caption</b><span>Word timing, keywords, fixes, position</span></li>
+        <li><b>Grade</b><span>Eight colour filters, progress bar</span></li>
+        <li><b>Sound</b><span>Denoise, loudness to -14 LUFS</span></li>
+        <li><b>Name</b><span>AI titles from the clip's own words</span></li>
+      </ul>
+    </div>
     <div class="reveal">
       <p class="kicker">What stays on your machine</p>
       <h2 class="display" style="font-size:clamp(36px,4.5vw,64px);margin-bottom:2rem">Everything.</h2>

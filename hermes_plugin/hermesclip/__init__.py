@@ -79,6 +79,14 @@ def hermesclip_run(
     max_sec: float = 45,
     keywords: str = "",
     captions: bool | None = None,
+    face: str = "",
+    face_size: float | None = None,
+    face_box: str = "",
+    filter: str = "",
+    caption_pos: str = "",
+    audio: str = "",
+    progress: bool = False,
+    fixes: str = "",
 ) -> str:
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
@@ -100,7 +108,7 @@ def hermesclip_run(
         "--plan",
         plan if plan in ("auto", "heuristic", "grok") else "heuristic",
         "--layout",
-        layout if layout in ("fit", "fill") else "fit",
+        layout if layout in ("auto", "fit", "fill", "split") else "auto",
         "--live-seconds",
         str(int(live_seconds) or 1200),
         "--aspect",
@@ -122,6 +130,8 @@ def hermesclip_run(
         argv.append("--no-captions")
     if live_from_start:
         argv.append("--live-from-start")
+    argv += _look_argv(face=face, face_size=face_size, face_box=face_box, filter=filter,
+                       caption_pos=caption_pos, audio=audio, progress=progress, fixes=fixes)
     result = _run_mod(argv)
     if not result.get("ok"):
         return json.dumps(result)
@@ -165,7 +175,7 @@ def hermesclip_captions(
         "--style",
         style if style in ("pop", "impact", "clean", "glow", "neon", "boxed") else "pop",
         "--layout",
-        layout if layout in ("fit", "fill") else "fit",
+        layout if layout in ("auto", "fit", "fill", "split") else "fit",
         "--aspect",
         aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
     ]
@@ -204,6 +214,69 @@ def hermesclip_edit(
         return json.dumps(json.loads(result["stdout"].strip().splitlines()[-1]))
     except Exception:
         return json.dumps({"ok": True, "log": result.get("stdout", "")[-1500:]})
+
+
+def _look_argv(face="", face_size=None, face_box="", filter="", caption_pos="", audio="", progress=False, fixes="", layout="") -> list[str]:
+    argv: list[str] = []
+    if layout in ("auto", "fit", "fill", "split"):
+        argv += ["--layout", layout]
+    if face in ("top", "bottom"):
+        argv += ["--face", face]
+    if face_size:
+        argv += ["--face-size", str(float(face_size))]
+    if face_box:
+        argv += ["--face-box", str(face_box)]
+    if filter in ("none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"):
+        argv += ["--filter", filter]
+    if caption_pos in ("auto", "top", "middle", "bottom"):
+        argv += ["--caption-pos", caption_pos]
+    if audio in ("off", "clean"):
+        argv += ["--audio", audio]
+    if progress:
+        argv.append("--progress")
+    for part in str(fixes or "").split(","):
+        if "=" in part:
+            argv += ["--fix", part.strip()]
+    return argv
+
+
+def hermesclip_restyle(
+    job: str,
+    file: str,
+    layout: str = "",
+    face: str = "",
+    face_size: float | None = None,
+    face_box: str = "",
+    filter: str = "",
+    caption_pos: str = "",
+    audio: str = "",
+    progress: bool = False,
+    fixes: str = "",
+    style: str = "",
+    captions: bool | None = None,
+    start: float | None = None,
+    end: float | None = None,
+    title: str = "",
+) -> str:
+    if not job or not file:
+        return json.dumps({"ok": False, "error": "job and file are required"})
+    argv = ["restyle", job, file] + _look_argv(face, face_size, face_box, filter, caption_pos, audio, progress, fixes, layout)
+    if style in ("pop", "impact", "clean", "glow", "neon", "boxed"):
+        argv += ["--style", style]
+    if captions is False:
+        argv.append("--no-captions")
+    if start is not None:
+        argv += ["--start", str(float(start))]
+    if end is not None:
+        argv += ["--end", str(float(end))]
+    if title:
+        argv += ["--title", title]
+    result = _run_mod(argv, timeout=900)
+    out = result.get("stdout") or result.get("error") or ""
+    try:
+        return json.dumps(json.loads(out[out.index("{"):]))
+    except Exception:
+        return json.dumps({"ok": bool(result.get("ok")), "log": str(out)[-1500:]})
 
 
 def hermesclip_name(job: str, file: str = "", title: str = "") -> str:
@@ -374,7 +447,7 @@ def register(ctx) -> None:
         toolset="hermesclip",
         schema={
             "name": "hermesclip_run",
-            "description": "Hermes Studio tools on a local video or URL: mode=clip (hook-first shorts), captions, reframe (change aspect), tighten (cut ums and dead air), transcript (SRT/VTT/TXT). whisper=fast|balanced|accurate. Does not post.",
+            "description": "Hermes Studio tools on a local video or URL: mode=clip (hook-first shorts), captions, reframe (change aspect), tighten (cut ums and dead air), transcript (SRT/VTT/TXT). Look: layout auto/fill/split/fit, face top|bottom for streams, colour filter, caption position, audio clean-up, progress bar, word fixes. whisper=fast|balanced|accurate. Does not post.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -385,7 +458,15 @@ def register(ctx) -> None:
                     "pacing": {"type": "string", "enum": ["tight", "natural"], "default": "tight"},
                     "style": {"type": "string", "enum": ["pop", "impact", "clean", "glow", "neon", "boxed"], "default": "pop"},
                     "plan": {"type": "string", "enum": ["heuristic", "grok", "auto"], "default": "heuristic"},
-                    "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
+                    "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "default": "auto", "description": "auto = Hermes picks from the frame. fill = speaker crop. split = facecam band + screen/game. fit = whole frame on blur."},
+                    "face": {"type": "string", "enum": ["top", "bottom"], "description": "split: facecam band on top (default) or bottom"},
+                    "face_size": {"type": "number", "description": "split: face band % of height, 20-60 (default 35)"},
+                    "face_box": {"type": "string", "description": "split: manual camera box x,y,w,h in % of the source, e.g. 76,64,22,30"},
+                    "filter": {"type": "string", "enum": ["none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"]},
+                    "caption_pos": {"type": "string", "enum": ["auto", "top", "middle", "bottom"], "description": "auto keeps captions out of the platform UI zone; on split it sits on the seam"},
+                    "audio": {"type": "string", "enum": ["off", "clean"], "description": "clean = denoise + loudness to -14 LUFS"},
+                    "progress": {"type": "boolean", "description": "thin amber progress bar"},
+                    "fixes": {"type": "string", "description": "caption word fixes: cloud=Claude, marz=Mars"},
                     "prompt": {"type": "string"},
                     "keywords": {"type": "string", "description": "Words to highlight in captions"},
                     "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5", "source"]},
@@ -400,7 +481,7 @@ def register(ctx) -> None:
                 "required": ["src"],
             },
         },
-        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout", "prompt", "keywords", "aspect", "mode", "captions") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
+        handler=lambda args, **kw: hermesclip_run(**{k: (args or {}).get(k) for k in ("src", "out", "max_clips", "whisper", "pacing", "style", "plan", "layout", "prompt", "keywords", "aspect", "mode", "captions", "face", "face_size", "face_box", "filter", "caption_pos", "audio", "progress", "fixes") if (args or {}).get(k) is not None} | {"src": (args or {}).get("src") or ""}),
         description="HermesClip (Hermes Studio): clips, captions, reframe, tighten or transcript. Local only. Does not post.",
     )
     ctx.register_tool(
@@ -511,7 +592,7 @@ def register(ctx) -> None:
                     "out": {"type": "string"},
                     "whisper": {"type": "string", "default": "tiny"},
                     "style": {"type": "string", "default": "pop"},
-                    "layout": {"type": "string", "enum": ["fit", "fill"], "default": "fit"},
+                    "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "default": "fit"},
                     "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"], "default": "9:16"},
                     "hook": {"type": "boolean", "default": True},
                 },
@@ -557,6 +638,38 @@ def register(ctx) -> None:
             at=(args or {}).get("at"),
         ),
         description="HermesClip: trim or split a clip. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermesclip_restyle",
+        toolset="hermesclip",
+        schema={
+            "name": "hermesclip_restyle",
+            "description": "Hermes Studio: edit one library clip after the run. Change layout (auto/fill/split/fit), put the face on top or bottom, band size, colour filter, caption position/style, audio clean-up, progress bar, fix caption words, or move start/end on the source. Old file goes to .trash (restorable). Does not post.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job": {"type": "string", "description": "Library run id"},
+                    "file": {"type": "string", "description": "Clip file, e.g. clip-01.mp4"},
+                    "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "description": "auto = Hermes picks from the frame. fill = speaker crop. split = facecam band + screen/game. fit = whole frame on blur."},
+                    "face": {"type": "string", "enum": ["top", "bottom"], "description": "split: facecam band on top (default) or bottom"},
+                    "face_size": {"type": "number", "description": "split: face band % of height, 20-60 (default 35)"},
+                    "face_box": {"type": "string", "description": "split: manual camera box x,y,w,h in % of the source, e.g. 76,64,22,30"},
+                    "filter": {"type": "string", "enum": ["none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"]},
+                    "caption_pos": {"type": "string", "enum": ["auto", "top", "middle", "bottom"], "description": "auto keeps captions out of the platform UI zone; on split it sits on the seam"},
+                    "audio": {"type": "string", "enum": ["off", "clean"], "description": "clean = denoise + loudness to -14 LUFS"},
+                    "progress": {"type": "boolean", "description": "thin amber progress bar"},
+                    "fixes": {"type": "string", "description": "caption word fixes: cloud=Claude, marz=Mars"},
+                    "style": {"type": "string", "enum": ["pop", "impact", "clean", "glow", "neon", "boxed"]},
+                    "captions": {"type": "boolean"},
+                    "start": {"type": "number", "description": "New start on the source, seconds"},
+                    "end": {"type": "number", "description": "New end on the source, seconds"},
+                    "title": {"type": "string"},
+                },
+                "required": ["job", "file"],
+            },
+        },
+        handler=lambda args, **kw: hermesclip_restyle(**{k: v for k, v in (args or {}).items() if v is not None and k in ("job", "file", "layout", "face", "face_size", "face_box", "filter", "caption_pos", "audio", "progress", "fixes", "style", "captions", "start", "end", "title")}),
+        description="Hermes Studio: restyle / re-cut one clip. Does not post.",
     )
     ctx.register_tool(
         name="hermesclip_name",

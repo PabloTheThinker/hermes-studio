@@ -307,12 +307,32 @@ class StudioHandler(BaseHTTPRequestHandler):
                 hook=(rec.hook if rec else body.get("hook", True)) is not False,
                 mode=str((rec.mode if rec else body.get("mode")) or "clip"),
                 keywords=str((getattr(rec, "keywords", "") if rec else body.get("keywords")) or ""),
+                look=body.get("look") if isinstance(body.get("look"), dict) else None,
+                fixes=body.get("fixes"),
             )
             if rec:
                 job.message = "Hermes pick · " + "; ".join(rec.why[:2])
                 job.save()
             _q.put(job.id)
             return _json(self, 202, {"ok": True, "job": asdict(job)})
+        if path == "/api/restyle":
+            body = _read_json(self)
+            from hermesclip.pipeline import restyle_clip
+
+            def _f(k):
+                v = body.get(k)
+                return _seconds(v) if v not in (None, "") else None
+
+            res = restyle_clip(
+                str(body.get("job") or ""), str(body.get("file") or ""),
+                look=body.get("look") if isinstance(body.get("look"), dict) else None,
+                style=body.get("style") or None,
+                captions=body.get("captions") if body.get("captions") in (True, False) else None,
+                hook=body.get("hook") if body.get("hook") in (True, False) else None,
+                start=_f("start"), end=_f("end"),
+                fixes=body.get("fixes"), title=body.get("title") or None,
+            )
+            return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/name":
             body = _read_json(self)
             from hermesclip.pipeline import name_job

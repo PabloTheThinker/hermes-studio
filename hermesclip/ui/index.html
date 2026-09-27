@@ -230,6 +230,9 @@
     .cact { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
     .cact input { width: 84px; height: 32px; padding: 0 .5rem; font-size: 12px; margin: 0; }
     .btn.on { border-color: var(--amber); color: var(--amber); }
+    .editp { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+    .editp .setbar { margin-bottom: .8rem; }
+    .editp input[type=range], .setbar input[type=range] { width: 100%; accent-color: var(--amber); height: auto; padding: 0; border: 0; background: none; }
     .cgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.8rem 1.25rem; }
     .cgrid .ccard video { width: 100%; aspect-ratio: 9/16; object-fit: contain; background: #000; border: 1px solid var(--line); display: block; }
     .cgrid .ccard.wide video { aspect-ratio: 16/9; }
@@ -289,9 +292,9 @@
   </div>
   <script>
     const FALLBACK_TOOLS = [
-      { id: "clip", name: "Clips", verb: "Find the moments", line: "Long video in. Hook-first shorts out, scored and captioned.", output: "3–8 short clips", defaults: { aspect: "9:16", layout: "fit", captions: true, hook: true, pacing: "tight" }, settings: ["hunt","range","format","length","captions"] },
+      { id: "clip", name: "Clips", verb: "Find the moments", line: "Long video in. Hook-first shorts out, scored and captioned.", output: "3–8 short clips", defaults: { aspect: "9:16", layout: "auto", captions: true, hook: true, pacing: "tight" }, settings: ["hunt","range","format","length","captions"] },
       { id: "captions", name: "Captions", verb: "Caption the whole take", line: "Word-by-word captions on the full video. No cutting.", output: "1 captioned video", defaults: { aspect: "9:16", layout: "fit", captions: true, hook: false, pacing: "natural" }, settings: ["range","format","captions"] },
-      { id: "reframe", name: "Reframe", verb: "Change the shape", line: "16:9 to 9:16, 4:5 or 1:1.", output: "1 reshaped video", defaults: { aspect: "9:16", layout: "fill", captions: false, hook: false, pacing: "natural" }, settings: ["range","format","captions"] },
+      { id: "reframe", name: "Reframe", verb: "Change the shape", line: "16:9 to 9:16, 4:5 or 1:1.", output: "1 reshaped video", defaults: { aspect: "9:16", layout: "auto", captions: false, hook: false, pacing: "natural" }, settings: ["range","format","captions"] },
       { id: "tighten", name: "Tighten", verb: "Cut the dead air", line: "Drops ums and long pauses.", output: "1 tighter video", defaults: { aspect: "source", layout: "fit", captions: false, hook: false, pacing: "tight" }, settings: ["range","format","captions"] },
       { id: "transcript", name: "Transcript", verb: "Get the words", line: "SRT, VTT and text.", output: ".srt · .vtt · .txt", defaults: { captions: false, hook: false }, settings: ["range","quality"] },
     ];
@@ -317,12 +320,18 @@
     const state = {
       page: "clips", tool: null, sort: "score", filter: "all", view: "list", moreSet: false, clipInit: false, tools: FALLBACK_TOOLS, quality: FALLBACK_QUALITY,
       src: "", probe: null, err: "",
-      aspect: "9:16", layout: "fit", max_clips: 3, dur: "short",
+      aspect: "9:16", layout: "auto", max_clips: 3, dur: "short",
+      face: "top", face_ratio: 35, filter: "none", caption_pos: "auto", audio: "off", progress: false, fixes: "",
+      edit: null, editBusy: false, editMsg: "",
       style: "pop", captions: true, pacing: "tight", whisper: "fast",
       live_seconds: 1200, live_from_start: false, trim: false, start: "", end: "",
       prompt: "", q: "", hook: true, why: [], keywords: "", picked: false,
       jobs: [], library: [], folders: [], folder: "", open: null, copy: null, trash: [], tx: null,
     };
+    const LAYOUTS = [["auto","Auto","Hermes reads the frame"],["fill","Speaker","crop to the face"],["split","Split","facecam + screen"],["fit","Classic","whole frame, blur pad"]];
+    const FILTERS = [["none","None"],["punch","Punch"],["warm","Warm"],["cool","Cool"],["cinematic","Cinematic"],["vintage","Vintage"],["bw","B&W"],["bright","Bright"]];
+    const CAPPOS = [["auto","Auto"],["top","Top"],["middle","Middle"],["bottom","Bottom"]];
+    const lookOf = () => ({ layout: state.layout, face: state.face, face_ratio: Number(state.face_ratio) || 35, filter: state.filter, caption_pos: state.caption_pos, audio: state.audio, progress: !!state.progress });
     const $ = (s, el = document) => el.querySelector(s);
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     const slugify = (t) => String(t || "clip").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "clip";
@@ -424,11 +433,18 @@
           <div><label class="f">Clip length</label><select id="dur-sel">${DUR.map(x => `<option value="${x.id}" ${state.dur === x.id ? "selected" : ""}>${x.label} · ${x.hint}</option>`).join("")}</select></div>
           <div><label class="f">How many</label><div class="opts">${[3,5,8,12].map(n => `<button class="opt ${state.max_clips==n?"on":""}" data-k="max_clips" data-v="${n}" data-n="1">${n}</button>`).join("")}</div></div>
           <div><label class="f">Format</label><div class="opts">${ASPECTS.map(a => `<button class="opt ${state.aspect===a.v?"on":""}" data-k="aspect" data-v="${a.v}" title="${a.h}">${a.v}</button>`).join("")}</div></div>
+          <div><label class="f">Framing</label><div class="opts">${LAYOUTS.map(([v,l,h]) => `<button class="opt ${state.layout===v?"on":""}" data-k="layout" data-v="${v}" title="${h}">${l}</button>`).join("")}</div></div>
+          ${state.layout === "split" ? `<div><label class="f">Face</label><div class="opts"><button class="opt ${state.face==="top"?"on":""}" data-k="face" data-v="top">On top</button><button class="opt ${state.face==="bottom"?"on":""}" data-k="face" data-v="bottom">On bottom</button></div></div>` : ""}
         </div>
         <button class="more" id="more-btn">${state.moreSet ? "Fewer settings −" : "More settings +"}</button>
         ${state.moreSet ? `<div class="setbar" style="margin-top:.6rem">
           <div><label class="f">Timeframe</label><div class="row" style="flex-wrap:nowrap"><input id="start" placeholder="start 0:00" value="${esc(state.start)}" /><input id="end" placeholder="end" value="${esc(state.end)}" /></div></div>
-          <div><label class="f">Framing</label><div class="opts"><button class="opt ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic</button><button class="opt ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Speaker</button></div></div>
+          <div><label class="f">Filter</label><select id="filter-sel">${FILTERS.map(([v,l]) => `<option value="${v}" ${state.filter===v?"selected":""}>${l}</option>`).join("")}</select></div>
+          <div><label class="f">Caption spot</label><div class="opts">${CAPPOS.map(([v,l]) => `<button class="opt ${state.caption_pos===v?"on":""}" data-k="caption_pos" data-v="${v}">${l}</button>`).join("")}</div></div>
+          <div><label class="f">Audio</label><div class="opts"><button class="opt ${state.audio==="off"?"on":""}" data-k="audio" data-v="off">As is</button><button class="opt ${state.audio==="clean"?"on":""}" data-k="audio" data-v="clean" title="Denoise + loudness to -14 LUFS">Clean + loud</button></div></div>
+          ${state.layout === "split" ? `<div><label class="f">Face band · ${state.face_ratio}%</label><input type="range" id="face-ratio" min="20" max="60" step="5" value="${state.face_ratio}" /></div>` : ""}
+          <div><label class="f">Fix words</label><input id="fixes" value="${esc(state.fixes)}" placeholder="cloud=Claude, marz=Mars" /></div>
+          <div><label class="f">Progress bar</label><label class="check" style="margin:.5rem 0 0"><input type="checkbox" id="progress" ${state.progress ? "checked" : ""}> Thin amber bar</label></div>
           <div><label class="f">Captions</label><select id="style-sel"><option value="off" ${!state.captions ? "selected" : ""}>Off</option>${STYLES.map(x => `<option value="${x}" ${state.captions && state.style === x ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></div>
           <div><label class="f">Highlight words</label><input id="keywords" value="${esc(state.keywords || "")}" placeholder="money, never, secret" /></div>
           <div><label class="f">Pacing</label><div class="opts"><button class="opt ${state.pacing==="tight"?"on":""}" data-k="pacing" data-v="tight">Tight</button><button class="opt ${state.pacing==="natural"?"on":""}" data-k="pacing" data-v="natural">Natural</button></div></div>
@@ -436,7 +452,7 @@
           <div><label class="f">Hook title</label><label class="check" style="margin:.5rem 0 0"><input type="checkbox" id="hook" ${state.hook ? "checked" : ""}> Name on screen, first 3s</label></div>
           <div><label class="f">If it's live</label><select id="live-sel">${[[600,"Record 10 min"],[1200,"Record 20 min"],[1800,"Record 30 min"],[3600,"Record 60 min"]].map(([v,l]) => `<option value="${v}" ${state.live_seconds==v?"selected":""}>${l}</option>`).join("")}</select></div>
         </div>` : ""}
-        <div class="row" style="margin-top:.6rem"><button class="btn sm" id="best-btn">Auto settings</button><span class="hint">${esc(state.max_clips + " × " + d.hint + " · " + state.aspect + " · " + (state.captions ? state.style : "no captions") + " · " + state.whisper)}</span></div>
+        <div class="row" style="margin-top:.6rem"><button class="btn sm" id="best-btn">Auto settings</button><span class="hint">${esc(state.max_clips + " × " + d.hint + " · " + state.aspect + " · " + (LAYOUTS.find(x => x[0] === state.layout) || ["", "Auto"])[1].toLowerCase() + (state.layout === "split" ? " face " + state.face : "") + (state.filter !== "none" ? " · " + state.filter : "") + " · " + (state.captions ? state.style : "no captions") + (state.audio === "clean" ? " · clean audio" : "") + " · " + state.whisper)}</span></div>
         <div class="proj-h"><h2>Projects</h2><span class="hint">Newest first</span></div>
         <div id="projects">${projectsHtml()}</div>`;
     }
@@ -451,7 +467,7 @@
         return `<article class="proj" ${busy ? "" : `data-proj="${j.id}" role="button" tabindex="0"`}>
           <div class="cover">${thumb ? `<img src="/media/${j.id}/${thumb.thumb}" alt="" loading="lazy">` : ""}<span class="badge">${esc(j.platform || "")}</span>${best ? `<span class="best">${best}</span>` : ""}</div>
           <h3>${esc(j.title || j.id)}</h3>
-          <p>${busy ? `<span class="st ${esc(j.status)}">${esc(j.status === "failed" ? "Failed · " + (j.error || j.message || "") : (j.stage || j.status) + (j.message ? " · " + j.message : ""))}</span>` : `${kept} clip${kept === 1 ? "" : "s"} · ${esc(j.aspect || "9:16")}${j.layout === "fill" ? " speaker" : ""}${j.created_at ? " · " + esc(ago(j.created_at)) : ""}`}</p>
+          <p>${busy ? `<span class="st ${esc(j.status)}">${esc(j.status === "failed" ? "Failed · " + (j.error || j.message || "") : (j.stage || j.status) + (j.message ? " · " + j.message : ""))}</span>` : `${kept} clip${kept === 1 ? "" : "s"} · ${esc(j.aspect || "9:16")}${(j.look && j.look.layout === "split") || j.layout === "split" ? " split" : j.layout === "fill" ? " speaker" : ""}${j.created_at ? " · " + esc(ago(j.created_at)) : ""}`}</p>
           ${busy && j.status !== "failed" ? `<div class="bar"><i style="width:${Math.round((j.progress || 0) * 100)}%"></i></div>` : ""}
           ${j.status === "failed" ? `<div class="row" style="margin-top:.5rem"><button class="btn sm" data-retry="${j.id}">Retry</button></div>` : ""}
         </article>`;
@@ -487,6 +503,78 @@
       if (p.hook == null) return "";
       return `<div class="parts">${[["Hook", p.hook], ["Flow", p.flow], ["Value", p.value]].map(([k, v]) => `<div>${k}<span>${v}</span><i><b style="width:${Math.min(100, v)}%"></b></i></div>`).join("")}</div>`;
     }
+
+    function editPanel(j, c) {
+      const e = state.edit;
+      const opt = (k, v, l) => `<button class="opt ${String(e[k])===String(v)?"on":""}" data-ek="${k}" data-v="${v}">${l}</button>`;
+      return `<div class="editp">
+        <div class="setbar">
+          <div><label class="f">Framing</label><div class="opts">${LAYOUTS.map(([v,l]) => opt("layout", v, l)).join("")}</div></div>
+          <div><label class="f">Face</label><div class="opts">${opt("face","top","On top")}${opt("face","bottom","On bottom")}</div><p class="hint" style="margin:.35rem 0 0">Split layout</p></div>
+          <div><label class="f">Face band · <span id="ebv">${e.face_ratio}</span>%</label><input type="range" id="e-ratio" min="20" max="60" step="5" value="${e.face_ratio}" /></div>
+          <div><label class="f">Filter</label><select id="e-filter">${FILTERS.map(([v,l]) => `<option value="${v}" ${e.filter===v?"selected":""}>${l}</option>`).join("")}</select></div>
+          <div><label class="f">Captions</label><select id="e-style"><option value="off" ${e.captions===false?"selected":""}>Off</option>${STYLES.map(x => `<option value="${x}" ${e.captions!==false && e.style===x?"selected":""}>${x[0].toUpperCase()+x.slice(1)}</option>`).join("")}</select></div>
+          <div><label class="f">Caption spot</label><div class="opts">${CAPPOS.map(([v,l]) => opt("caption_pos", v, l)).join("")}</div></div>
+          <div><label class="f">Audio</label><div class="opts">${opt("audio","off","As is")}${opt("audio","clean","Clean + loud")}</div></div>
+          <div><label class="f">In / out on the source</label><div class="row" style="flex-wrap:nowrap"><input id="e-start" value="${esc(e.start)}" placeholder="start s" /><input id="e-end" value="${esc(e.end)}" placeholder="end s" /></div></div>
+          <div><label class="f">Fix words</label><input id="e-fixes" value="${esc(e.fixes)}" placeholder="cloud=Claude" /></div>
+          <div><label class="f">Progress bar</label><label class="check" style="margin:.5rem 0 0"><input type="checkbox" id="e-progress" ${e.progress ? "checked" : ""}> Thin amber bar</label></div>
+        </div>
+        <div class="row"><button class="btn primary sm" id="e-apply" ${state.editBusy ? "disabled" : ""}>${state.editBusy ? "Rendering…" : "Apply"}</button><button class="btn sm quiet" id="e-cancel">Cancel</button><span class="hint">${esc(state.editMsg || "Re-renders this clip from the source. The old version goes to Dropped.")}</span></div>
+      </div>`;
+    }
+    function openEdit(j, c) {
+      const lk = c.look || j.look || {};
+      state.edit = {
+        file: c.file, layout: lk.layout || c.layout || j.layout || "auto", face: lk.face || "top",
+        face_ratio: Math.round((lk.face_ratio || 0.35) * 100), filter: lk.filter || "none",
+        caption_pos: lk.caption_pos || "auto", audio: lk.audio || "off", progress: !!lk.progress,
+        style: c.style || j.style || "pop", captions: j.captions !== false,
+        start: c.start != null ? Number(c.start).toFixed(1) : "", end: c.end ? Number(c.end).toFixed(1) : "",
+        fixes: Object.entries(j.fixes || {}).map(([a, b]) => a + "=" + b).join(", "),
+      };
+      state.editMsg = "";
+    }
+    function grabEdit() {
+      const e = state.edit; if (!e) return;
+      const g = (id) => document.getElementById(id);
+      if (g("e-ratio")) e.face_ratio = Number(g("e-ratio").value);
+      if (g("e-filter")) e.filter = g("e-filter").value;
+      if (g("e-style")) { const v = g("e-style").value; if (v === "off") e.captions = false; else { e.captions = true; e.style = v; } }
+      if (g("e-start")) e.start = g("e-start").value;
+      if (g("e-end")) e.end = g("e-end").value;
+      if (g("e-fixes")) e.fixes = g("e-fixes").value;
+      if (g("e-progress")) e.progress = g("e-progress").checked;
+    }
+    function bindEdit() {
+      document.querySelectorAll("[data-edit]").forEach(el => el.onclick = () => {
+        const j = state.open; const c = j && (j.clips || []).find(x => x.file === el.dataset.edit);
+        if (state.edit && state.edit.file === el.dataset.edit) state.edit = null; else if (c) openEdit(j, c);
+        render();
+      });
+      if (!state.edit) return;
+      document.querySelectorAll("[data-ek]").forEach(el => el.onclick = () => { grabEdit(); state.edit[el.dataset.ek] = el.dataset.v; render(); });
+      const r = $("#e-ratio"); if (r) r.oninput = () => { $("#ebv").textContent = r.value; };
+      const cancel = $("#e-cancel"); if (cancel) cancel.onclick = () => { state.edit = null; render(); };
+      const apply = $("#e-apply");
+      if (apply) apply.onclick = async () => {
+        grabEdit(); const e = state.edit; const j = state.open;
+        state.editBusy = true; state.editMsg = ""; render();
+        try {
+          const res = await api("/api/restyle", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            job: j.id, file: e.file, style: e.style, captions: e.captions,
+            look: { layout: e.layout, face: e.face, face_ratio: e.face_ratio, filter: e.filter, caption_pos: e.caption_pos, audio: e.audio, progress: e.progress },
+            start: e.start, end: e.end, fixes: e.fixes,
+          })});
+          await refresh();
+          const live = state.library.find(x => x.id === j.id); if (live) state.open = live;
+          try { const t = await api("/api/trash?job=" + encodeURIComponent(j.id)); state.trash = t.files || []; } catch {}
+          state.editMsg = "Done · " + (LAYOUTS.find(x => x[0] === res.layout) || ["", res.layout])[1] + " · " + Math.round(res.end - res.start) + "s";
+          state.bust = Date.now();
+        } catch (err) { state.editMsg = err.message; }
+        state.editBusy = false; render();
+      };
+    }
     function projectPage(j) {
       if (j.pending) return `<p class="kicker"><a href="#/clips">Clips</a></p><h1>Loading…</h1>`;
       const wide = j.aspect === "16:9" || j.aspect === "source";
@@ -500,14 +588,16 @@
           <input data-split-at="${esc(c.file)}" placeholder="split s" />
           <button class="btn sm" data-split="${esc(c.file)}">Split</button>
           <button class="btn sm" data-dup="${esc(c.file)}">Copy</button>
-          <button class="btn sm quiet" data-drop="${esc(c.file)}">Drop</button></div>`;
+          <button class="btn sm quiet" data-drop="${esc(c.file)}">Drop</button>
+          <button class="btn sm ${state.edit && state.edit.file === c.file ? "on" : ""}" data-edit="${esc(c.file)}">Edit</button></div>
+          ${state.edit && state.edit.file === c.file ? editPanel(j, c) : ""}`;
       const title = (c) => `<textarea class="ttl" rows="2" data-title="${esc(c.file)}" aria-label="Clip name" maxlength="90">${esc(c.title || c.file)}</textarea>`;
       const list = clips.map((c, n) => `<article class="crow ${wide ? "wide" : ""}">
           <span class="rank">#${n + 1}</span>
-          <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}` : ""}" src="/media/${j.id}/${c.file}"></video>
+          <video controls playsinline preload="none" poster="${c.thumb ? `/media/${j.id}/${c.thumb}?v=${state.bust || 0}` : ""}" src="/media/${j.id}/${c.file}?v=${state.bust || 0}"></video>
           <div>
             ${title(c)}
-            <p class="meta">${c.end ? fmt(c.start) + "–" + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s" : esc(c.file)}</p>
+            <p class="meta">${c.end ? fmt(c.start) + "–" + fmt(c.end) + " · " + Math.round(c.end - c.start) + "s" : esc(c.file)}${c.layout ? " · " + esc((LAYOUTS.find(x => x[0] === c.layout) || ["", c.layout])[1]) : ""}${c.look && c.look.filter && c.look.filter !== "none" ? " · " + esc(c.look.filter) : ""}</p>
             ${c.virality ? `<div class="vscore"><span class="big">${c.virality}<small>/99</small></span>${partsHtml(c)}</div>` : ""}
             ${c.text ? `<p class="words" data-words>${esc(c.text)}</p>` : ""}
             ${actions(c)}
@@ -593,7 +683,9 @@
       return `<section class="sec"><h3>Format</h3><div>
         <div class="opts">${aspects.map(a => `<button class="opt ${state.aspect===a.v?"on":""}" data-k="aspect" data-v="${a.v}">${a.l}<small>${a.v === "source" ? a.h : a.v}</small></button>`).join("")}</div>
         ${state.aspect !== "source" ? `<label class="f">Framing</label>
-        <div class="opts"><button class="opt ${state.layout==="fit"?"on":""}" data-k="layout" data-v="fit">Classic<small>whole frame · blur pad</small></button><button class="opt ${state.layout==="fill"?"on":""}" data-k="layout" data-v="fill">Speaker<small>punch in on the face</small></button></div>` : ""}
+        <div class="opts">${LAYOUTS.map(([v,l,h]) => `<button class="opt ${state.layout===v?"on":""}" data-k="layout" data-v="${v}">${l}<small>${h}</small></button>`).join("")}</div>
+        ${state.layout === "split" ? `<label class="f">Face</label><div class="opts"><button class="opt ${state.face==="top"?"on":""}" data-k="face" data-v="top">On top</button><button class="opt ${state.face==="bottom"?"on":""}" data-k="face" data-v="bottom">On bottom</button></div>` : ""}
+        <label class="f">Filter</label><div class="opts">${FILTERS.map(([v,l]) => `<button class="opt ${state.filter===v?"on":""}" data-k="filter" data-v="${v}">${l}</button>`).join("")}</div>` : ""}
         </div></section>`;
     }
     function lengthSec() {
@@ -721,6 +813,10 @@
       if (v("hook")) state.hook = v("hook").checked;
       if (v("prompt")) state.prompt = v("prompt").value;
       if (v("keywords")) state.keywords = v("keywords").value;
+      if (v("fixes")) state.fixes = v("fixes").value;
+      if (v("progress")) state.progress = v("progress").checked;
+      if (v("face-ratio")) state.face_ratio = Number(v("face-ratio").value);
+      if (v("filter-sel")) state.filter = v("filter-sel").value;
     }
     async function openRun(id, fromRoute) {
       const jj = state.library.find(j => j.id === id);
@@ -738,6 +834,9 @@
     function bindClips() {
       if (state.page !== "clips") return;
       bindProjects();
+      bindEdit();
+      const fs = $("#filter-sel"); if (fs) fs.onchange = () => { grabForm(); render(); };
+      const fr = $("#face-ratio"); if (fr) fr.onchange = () => { grabForm(); render(); };
       const more = $("#more-btn"); if (more) more.onclick = () => { grabForm(); state.moreSet = !state.moreSet; render(); };
       const ds = $("#dur-sel"); if (ds) ds.onchange = () => { grabForm(); state.dur = ds.value; render(); };
       const ss = $("#style-sel"); if (ss) ss.onchange = () => { grabForm(); if (ss.value === "off") state.captions = false; else { state.captions = true; state.style = ss.value; } render(); };
@@ -756,6 +855,7 @@
             live_seconds: state.live_seconds, live_from_start: state.live_from_start,
             start_time: state.start ? state.start : null, end_time: state.end ? state.end : null,
             prompt: state.prompt, keywords: state.captions ? state.keywords : "", hook: state.hook, plan: "heuristic", whisper: state.whisper,
+            look: lookOf(), fixes: state.fixes,
           })});
           state.src = ""; state.probe = null; state.why = [];
           await refresh(); render();
@@ -829,6 +929,7 @@
             prompt: t.id === "clip" ? state.prompt : "", keywords: state.captions ? state.keywords : "",
             hook: t.id === "clip" ? state.hook : false,
             plan: "heuristic", whisper: state.whisper,
+            look: lookOf(), fixes: state.fixes,
           })});
           state.why = [];
           nav("jobs"); await refresh();

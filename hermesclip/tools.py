@@ -15,8 +15,8 @@ TOOLS: list[dict] = [
         "line": "Long video in. Hook-first shorts out, scored and captioned.",
         "input": "Any long video, stream or link",
         "output": "3–8 short clips",
-        "defaults": {"aspect": "9:16", "layout": "fit", "captions": True, "hook": True, "pacing": "tight"},
-        "settings": ["hunt", "range", "format", "length", "captions"],
+        "defaults": {"aspect": "9:16", "layout": "auto", "captions": True, "hook": True, "pacing": "tight"},
+        "settings": ["hunt", "range", "format", "length", "captions", "look"],
         "status": "Live",
     },
     {
@@ -34,11 +34,11 @@ TOOLS: list[dict] = [
         "id": "reframe",
         "name": "Reframe",
         "verb": "Change the shape",
-        "line": "Turn a 16:9 video into 9:16, 4:5 or 1:1. Blur pad or punch-in on the speaker.",
+        "line": "Turn a 16:9 video into 9:16, 4:5 or 1:1. Speaker crop, facecam split, or blur pad.",
         "input": "Any video",
         "output": "1 reshaped video",
-        "defaults": {"aspect": "9:16", "layout": "fill", "captions": False, "hook": False, "pacing": "natural"},
-        "settings": ["range", "format", "captions"],
+        "defaults": {"aspect": "9:16", "layout": "auto", "captions": False, "hook": False, "pacing": "natural"},
+        "settings": ["range", "format", "captions", "look"],
         "status": "Live",
     },
     {
@@ -71,13 +71,31 @@ QUALITY = [
     {"id": "accurate", "name": "Accurate", "model": "small.en", "line": "Best words. Slowest on CPU."},
 ]
 
+LOOK = {
+    "layouts": [
+        {"id": "auto", "name": "Auto", "line": "Hermes looks at the frame: speaker, facecam or neither."},
+        {"id": "fill", "name": "Speaker", "line": "Crop to the face and fill the screen."},
+        {"id": "split", "name": "Split", "line": "Facecam band plus the screen or game. Face top or bottom."},
+        {"id": "fit", "name": "Classic", "line": "Whole frame on a blurred pad. Nothing is cut off."},
+    ],
+    "face": [{"id": "top", "name": "Face on top"}, {"id": "bottom", "name": "Face on bottom"}],
+    "filters": [
+        {"id": k, "name": v} for k, v in {
+            "none": "None", "punch": "Punch", "warm": "Warm", "cool": "Cool",
+            "cinematic": "Cinematic", "vintage": "Vintage", "bw": "Black & white", "bright": "Bright",
+        }.items()
+    ],
+    "caption_pos": [{"id": "auto", "name": "Auto"}, {"id": "top", "name": "Top"}, {"id": "middle", "name": "Middle"}, {"id": "bottom", "name": "Bottom"}],
+    "audio": [{"id": "off", "name": "As is"}, {"id": "clean", "name": "Clean + loud (-14 LUFS)"}],
+}
+
 LATER = [
     {"name": "Editor", "line": "Timeline under the Studio name. Not shipping yet."},
 ]
 
 
 def catalogue() -> dict:
-    return {"tools": TOOLS, "quality": QUALITY, "later": LATER}
+    return {"tools": TOOLS, "quality": QUALITY, "look": LOOK, "later": LATER}
 
 
 def tool(tool_id: str) -> dict | None:

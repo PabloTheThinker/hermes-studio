@@ -34,9 +34,15 @@ FILLER = {"um", "uh", "like", "so", "yeah", "okay", "ok", "right", "you", "know"
 STRONG = re.compile(r"(\d|\$|never|always|nobody|everyone|secret|mistake|wrong|why|how|stop|biggest|worst|best|truth|real|money|hours?|years?|million|free)", re.I)
 
 
-def clip_text(tr: Transcript, start: float, end: float) -> str:
+def clip_text(tr: Transcript, start: float, end: float, fixes: dict | None = None) -> str:
     words = [w for w in tr.words if w.start >= start - 0.05 and w.end <= end + 0.05]
-    return " ".join(w.text.strip() for w in words).strip()
+    text = " ".join(w.text.strip() for w in words).strip()
+    if fixes:
+        from hermesclip.captions import _fix_word
+
+        fx = {str(k).lower(): str(v) for k, v in fixes.items()}
+        text = " ".join(_fix_word(t, fx) for t in text.split())
+    return text
 
 
 def title_case(s: str) -> str:

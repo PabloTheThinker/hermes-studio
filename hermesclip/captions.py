@@ -108,10 +108,24 @@ def build_ass(
     style: str = "pop",
     layout: str = "fit",
     hook: str = "",
+    place: tuple[int, int] | None = None,
+    fixes: dict | None = None,
 ) -> str:
-    """Word-highlight ASS. Fit puts captions in the lower pad; fill keeps them off the chin."""
+    """Word-highlight ASS. Fit puts captions in the lower pad; fill keeps them off the chin.
+
+    place: (ASS alignment 2/5/8, MarginV) from hermesclip.look.caption_margin.
+    fixes: {"wrong word": "right word"} applied before render (Opus-style word fix).
+    """
     st = STYLES.get(style, STYLES["pop"])
     margin_v = st.margin_v_fit if layout != "fill" else st.margin_v_fill
+    align = 2
+    if place:
+        align, margin_v = int(place[0]), int(place[1])
+    if fixes:
+        fx = {str(k).strip().lower(): str(v).strip() for k, v in fixes.items() if str(k).strip()}
+        words = [
+            Word(_fix_word(w.text, fx), w.start, w.end) for w in words
+        ]
     emp = {e.lower() for e in (emphasis or [])}
     local = [
         Word(
@@ -147,8 +161,8 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Face,{st.font},{st.size},{st.primary},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,{st.spacing},0,1,{st.outline_w},0,2,{st.margin_x},{st.margin_x},{margin_v},1
-Style: Hook,{st.font},{max(28, st.size - 12)},{st.highlight},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,0.8,0,1,3,0,8,{st.margin_x},{st.margin_x},72,1
+Style: Face,{st.font},{st.size},{st.primary},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,{st.spacing},0,1,{st.outline_w},0,{align},{st.margin_x},{st.margin_x},{margin_v},1
+Style: Hook,{st.font},{max(28, st.size - 12)},{st.highlight},&H000000FF,{st.outline},&H80000000,-1,0,0,0,100,100,0.8,0,1,3,0,{2 if align == 8 else 8},{st.margin_x},{st.margin_x},{int(play_y * 0.16) if align == 8 else 72},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -170,14 +184,24 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 else:
                     col = rf"{{\c{st.primary}}}"
                 line.append(col + _esc(raw))
-            text = r"{\an2}" + " ".join(line)
+            text = rf"{{\an{align}}}" + " ".join(line)
             events.append(f"Dialogue: 0,{_ts(a)},{_ts(b)},Face,,0,0,0,,{text}")
     if hook:
         ht = _esc(hook.strip())[:80]
         if ht:
             end = min(3.0, max(1.2, clip_end - clip_start))
-            events.insert(0, f"Dialogue: 1,0:00:00.00,{_ts(end)},Hook,,0,0,0,,{{\\an8}}{ht}")
+            events.insert(0, f"Dialogue: 1,0:00:00.00,{_ts(end)},Hook,,0,0,0,,{{\\an{2 if align == 8 else 8}}}{ht}")
     return header + "\n".join(events) + "\n"
+
+
+def _fix_word(raw: str, fx: dict) -> str:
+    """Swap a word, keeping its punctuation: 'Cloud,' + {cloud: Claude} -> 'Claude,'."""
+    core = raw.strip(".,!?;:\"'")
+    key = core.lower()
+    if key not in fx or not core:
+        return raw
+    i = raw.find(core)
+    return raw[:i] + fx[key] + raw[i + len(core):]
 
 
 def _esc(s: str) -> str:

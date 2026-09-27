@@ -84,6 +84,8 @@ class Job:
     hook: bool = True
     mode: str = "clip"
     keywords: str = ""
+    look: dict = field(default_factory=dict)
+    fixes: dict = field(default_factory=dict)
     clips: list[dict] = field(default_factory=list)
     files: list[dict] = field(default_factory=list)
     work: str = ""
@@ -280,6 +282,8 @@ def new_job(
     hook: bool = True,
     mode: str = "clip",
     keywords: str = "",
+    look: dict | None = None,
+    fixes: dict | None = None,
 ) -> Job:
     info: SourceInfo | None = None
     title = src
@@ -334,12 +338,42 @@ def new_job(
         hook=bool(hook),
         mode=mode if mode in MODES else "clip",
         keywords=keywords or "",
+        look=_clean_look(look, layout),
+        fixes=_clean_fixes(fixes),
         dir=str(dest),
         work=str(dest / "work"),
     )
     job.save()
     job._info = info  # type: ignore[attr-defined]
     return job
+
+
+def _clean_look(look: dict | None, layout: str = "fit") -> dict:
+    from hermesclip.look import make_look
+
+    return make_look(look or {}, layout=(look or {}).get("layout") or layout).to_dict()
+
+
+def _clean_fixes(fixes) -> dict:
+    """Word fixes: {"cloud": "Claude"} or "cloud=Claude, marz=Mars"."""
+    out: dict[str, str] = {}
+    if isinstance(fixes, str):
+        for part in fixes.replace(";", ",").split(","):
+            if "=" in part:
+                a, b = part.split("=", 1)
+                if a.strip() and b.strip():
+                    out[a.strip().lower()] = b.strip()
+    elif isinstance(fixes, dict):
+        for a, b in fixes.items():
+            if str(a).strip() and str(b).strip():
+                out[str(a).strip().lower()] = str(b).strip()
+    return dict(list(out.items())[:40])
+
+
+def _job_look(job: Job):
+    from hermesclip.look import make_look
+
+    return make_look(job.look or {}, layout=(job.look or {}).get("layout") or job.layout)
 
 
 def _thumb(clip: Path, dest: Path) -> str:
@@ -414,7 +448,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             tr = Transcript("en", dur, "", [Word("…", lo, hi)])
 
         width, height = canvas(job.aspect)
-        layout = job.layout if job.layout in ("fit", "fill") else "fit"
+        layout = job.layout if job.layout in ("fit", "fill", "split", "auto") else "fit"
         style = job.style if job.captions else "clean"
 
         from hermesclip.export import write_exports
@@ -444,10 +478,13 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                     w_, h_ = width, height
                 pace = "tight"
             dest = out_dir / f"{job.mode}.mp4"
+            lk = _job_look(job)
+            if job.mode == "tighten" and job.aspect == "source":
+                lk.layout = "fit"
             render_clip(
                 video, plan, tr, dest, work,
                 width=w_, height=h_, pacing=pace, style=style, layout=layout,
-                hook="", captions=job.captions,
+                hook="", captions=job.captions, look=lk, fixes=job.fixes,
             )
             thumb = _thumb(dest, out_dir / f"{job.mode}.jpg")
             out_len = probe_duration(dest)
@@ -470,7 +507,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             render_clip(
                 video, plan, tr, dest, work,
                 width=width, height=height, pacing="natural", style=style, layout=layout,
-                hook=plan.title if job.hook else "",
+                hook=plan.title if job.hook else "", look=_job_look(job), fixes=job.fixes,
             )
             thumb = _thumb(dest, out_dir / "captions.jpg")
             job.clips = [{"file": dest.name, "title": "Captions", "start": plan.start, "end": plan.end, "score": 1.0, "virality": 0, "thumb": thumb}]
@@ -518,7 +555,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
         save_plan(plans, work / "plan.json")
 
         width, height = canvas(job.aspect)
-        layout = job.layout if job.layout in ("fit", "fill") else "fit"
+        layout = job.layout if job.layout in ("fit", "fill", "split", "auto") else "fit"
         style = job.style if job.captions else "clean"
         from hermesclip.namer import clip_text
         from hermesclip.plan import score_parts
@@ -541,7 +578,10 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                 layout=layout,
                 hook=plan.title if job.hook else "",
                 captions=job.captions,
+                look=_job_look(job),
+                fixes=job.fixes,
             )
+            used = getattr(render_clip, "last_layout", layout)
             thumb = _thumb(dest, out_dir / f"clip-{i:02d}.jpg")
             written.append(
                 {
@@ -552,8 +592,10 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
                     "score": plan.score,
                     "virality": min(99, int(round(plan.score * 100))),
                     "parts": plan.parts or score_parts([w for w in tr.words if w.start >= plan.start - 0.05 and w.end <= plan.end + 0.05], plan.end - plan.start),
-                    "text": clip_text(tr, plan.start, plan.end)[:900],
+                    "text": clip_text(tr, plan.start, plan.end, job.fixes)[:900],
                     "thumb": thumb,
+                    "layout": used,
+                    "emphasis": list(plan.emphasis or []),
                 }
             )
         job.clips = written
@@ -599,6 +641,8 @@ def run_once(
     aspect: str = "9:16",
     captions: bool = True,
     keywords: str = "",
+    look: dict | None = None,
+    fixes: dict | None = None,
 ) -> dict:
     """CLI-shaped run. Writes clips into out_dir (not necessarily the library)."""
     job = new_job(
@@ -619,6 +663,8 @@ def run_once(
         hook=hook,
         mode=mode,
         keywords=keywords,
+        look=look,
+        fixes=fixes,
     )
     if work:
         job.work = str(work)
@@ -737,3 +783,123 @@ def set_clip_meta(job_id: str, file: str, liked) -> dict:
             job.save()
             return {"ok": True, "file": file, "liked": liked}
     return {"ok": False, "error": "clip not in run"}
+
+
+def _source_video(job: Job) -> Path | None:
+    """The full source this run was cut from: local file, or the download kept in work/."""
+    man = Path(job.dir) / "manifest.json"
+    if man.is_file():
+        try:
+            p = Path(json.loads(man.read_text()).get("source") or "")
+            if p.is_file():
+                return p
+        except Exception:
+            pass
+    if job.src and not job.src.startswith(("http://", "https://")):
+        p = Path(job.src).expanduser()
+        if p.is_file():
+            return p
+    from hermesclip.download import _find_source
+
+    hits = _find_source(Path(job.work or Path(job.dir) / "work"))
+    return hits[0] if hits else None
+
+
+def restyle_clip(
+    job_id: str,
+    file: str,
+    *,
+    look: dict | None = None,
+    style: str | None = None,
+    captions: bool | None = None,
+    hook: bool | None = None,
+    start: float | None = None,
+    end: float | None = None,
+    fixes=None,
+    title: str | None = None,
+) -> dict:
+    """Re-render one clip from the source with a new look and/or new in/out points.
+
+    This is how an agent edits a clip after the run: change the layout (auto/fit/fill/split),
+    put the face on top or bottom, change the band size, add a colour filter, move the captions,
+    clean the audio, add a progress bar, fix words, or move the start/end on the source.
+    The old file goes to .trash first, so it can be restored.
+    """
+    from hermesclip.edit import drop_file
+    from hermesclip.namer import clip_text
+    from hermesclip.plan import ClipPlan, score_parts
+    from hermesclip.transcribe import load_transcript
+
+    job = load_job(job_id)
+    if not job:
+        return {"ok": False, "error": "job not found"}
+    clips = list(job.clips or [])
+    idx = next((i for i, c in enumerate(clips) if c.get("file") == file), None)
+    if idx is None:
+        return {"ok": False, "error": "clip not found"}
+    clip = dict(clips[idx])
+    video = _source_video(job)
+    if not video:
+        return {"ok": False, "error": "source video is gone; re-run the job"}
+    tpath = Path(job.work or Path(job.dir) / "work") / "transcript.json"
+    if not tpath.is_file():
+        return {"ok": False, "error": "run has no transcript; re-run the job"}
+    tr = load_transcript(tpath)
+    work = tpath.parent
+
+    s0 = float(clip.get("start") or 0.0)
+    e0 = float(clip.get("end") or 0.0)
+    s1 = float(start) if start is not None else s0
+    e1 = float(end) if end is not None else e0
+    if e1 <= s1 + 1.0:
+        return {"ok": False, "error": "end must be at least 1s after start"}
+    dur = probe_duration(video)
+    s1, e1 = max(0.0, s1), min(dur, e1)
+
+    base = dict(clip.get("look") or job.look or {})
+    base.update({k: v for k, v in (look or {}).items() if v is not None})
+    lk = _clean_look(base, job.layout)
+    from hermesclip.look import make_look
+
+    look_obj = make_look(lk)
+    all_fixes = dict(job.fixes or {})
+    all_fixes.update(_clean_fixes(fixes))
+    st = style or clip.get("style") or job.style
+    cap = job.captions if captions is None else bool(captions)
+    hk = (clip.get("hook_on") if clip.get("hook_on") is not None else job.hook) if hook is None else bool(hook)
+    name = (title or clip.get("title") or "").strip()
+    width, height = canvas(job.aspect if job.aspect != "source" else "9:16")
+
+    dest = Path(job.dir) / file
+    tmp = dest.with_name(dest.stem + ".restyle.mp4")
+    plan = ClipPlan(s1, e1, name, list(clip.get("emphasis") or []), float(clip.get("score") or 0.5))
+    pacing = job.pacing if job.mode == "clip" else ("tight" if job.mode == "tighten" else "natural")
+    try:
+        render_clip(
+            video, plan, tr, tmp, work,
+            width=width, height=height, pacing=pacing, style=st if cap else "clean",
+            layout=lk["layout"], hook=name if hk else "", captions=cap, look=look_obj, fixes=all_fixes,
+        )
+    except Exception as exc:
+        if tmp.exists():
+            tmp.unlink()
+        return {"ok": False, "error": str(exc)[-600:]}
+    used = getattr(render_clip, "last_layout", lk["layout"])
+    if dest.is_file():
+        drop_file(dest, {k: v for k, v in clip.items() if k != "file"})
+    tmp.replace(dest)
+    thumb = _thumb(dest, dest.with_suffix(".jpg"))
+    words = [w for w in tr.words if w.start >= s1 - 0.05 and w.end <= e1 + 0.05]
+    clip.update({
+        "start": s1, "end": e1, "look": lk, "layout": used, "style": st, "hook_on": hk,
+        "thumb": thumb, "title": name or clip.get("title"),
+        "text": clip_text(tr, s1, e1, all_fixes)[:900],
+    })
+    if start is not None or end is not None:
+        clip["parts"] = score_parts(words, e1 - s1)
+    if fixes:
+        clip["fixes"] = _clean_fixes(fixes)
+    clips[idx] = clip
+    job.clips = clips
+    job.save()
+    return {"ok": True, "file": file, "layout": used, "look": lk, "start": s1, "end": e1, "title": clip["title"]}
