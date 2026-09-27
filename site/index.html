@@ -129,11 +129,10 @@
     footer a { color: var(--mute); text-decoration: none; }
     footer a:hover { color: var(--ink); }
 
-    /* Scroll demo: one pinned stage, scrubbed by scroll (reversible, no autoplay). */
+    /* Demo: one screen that plays itself 01 -> 07 when it comes into view; the take plays with sound. */
     .demo { position: relative; border-bottom: 1px solid var(--line); }
-    .js .demo { height: 640vh; }
     .demo-pin { padding: clamp(4rem, 8vw, 7rem) 0; }
-    .js .demo-pin { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 0; display: flex; align-items: center; overflow: hidden; }
+    .js .demo-pin { min-height: calc(100vh - 64px); padding: clamp(2rem, 4vw, 3rem) 0; display: flex; align-items: center; overflow: hidden; }
     .demo-grid { display: grid; grid-template-columns: minmax(250px, .78fr) 1.5fr; gap: clamp(2rem, 4vw, 4.5rem); align-items: center; width: 100%; }
     .demo-copy .display { font-size: clamp(36px, 4.2vw, 60px); margin-bottom: 1.4rem; }
     .demo-steps { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
@@ -187,6 +186,15 @@
     .win { position: absolute; bottom: 6px; height: 48px; border: 1px solid rgba(255,200,61,.55); background: rgba(255,200,61,.08); z-index: 1; opacity: 0; transition: opacity .25s, background .25s, border-color .25s; }
     .win.pick { border: 2px solid var(--amber); background: rgba(255,200,61,.28); z-index: 2; }
     .gap { position: absolute; bottom: 6px; height: 48px; z-index: 2; background: repeating-linear-gradient(135deg, rgba(205,128,50,.55) 0 4px, rgba(205,128,50,.18) 4px 8px); border: 1px solid var(--ember); opacity: 0; }
+    .demo-ctl { display: flex; gap: .5rem; margin-top: .7rem; flex-wrap: wrap; }
+    .demo-ctl button { background: transparent; color: var(--mute); border: 1px solid var(--line-2); font: 500 11px var(--mono); padding: .4em .8em; cursor: pointer; }
+    .demo-ctl button:hover, .demo-ctl button:focus-visible { color: var(--amber); border-color: var(--amber); outline: none; }
+    .demo.still .demo-ctl { display: none; }
+    .demo.live .demo-steps li { cursor: pointer; }
+    .demo.live .demo-steps li:hover h3, .demo.live .demo-steps li:focus-visible h3 { color: var(--ink); }
+    .demo.live .demo-steps li:focus-visible { outline: 1px solid var(--amber); outline-offset: 2px; }
+    .snd.nudge { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); font-weight: 600; animation: nudge 1.6s var(--ease) infinite; }
+    @keyframes nudge { 50% { box-shadow: 0 0 0 6px rgba(255,200,61,.2); } }
     .demo-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
     .demo-bar i { display: block; height: 100%; background: var(--amber); transform-origin: left; transform: scaleX(0); }
     .demo:not(.live) .demo-bar { display: none; }
@@ -249,11 +257,11 @@
     </div>
   </div></header>
 
-  <section class="demo" id="demo" aria-label="Scroll demo: Hermes Studio turning a talk into a short">
+  <section class="demo" id="demo" aria-label="Demo: Hermes Studio turning a talk into a short">
     <div class="demo-pin">
       <div class="w demo-grid">
         <div class="demo-copy">
-          <p class="kicker">Scroll to run it</p>
+          <p class="kicker">Plays on its own · sound at the take</p>
           <h2 class="display">Watch it<br><span class="amber">work.</span></h2>
           <ol class="demo-steps">
             <li class="on"><b>01</b><h3>Drop</h3><p>A file or a link. Studio probes it first: length, shape, live or not.</p></li>
@@ -274,7 +282,7 @@
             <div class="tx"></div>
             <div class="cap"></div>
             <div class="take">
-              <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted loop playsinline preload="none"></video><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
+              <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted playsinline preload="metadata"></video><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
               <div class="files">
                 <p class="kicker" style="margin-bottom:.5rem">Named from its own words</p>
                 <p class="ttl">Sometimes the opportunities I've gotten</p>
@@ -290,6 +298,7 @@
             <div class="wave"></div>
             <div class="ph"></div>
           </div>
+          <div class="demo-ctl" aria-label="Demo controls"><button type="button" data-a="pp">Pause</button><button type="button" data-a="replay">Replay</button><button type="button" data-a="skip">Skip to take</button></div>
         </div>
       </div>
       <div class="demo-bar"><i></i></div>
@@ -406,7 +415,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
   <script>
     const io = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { rootMargin: "0px 0px -8% 0px" });
     document.querySelectorAll(".reveal").forEach(el => io.observe(el));
-    // Scroll demo — every frame is a pure function of scroll progress, so it scrubs both ways.
+    // Demo — plays itself 01 -> 07 when in view (each frame is a pure function of progress p);
+    // at the take the real short plays with sound when the browser allows it, muted + "Tap for sound" when not.
     (() => {
       const sec = document.getElementById("demo");
       if (!sec) return;
@@ -474,17 +484,9 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         const n = q("[data-words]"); if (n) n.textContent = `${W.length} words`;
       }
 
-      function progress() {
-        if (reduce) return 0.7;
-        const r = sec.getBoundingClientRect(), span = r.height - innerHeight;
-        return span > 0 ? clamp(-r.top / span) : 0;
-      }
-
-      function draw() {
-        const p = progress();
+      function draw(p) {
         const step = STEPS.reduce((k, a, i) => (p >= a ? i : k), 0);
         el.steps.forEach((li, i) => li.classList.toggle("on", reduce || i === step));
-        el.bar.style.transform = `scaleX(${p})`;
         el.lbl.textContent = LBL[step];
 
         // 01 drop
@@ -560,12 +562,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         // 07 take
         const tk = seg(p, .88, .97);
         el.take.style.opacity = reduce ? "" : ease(seg(tk, 0, .35)).toFixed(3);
-        const showing = !reduce && tk > .25;
-        el.take.classList.toggle("on", showing);
-        if (el.vid) {
-          if (showing && el.vid.paused) { el.vid.preload = "auto"; el.vid.play().catch(() => {}); }
-          else if (!showing && !el.vid.paused) { el.vid.pause(); }
-        }
+        el.take.classList.toggle("on", !reduce && tk > .25);
         el.rows.forEach((r, i) => {
           if (reduce) { r.style.opacity = r.style.transform = ""; return; }
           const t = ease(seg(tk, .2 + i * .15, .45 + i * .15));
@@ -573,12 +570,105 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         });
       }
 
-      let ticking = false;
-      const kick = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; draw(); }); } };
-      addEventListener("scroll", kick, { passive: true });
-      addEventListener("resize", kick);
-      fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); draw(); }).catch(draw);
-      draw();
+      // ---- timeline: seconds per step (01..06), then the take card fades in and the short plays
+      const DURS = [2.2, 4.4, 3.2, 3.4, 4.4, 3.0, 1.4];
+      const ENDS = [...STEPS.slice(1), 1];
+      const T = DURS.reduce((a, d, i) => (a.push(a[i] + d), a), [0]);   // T[i] = start of step i
+      const TAKE_AT = T[6] + 0.35;
+      const pAt = (t) => {
+        t = clamp(t, 0, T[7]);
+        let i = 0; while (i < 6 && t >= T[i + 1]) i++;
+        return STEPS[i] + (ENDS[i] - STEPS[i]) * clamp((t - T[i]) / DURS[i]);
+      };
+      const v = el.vid, ctl = (a) => sec.querySelector(`.demo-ctl [data-a="${a}"]`);
+      let t = 0, playing = false, userPaused = false, takeOn = false, ended = false, userMuted = false, vidDur = 15.1, raf = 0, last = 0;
+      if (v) v.addEventListener("loadedmetadata", () => { if (isFinite(v.duration)) vidDur = v.duration; });
+
+      function syncSnd() {
+        if (!el.snd || !v) return;
+        el.snd.textContent = v.muted ? (el.snd.classList.contains("nudge") ? "Tap for sound" : "Sound on") : "Sound off";
+        el.snd.setAttribute("aria-pressed", String(!v.muted));
+      }
+      function nudge(on) { if (el.snd) { el.snd.classList.toggle("nudge", on); syncSnd(); } }
+      function playTake() {
+        if (!v) return;
+        v.muted = userMuted;
+        v.play().then(syncSnd).catch(() => {           // browsers block sound until the visitor has clicked or tapped
+          v.muted = true; nudge(!userMuted);
+          v.play().catch(() => {});
+        });
+      }
+      function startTake() { takeOn = true; ended = false; if (v) { v.preload = "auto"; v.currentTime = 0; playTake(); } }
+      function stopTake() { takeOn = false; ended = false; if (v) { v.pause(); v.currentTime = 0; } nudge(false); }
+
+      function render() {
+        draw(reduce ? .7 : pAt(t));
+        if (reduce) return;
+        if (!takeOn && t >= TAKE_AT && playing) startTake();
+        const vt = takeOn && v ? Math.min(v.currentTime, vidDur) : 0;
+        el.bar.style.transform = `scaleX(${((Math.min(t, T[6]) + vt) / (T[6] + vidDur)).toFixed(4)})`;
+        if (takeOn) el.clock.textContent = `${mmss(vt)} / ${mmss(vidDur)} · take`;
+        const pp = ctl("pp"); if (pp) pp.textContent = ended ? "Replay" : playing ? "Pause" : "Play";
+      }
+      function loop(now) {
+        raf = 0; if (!playing) return;
+        t = Math.min(T[7], t + Math.min(.1, (now - last) / 1000)); last = now;
+        render(); raf = requestAnimationFrame(loop);
+      }
+      function play() {
+        if (reduce || ended) return;
+        if (v && v.preload !== "auto") { v.preload = "auto"; v.load(); }   // buffer the take while 01-06 run
+        playing = true; last = performance.now();
+        if (takeOn && v && v.paused) playTake();
+        if (!raf) raf = requestAnimationFrame(loop);
+        render();
+      }
+      function pause() { playing = false; if (takeOn && v) v.pause(); render(); }
+      function jump(i) {                                  // 0-based step; 6 = take
+        stopTake(); t = T[i]; userPaused = false;
+        if (i === 6) { t = TAKE_AT; startTake(); }
+        play();
+      }
+      if (v) v.addEventListener("ended", () => {        // after the take: loop it quietly, offer a replay
+        ended = true; playing = false; v.muted = true; v.loop = true; v.play().catch(() => {}); nudge(false); render();
+      });
+      if (el.snd && v) el.snd.addEventListener("click", () => {
+        const wasMuted = v.muted;
+        userMuted = !wasMuted; v.muted = !wasMuted; nudge(false);
+        if (wasMuted && ended) { ended = false; v.loop = false; v.currentTime = 0; playing = true; last = performance.now(); if (!raf) raf = requestAnimationFrame(loop); }
+        if (wasMuted && v.paused) v.play().catch(() => {});
+        syncSnd(); render();
+      });
+      // the first click or tap anywhere counts as permission: turn the take's sound on if it's playing muted
+      const unlock = (e) => {
+        if (e.target.closest && e.target.closest(".snd")) return;
+        if (takeOn && !ended && v && v.muted && !userMuted) { v.muted = false; nudge(false); }
+      };
+      addEventListener("pointerdown", unlock, true); addEventListener("keydown", unlock, true);
+
+      if (!reduce) {
+        el.steps.forEach((li, i) => {
+          li.tabIndex = 0; li.setAttribute("role", "button"); li.setAttribute("aria-label", `Jump to step ${i + 1}`);
+          li.addEventListener("click", () => jump(i));
+          li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(i); } });
+        });
+        const on = (a, f) => { const b = ctl(a); if (b) b.addEventListener("click", f); };
+        on("pp", () => { if (ended) { jump(0); } else if (playing) { userPaused = true; pause(); } else { userPaused = false; play(); } });
+        on("replay", () => jump(0));
+        on("skip", () => jump(6));
+        document.querySelectorAll('a[href="#demo"]').forEach((a) => a.addEventListener("click", () => jump(0)));
+        // play only while at least half of it is on screen; pause when they scroll away or switch tabs
+        let seen = false;
+        new IntersectionObserver(([e]) => {
+          const vis = e.intersectionRect.height / Math.max(1, Math.min(e.boundingClientRect.height, innerHeight));
+          if (vis >= .5) { seen = true; if (!userPaused && !playing) play(); }
+          else if (seen && playing) pause();
+        }, { threshold: [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1] }).observe(sec);
+        document.addEventListener("visibilitychange", () => { if (document.hidden && playing) pause(); });
+      }
+      addEventListener("resize", render);
+      fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); render(); }).catch(render);
+      render();
     })();
   </script>
 </body>
