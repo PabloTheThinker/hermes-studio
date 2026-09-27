@@ -150,9 +150,9 @@
     .screen .src { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; will-change: clip-path, transform; }
     .chip { position: absolute; left: 3%; top: 5%; display: flex; gap: .7rem; align-items: center; background: rgba(11,11,12,.88); border: 1px solid var(--line-2); padding: .45rem .75rem; font: 500 12px var(--mono); color: var(--ink); }
     .chip .ok { color: var(--amber); }
-    .facebox { position: absolute; left: 32.2%; top: 11%; width: 21%; height: 48%; border: 2px solid var(--amber); opacity: 0; }
+    .facebox { position: absolute; left: 47.2%; top: 19%; width: 19%; height: 45%; border: 2px solid var(--amber); opacity: 0; }
     .facebox span, .guide span { position: absolute; left: -2px; top: -1.7em; background: var(--amber); color: var(--amber-ink); font: 500 11px var(--mono); padding: .15em .45em; white-space: nowrap; }
-    .guide { position: absolute; top: 0; bottom: 0; left: 26.9%; width: 31.64%; border: 2px dashed var(--amber); opacity: 0; }
+    .guide { position: absolute; top: 0; bottom: 0; left: 40.88%; width: 31.64%; border: 2px dashed var(--amber); opacity: 0; }
     .guide span { top: .5em; left: .5em; }
     .tx { position: absolute; right: 3%; top: 6%; bottom: 6%; width: 42%; background: rgba(11,11,12,.9); border-left: 2px solid var(--amber); padding: .9rem 1rem; font: 13px/1.55 var(--mono); color: var(--dim); overflow: hidden; opacity: 0; display: flex; flex-direction: column; justify-content: flex-end; }
     .tx em { font-style: normal; color: var(--ink); }
@@ -161,6 +161,16 @@
     .cap .k { color: var(--amber); }
     .take { position: absolute; inset: 0; background: rgba(11,11,12,.95); display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 100%); gap: 5%; padding: 4.5% 5%; opacity: 0; pointer-events: none; }
     .take img { height: 100%; width: auto; max-width: none; aspect-ratio: 9 / 16; object-fit: cover; border: 1px solid var(--line-2); display: block; min-height: 0; }
+    .takev { position: relative; height: 100%; aspect-ratio: 9 / 16; min-height: 0; border: 1px solid var(--line-2); background: #000; }
+    .takev video { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .snd { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); background: rgba(11,11,12,.86); color: var(--ink); border: 1px solid var(--line-2); font: 500 11px var(--mono); padding: .4em .8em; cursor: pointer; white-space: nowrap; }
+    .snd:hover, .snd:focus-visible { border-color: var(--amber); color: var(--amber); outline: none; }
+    .snd[aria-pressed="true"] { color: var(--amber); }
+    .demo.live .take { pointer-events: none; }
+    .demo.live .take.on { pointer-events: auto; }
+    .demo.still .take { position: relative; opacity: 1; pointer-events: auto; margin-top: 1rem; height: min(70vh, 560px); }
+    .demo.still .take .fr { opacity: 1; transform: none; }
+    .ex video { width: 100%; display: block; border: 1px solid var(--line); background: #000; aspect-ratio: 9 / 16; object-fit: cover; }
     .take .files { align-self: center; }
     .take .ttl { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: clamp(16px, 1.9vw, 26px); line-height: .98; margin: 0 0 1rem; }
     .take .fr { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 0; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); opacity: 0; transform: translateY(8px); }
@@ -264,11 +274,11 @@
             <div class="tx"></div>
             <div class="cap"></div>
             <div class="take">
-              <img src="assets/ex-talk-out.jpg" alt="" loading="lazy">
+              <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted loop playsinline preload="none"></video><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
               <div class="files">
                 <p class="kicker" style="margin-bottom:.5rem">Named from its own words</p>
-                <p class="ttl">Most of us sought advice from each other</p>
-                <div class="fr"><b>clip_01.mp4</b><span>9:16 · 0:08 · −14 LUFS</span></div>
+                <p class="ttl">Sometimes the opportunities I've gotten</p>
+                <div class="fr"><b>clip_01.mp4</b><span>9:16 · 0:15 · −16 LUFS</span></div>
                 <div class="fr"><b>talk.srt · talk.vtt</b><span>word timings</span></div>
                 <div class="fr"><b>talk.txt</b><span data-words>190 words</span></div>
                 <div class="fr post"><b>Posted</b><span>Never. That's yours.</span></div>
@@ -309,9 +319,9 @@
       <figure class="reveal">
         <div class="pair">
           <div><img src="assets/ex-talk-src.jpg" alt="Wide 16:9 interview frame of a NASA engineer" loading="lazy"><span class="tag">Source · 16:9</span></div>
-          <div><img src="assets/ex-talk-out.jpg" alt="Vertical 9:16 clip cropped to the speaker with captions" loading="lazy"><span class="tag"><b>Auto → Speaker</b></span></div>
+          <div><video src="assets/demo-short.mp4" poster="assets/ex-talk-out.jpg" controls muted playsinline preload="none" aria-label="The 15-second vertical short Hermes Studio rendered from this talk"></video><span class="tag"><b>Auto → Speaker</b> · real output, press play</span></div>
         </div>
-        <figcaption><h3>Talking head</h3><p>Face found, crop locked on it for the whole clip. Word-by-word captions sit clear of the app buttons. Audio cleaned and levelled to -14 LUFS.</p></figcaption>
+        <figcaption><h3>Talking head</h3><p>Face found, crop locked on it for the whole clip. Word-by-word captions sit clear of the app buttons. Audio cleaned and levelled. That video is Studio's own render, untouched.</p></figcaption>
       </figure>
       <figure class="reveal">
         <div class="pair three">
@@ -328,7 +338,7 @@
       <div><b>Captions</b><h3>Six styles · four spots</h3><p>Word-by-word highlight, your keywords in colour, fix any misheard word.</p></div>
       <div><b>Edit after</b><h3>Re-cut any clip</h3><p>Move in and out, change the look, re-render. The old take waits in Dropped.</p></div>
     </div>
-    <p class="credit reveal">Example footage: <a href="https://commons.wikimedia.org/wiki/File:Mamta_Patel_Nagaraja.ogv">“Mamta Patel Nagaraja”</a>, NASA, public domain via Wikimedia Commons. The stream example lays that clip over a Hermes Studio screen recording.</p>
+    <p class="credit reveal">Example footage: <a href="https://commons.wikimedia.org/wiki/File:Mamta_Patel_Nagaraja.ogv">“Mamta Patel Nagaraja”</a> (NASA MissionSTEM, 2012), public domain via Wikimedia Commons. The demo uses 3:32–4:32, cropped so the NASA insignia is out of frame. The stream example lays that clip over a Hermes Studio screen recording. Courtesy NASA; no endorsement by NASA or Ms. Patel Nagaraja is implied.</p>
   </div></section>
 
   <section class="ch" id="how"><div class="w">
@@ -408,12 +418,20 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       const seg = (p, a, b) => clamp((p - a) / (b - a));
       const ease = (t) => 1 - Math.pow(1 - t, 3);
       const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
-      const DUR = 60, FACE = 0.427, CROPW = 0.3164, CLIP = [12.34, 20.2];
+      const DUR = 60, FACE = 0.567, CROPW = 0.3164, CLIP = [25.52, 40.62];
       const STEPS = [0, .12, .30, .44, .60, .76, .88];
       const LBL = ["source · probe", "listening · local whisper", "scoring windows · hook, flow, value", "framing · face lock", "captions · word timing", "tighten · pauses and filler", "take"];
       const el = { steps: qa(".demo-steps li"), bar: q(".demo-bar i"), screen: q(".screen"), img: q(".src"), chip: q(".chip"), ok: q(".chip .ok"),
         tx: q(".tx"), face: q(".facebox"), guide: q(".guide"), cap: q(".cap"), take: q(".take"), rows: qa(".take .fr"),
-        lbl: q(".track .lbl"), clock: q(".track .clock"), wave: q(".wave"), ph: q(".ph"), track: q(".track") };
+        lbl: q(".track .lbl"), clock: q(".track .clock"), wave: q(".wave"), ph: q(".ph"), track: q(".track"),
+        vid: q(".takev video"), snd: q(".snd") };
+      if (el.snd && el.vid) el.snd.addEventListener("click", () => {
+        el.vid.muted = !el.vid.muted;
+        el.snd.setAttribute("aria-pressed", String(!el.vid.muted));
+        el.snd.textContent = el.vid.muted ? "Sound on" : "Sound off";
+        if (!el.vid.muted) { el.vid.currentTime = 0; el.vid.play().catch(() => {}); }
+      });
+      if (reduce && el.vid) el.vid.controls = true;
       let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [];
 
       function build() {
@@ -436,8 +454,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         }
         wins = wins.map(([a, b]) => {
           const d = document.createElement("div");
-          d.className = "win"; d.style.left = (100 * a / DUR) + "%"; d.style.width = (100 * (b - a) / DUR) + "%";
-          if (Math.abs(a - CLIP[0]) < 0.05) { d.classList.add("pick-me"); d.dataset.l = `picked ${mmss(a)}–${mmss(b)}`; }
+          if (Math.abs(a - CLIP[0]) < 0.05) { b = CLIP[1]; d.classList.add("pick-me"); d.dataset.l = `picked ${mmss(a)}–${mmss(b)}`; }
+          d.className += " win"; d.style.left = (100 * a / DUR) + "%"; d.style.width = (100 * (b - a) / DUR) + "%";
           el.track.appendChild(d); return d;
         });
         // what tighten removes: pauses over 0.45 s and filler words, straight from the timings
@@ -541,8 +559,15 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
 
         // 07 take
         const tk = seg(p, .88, .97);
-        el.take.style.opacity = ease(seg(tk, 0, .35)).toFixed(3);
+        el.take.style.opacity = reduce ? "" : ease(seg(tk, 0, .35)).toFixed(3);
+        const showing = !reduce && tk > .25;
+        el.take.classList.toggle("on", showing);
+        if (el.vid) {
+          if (showing && el.vid.paused) { el.vid.preload = "auto"; el.vid.play().catch(() => {}); }
+          else if (!showing && !el.vid.paused) { el.vid.pause(); }
+        }
         el.rows.forEach((r, i) => {
+          if (reduce) { r.style.opacity = r.style.transform = ""; return; }
           const t = ease(seg(tk, .2 + i * .15, .45 + i * .15));
           r.style.opacity = t.toFixed(3); r.style.transform = `translateY(${(8 * (1 - t)).toFixed(1)}px)`;
         });
