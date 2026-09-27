@@ -122,8 +122,15 @@ def choose_layout(face, src_w: int, src_h: int, out_w: int, out_h: int) -> tuple
     return "fill", "speaker in frame"
 
 
-def post_chain(look: Look, clip_dur: float, out_h: int) -> str:
-    """Filter + progress bar, applied after framing and before captions."""
+def post_chain(look: Look, clip_dur: float, out_h: int, out_w: int = 1080) -> str:
+    """Filter + progress bar, applied after framing and before captions.
+
+    Returns a fragment that continues a filter chain and ends mid-chain, so callers can
+    append ``,next_filter``. The bar is an amber strip slid in from the left with
+    ``overlay`` (its x is re-evaluated per frame). Do not use ``drawbox`` for this:
+    in drawbox ``t`` is the box *thickness*, not time, so a ``w='iw*t/dur'`` bar is
+    drawn full width from the first frame.
+    """
     parts: list[str] = []
     f = FILTERS.get(look.filter, "")
     if f:
@@ -131,7 +138,8 @@ def post_chain(look: Look, clip_dur: float, out_h: int) -> str:
     if look.progress and clip_dur > 0:
         bar = max(6, int(out_h * 0.005) // 2 * 2)
         parts.append(
-            f"drawbox=x=0:y=ih-{bar}:w='iw*min(t/{clip_dur:.3f}\\,1)':h={bar}:color={PROGRESS_COLOR}@0.95:t=fill"
+            f"null[hcpm];color=c={PROGRESS_COLOR}:s={out_w}x{bar}:r=30[hcpb];"
+            f"[hcpm][hcpb]overlay=x='-w+w*min(t/{clip_dur:.3f}\\,1)':y=H-h:eval=frame:shortest=1"
         )
     return ",".join(parts)
 
