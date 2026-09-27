@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
 import os
 import queue
 import threading
@@ -176,42 +175,54 @@ def check_src(src: str) -> str | None:
     return None
 
 
+# Only these types are ever served, keyed by suffix. Fixed strings, never derived from input.
+MEDIA_TYPES = {
+    ".mp4": "video/mp4",
+    ".jpg": "image/jpeg",
+    ".json": "application/json; charset=utf-8",
+    ".srt": "text/plain; charset=utf-8",
+    ".vtt": "text/vtt; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def _inside(base: Path, name: str) -> str | None:
+    """base/name as a normalised string if it stays inside base, else None."""
+    root = os.path.normpath(str(base))
+    full = os.path.normpath(os.path.join(root, name))
+    real = os.path.realpath(full)
+    prefix = os.path.realpath(root).rstrip(os.sep) + os.sep
+    if not real.startswith(prefix):
+        return None
+    return real
+
+
 def _safe_media(job_id: str, name: str) -> Path | None:
     if not valid_id(job_id) or not valid_file(name):
         return None
-    root = library_root().resolve()
+    if os.path.splitext(name)[1].lower() not in MEDIA_TYPES:
+        return None
     d = job_dir(job_id)
     if not d:
         return None
-    path = (d / name).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError:
+    real = _inside(d, name)
+    lib = os.path.realpath(str(library_root())).rstrip(os.sep) + os.sep
+    if not real or not real.startswith(lib) or not os.path.isfile(real):
         return None
-    if not path.is_file():
-        return None
-    if not name.endswith((".mp4", ".jpg", ".json", ".srt", ".vtt", ".txt")):
-        return None
-    return path
+    return Path(real)
 
 
 def _safe_trash(job_id: str, name: str) -> Path | None:
-    if not valid_id(job_id) or not valid_file(name):
+    if not valid_id(job_id) or not valid_file(name) or not name.endswith(".mp4"):
         return None
-    root = library_root().resolve()
     d = job_dir(job_id)
     if not d:
         return None
-    trash = (d / ".trash").resolve()
-    path = (trash / name).resolve()
-    try:
-        path.relative_to(trash)
-        trash.relative_to(root)
-    except ValueError:
+    real = _inside(d / ".trash", name)
+    lib = os.path.realpath(str(library_root())).rstrip(os.sep) + os.sep
+    if not real or not real.startswith(lib) or not os.path.isfile(real):
         return None
-    if not path.is_file() or not name.endswith(".mp4"):
-        return None
-    return path
+    return Path(real)
 
 
 class StudioHandler(BaseHTTPRequestHandler):
@@ -266,7 +277,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             if len(parts) == 3:
                 media = _safe_media(parts[1], parts[2])
                 if media:
-                    ctype = mimetypes.guess_type(str(media))[0] or "application/octet-stream"
+                    ctype = MEDIA_TYPES[media.suffix.lower()]
                     size = media.stat().st_size
                     self.send_response(200)
                     self.send_header("Content-Type", ctype)
@@ -386,19 +397,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             if not media:
                 self.send_error(404)
                 return
-            ctype = mimetypes.guess_type(str(media))[0] or "application/octet-stream"
-            return self._file(media, ctype)
-        # static from ui/
-        rel = path.lstrip("/")
-        candidate = (UI_DIR / rel).resolve()
-        try:
-            candidate.relative_to(UI_DIR.resolve())
-        except ValueError:
-            self.send_error(404)
-            return
-        if candidate.is_file():
-            ctype = mimetypes.guess_type(str(candidate))[0] or "application/octet-stream"
-            return self._file(candidate, ctype)
+            return self._file(media, MEDIA_TYPES[media.suffix.lower()])
+        # The desk is a single page; nothing else under ui/ is served.
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802

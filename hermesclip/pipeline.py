@@ -884,7 +884,12 @@ def restyle_clip(
     name = (title or clip.get("title") or "").strip()
     width, height = canvas(job.aspect if job.aspect != "source" else "9:16")
 
-    dest = Path(job.dir) / file
+    # Re-derive the path from the checked name and confirm it stays in the job folder.
+    job_root = os.path.realpath(job.dir).rstrip(os.sep) + os.sep
+    dest_s = os.path.realpath(os.path.join(job.dir, os.path.basename(file)))
+    if not dest_s.startswith(job_root):
+        return {"ok": False, "error": "bad clip name"}
+    dest = Path(dest_s)
     tmp = dest.with_name(dest.stem + ".restyle.mp4")
     plan = ClipPlan(s1, e1, name, list(clip.get("emphasis") or []), float(clip.get("score") or 0.5))
     pacing = job.pacing if job.mode == "clip" else ("tight" if job.mode == "tighten" else "natural")
