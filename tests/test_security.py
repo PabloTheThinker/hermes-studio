@@ -122,8 +122,10 @@ def test_job_ids_and_clip_names_are_slugs():
         assert not safe_clip_file(bad), bad
 
 
-def test_local_sources_must_be_media(tmp_path):
+def test_local_sources_must_be_media(tmp_path, monkeypatch):
     from hermesclip.download import local_source
+
+    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(tmp_path))
 
     vid = tmp_path / "talk.mp4"
     vid.write_bytes(b"x")
@@ -149,3 +151,33 @@ def test_platform_hosts_are_exact():
     assert kind_of("https://m.twitch.tv/x") == "twitch"
     assert kind_of("https://evil-youtube.com/x") == "url"
     assert kind_of("https://youtube.com.evil.net/x") == "url"
+
+
+def test_local_sources_must_live_under_a_media_root(tmp_path, monkeypatch):
+    import os
+
+    from hermesclip.download import local_source
+
+    monkeypatch.delenv("HERMESCLIP_MEDIA_ROOTS", raising=False)
+    outside = tmp_path / "clip.mp4"
+    outside.write_bytes(b"x")
+    if str(tmp_path).startswith(os.path.expanduser("~")):
+        return  # tmp inside home on this machine; covered by the symlink case below
+    with pytest.raises(ValueError):
+        local_source(str(outside))
+
+
+def test_symlink_out_of_roots_is_refused(tmp_path, monkeypatch):
+    from hermesclip.download import local_source
+
+    root = tmp_path / "media"
+    root.mkdir()
+    secret = tmp_path / "secret.mp4"
+    secret.write_bytes(b"x")
+    (root / "link.mp4").symlink_to(secret)
+    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(root))
+    monkeypatch.setattr("hermesclip.download.Path.home", staticmethod(lambda: root))
+    import hermesclip.pipeline as pl
+    monkeypatch.setattr(pl, "library_root", lambda: root)
+    with pytest.raises(ValueError):
+        local_source(str(root / "link.mp4"))

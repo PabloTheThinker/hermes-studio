@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,14 +17,36 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v"}
 MEDIA_EXTS = VIDEO_EXTS | {".avi", ".flv", ".ogv", ".mpg", ".mpeg", ".3gp", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac"}
 
 
+def media_roots() -> list[str]:
+    """Folders local sources may come from: home, mounted drives, the library, plus
+    HERMESCLIP_MEDIA_ROOTS (os.pathsep-separated). /etc, /proc, /var etc. are never roots."""
+    from hermesclip.pipeline import library_root
+
+    roots = [str(Path.home()), "/mnt", "/media", "/srv", str(library_root())]
+    roots += [r for r in os.environ.get("HERMESCLIP_MEDIA_ROOTS", "").split(os.pathsep) if r]
+    return [os.path.normpath(os.path.expanduser(r)) for r in roots]
+
+
+def _under(path: str, roots: list[str]) -> bool:
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+
 def local_source(src: str) -> Path:
-    """Resolve a local source path; only existing media files are allowed."""
-    p = Path(src).expanduser().resolve()
-    if p.suffix.lower() not in MEDIA_EXTS:
-        raise ValueError(f"not a video or audio file: {p.name}")
-    if not p.is_file():
-        raise FileNotFoundError(p.name)
-    return p
+    """Resolve a local source path. Only existing video/audio files under a media root
+    are allowed; the check runs on the normalised string before the file system is touched,
+    and again after symlinks are resolved."""
+    roots = media_roots()
+    norm = os.path.normpath(os.path.abspath(os.path.expanduser(str(src))))
+    if not _under(norm, roots):
+        raise ValueError("local files must be in your home folder, a mounted drive or the library")
+    if os.path.splitext(norm)[1].lower() not in MEDIA_EXTS:
+        raise ValueError(f"not a video or audio file: {os.path.basename(norm)}")
+    real = os.path.realpath(norm)
+    if not _under(real, roots):
+        raise ValueError("link points outside your media folders")
+    if not os.path.isfile(real):
+        raise FileNotFoundError(os.path.basename(norm))
+    return Path(real)
 
 
 def _host_is(host: str, domain: str) -> bool:
