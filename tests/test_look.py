@@ -45,7 +45,39 @@ def test_filters_and_progress():
         assert (chain == "") == (name == "none")
     assert "hue=s=0" in look.FILTERS["bw"]
     bar = look.post_chain(look.make_look({"progress": True}), 12.0, 1920)
-    assert "drawbox" in bar and "0xFFC83D" in bar
+    assert "0xFFC83D" in bar and "overlay=" in bar
+    # drawbox's `t` is thickness, not time: a drawbox bar would be full width at frame 1
+    assert "drawbox" not in bar and "t/12.000" in bar
+
+
+def test_progress_bar_grows_with_time(tmp_path):
+    """Render 2 s of black with the bar and measure it: short early, full at the end."""
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not installed")
+    post = look.post_chain(look.make_look({"progress": True}), 2.0, 320, 180)
+    out = tmp_path / "bar.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=180x320:r=30:d=2",
+         "-filter_complex", f"[0:v]{post},format=gray[o]", "-map", "[o]", str(out)],
+        check=True,
+    )
+
+    def lit(ts: float) -> float:
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-ss", str(ts), "-i", str(out), "-frames:v", "1",
+             "-vf", "crop=180:2:0:316", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        return sum(1 for b in raw if b > 60) / max(1, len(raw))
+
+    early, late = lit(0.3), lit(1.9)
+    assert early < 0.3, early
+    assert late > 0.85, late
 
 
 def test_caption_spot_clears_platform_ui():

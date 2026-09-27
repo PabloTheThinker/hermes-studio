@@ -73,7 +73,7 @@ def frame_filters(
     from hermesclip.look import Look, post_chain
 
     lk = look or Look(layout=layout)
-    post = post_chain(lk, clip_dur, out_h)
+    post = post_chain(lk, clip_dur, out_h, out_w)
     tail = (post + "," if post else "") + f"setsar=1,subtitles='{ass_f}'[{vout}]"
     scale = "flags=lanczos"
     if layout == "split":
