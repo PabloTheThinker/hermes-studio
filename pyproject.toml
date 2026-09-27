@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-reframe = ["opencv-python-headless>=4.8,<5"]
+reframe = ["opencv-python-headless>=4.8,<6"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
