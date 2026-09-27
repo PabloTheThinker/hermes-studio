@@ -109,3 +109,75 @@ def test_media_path_traversal_is_refused():
     assert studio._safe_media("x", "../../etc/passwd") is None
     assert studio._safe_media("../x", "clip.mp4") is None
     assert studio._safe_media("x", ".hidden.mp4") is None
+
+
+def test_job_ids_and_clip_names_are_slugs():
+    from hermesclip.pipeline import safe_clip_file, safe_job_id
+
+    assert safe_job_id("3da7b951a6b8") and safe_job_id("abc_12-x")
+    for bad in ("", "../x", "a/b", ".hidden", "*", "a[1]", "x" * 80):
+        assert not safe_job_id(bad), bad
+    assert safe_clip_file("clip-01.mp4") and safe_clip_file("Why Mars (part 2).mp4")
+    for bad in ("", "../clip.mp4", "a/b.mp4", ".x.mp4", "clip..mp4"):
+        assert not safe_clip_file(bad), bad
+
+
+def test_local_sources_must_be_media(tmp_path, monkeypatch):
+    from hermesclip.download import local_source
+
+    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(tmp_path))
+
+    vid = tmp_path / "talk.mp4"
+    vid.write_bytes(b"x")
+    assert local_source(str(vid)) == vid.resolve()
+    key = tmp_path / "id_rsa"
+    key.write_text("secret")
+    for bad in (str(key), "/etc/passwd", str(tmp_path / "missing.mp4")):
+        with pytest.raises((ValueError, FileNotFoundError)):
+            local_source(bad)
+
+
+def test_desk_rejects_non_media_sources(tmp_path):
+    assert studio.check_src("https://www.youtube.com/watch?v=x") is None
+    assert studio.check_src("/etc/passwd")
+    assert studio.check_src("file:///etc/passwd")
+    assert studio.check_src("ftp://x/y.mp4")
+
+
+def test_platform_hosts_are_exact():
+    from hermesclip.download import kind_of
+
+    assert kind_of("https://www.youtube.com/watch?v=x") == "youtube"
+    assert kind_of("https://m.twitch.tv/x") == "twitch"
+    assert kind_of("https://evil-youtube.com/x") == "url"
+    assert kind_of("https://youtube.com.evil.net/x") == "url"
+
+
+def test_local_sources_must_live_under_a_media_root(tmp_path, monkeypatch):
+    import os
+
+    from hermesclip.download import local_source
+
+    monkeypatch.delenv("HERMESCLIP_MEDIA_ROOTS", raising=False)
+    outside = tmp_path / "clip.mp4"
+    outside.write_bytes(b"x")
+    if str(tmp_path).startswith(os.path.expanduser("~")):
+        return  # tmp inside home on this machine; covered by the symlink case below
+    with pytest.raises(ValueError):
+        local_source(str(outside))
+
+
+def test_symlink_out_of_roots_is_refused(tmp_path, monkeypatch):
+    from hermesclip.download import local_source
+
+    root = tmp_path / "media"
+    root.mkdir()
+    secret = tmp_path / "secret.mp4"
+    secret.write_bytes(b"x")
+    (root / "link.mp4").symlink_to(secret)
+    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(root))
+    monkeypatch.setattr("hermesclip.download.Path.home", staticmethod(lambda: root))
+    import hermesclip.pipeline as pl
+    monkeypatch.setattr(pl, "library_root", lambda: root)
+    with pytest.raises(ValueError):
+        local_source(str(root / "link.mp4"))

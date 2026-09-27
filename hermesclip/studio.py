@@ -20,6 +20,8 @@ from hermesclip.pipeline import (
     load_job,
     new_job,
     organize_library,
+    safe_clip_file,
+    safe_job_id,
 )
 
 UI_DIR = Path(__file__).resolve().parent / "ui"
@@ -150,8 +152,32 @@ def _read_json(handler: BaseHTTPRequestHandler) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def valid_id(job_id: str) -> bool:
+    return safe_job_id(job_id)
+
+
+def valid_file(name: str) -> bool:
+    return safe_clip_file(name)
+
+
+def check_src(src: str) -> str | None:
+    """None if the source is acceptable, else a short reason. URLs: http(s) only.
+    Local paths: existing video/audio files only (never a key file or /etc/passwd)."""
+    from hermesclip.download import is_url, local_source
+
+    if is_url(src):
+        return None if urlparse(src).hostname else "bad URL"
+    if "://" in src:
+        return "only http(s) links or local video files"
+    try:
+        local_source(src)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        return str(exc)[:200] or "not a video file"
+    return None
+
+
 def _safe_media(job_id: str, name: str) -> Path | None:
-    if "/" in name or "\\" in name or name.startswith("."):
+    if not valid_id(job_id) or not valid_file(name):
         return None
     root = library_root().resolve()
     d = job_dir(job_id)
@@ -170,7 +196,7 @@ def _safe_media(job_id: str, name: str) -> Path | None:
 
 
 def _safe_trash(job_id: str, name: str) -> Path | None:
-    if "/" in name or "\\" in name or name.startswith("."):
+    if not valid_id(job_id) or not valid_file(name):
         return None
     root = library_root().resolve()
     d = job_dir(job_id)
@@ -265,6 +291,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             src = (qs.get("src") or [""])[0]
             if not src:
                 return _json(self, 400, {"ok": False, "error": "src required"})
+            bad = check_src(src)
+            if bad:
+                return _json(self, 400, {"ok": False, "error": bad})
             try:
                 info = probe(src)
                 return _json(
@@ -287,6 +316,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             src = (qs.get("src") or [""])[0]
             if not src:
                 return _json(self, 400, {"ok": False, "error": "src required"})
+            bad = check_src(src)
+            if bad:
+                return _json(self, 400, {"ok": False, "error": bad})
             try:
                 from hermesclip.recommend import recommend_for
 
@@ -385,6 +417,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             src = str(body.get("src") or "").strip()
             if not src:
                 return _json(self, 400, {"ok": False, "error": "src required"})
+            bad = check_src(src)
+            if bad:
+                return _json(self, 400, {"ok": False, "error": bad})
             rec = None
             if body.get("recommend"):
                 from hermesclip.recommend import recommend_for

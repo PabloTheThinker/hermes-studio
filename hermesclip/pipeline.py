@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import uuid
@@ -111,9 +112,23 @@ def _manifests() -> list[Path]:
     return [m for m in out if ".trash" not in m.parts]
 
 
+_JOB_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+_CLIP_FILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _.()\[\]-]{0,159}")
+
+
+def safe_job_id(job_id: str) -> bool:
+    """Job ids are short slugs. Anything else (paths, dots, glob chars) is refused."""
+    return bool(job_id) and _JOB_ID_RE.fullmatch(job_id) is not None
+
+
+def safe_clip_file(name: str) -> bool:
+    """Clip files are plain names inside the job folder: no separators, no '..'."""
+    return bool(name) and ".." not in name and _CLIP_FILE_RE.fullmatch(name) is not None
+
+
 def job_dir(job_id: str) -> Path | None:
     """Folder for a job id, wherever it lives in the library."""
-    if not job_id or "/" in job_id or "\\" in job_id or job_id.startswith("."):
+    if not safe_job_id(job_id):
         return None
     root = library_root()
     flat = root / job_id
@@ -827,6 +842,8 @@ def restyle_clip(
     from hermesclip.namer import clip_text
     from hermesclip.plan import ClipPlan, score_parts
 
+    if not safe_clip_file(file):
+        return {"ok": False, "error": "bad clip name"}
     job = load_job(job_id)
     if not job:
         return {"ok": False, "error": "job not found"}

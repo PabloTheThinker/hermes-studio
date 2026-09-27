@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,6 +12,42 @@ from urllib.parse import urlparse
 LIVE_DEFAULT_SEC = 20 * 60
 LIVE_MAX_SEC = 2 * 60 * 60
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v"}
+# Local sources the desk will open. Anything else (a key file, /etc/passwd) is refused
+# before ffmpeg or the prober ever sees it.
+MEDIA_EXTS = VIDEO_EXTS | {".avi", ".flv", ".ogv", ".mpg", ".mpeg", ".3gp", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac"}
+
+
+def media_roots() -> list[str]:
+    """Folders local sources may come from: home, mounted drives, the library, plus
+    HERMESCLIP_MEDIA_ROOTS (os.pathsep-separated). /etc, /proc, /var etc. are never roots."""
+    from hermesclip.pipeline import library_root
+
+    roots = [str(Path.home()), "/mnt", "/media", "/srv", str(library_root())]
+    roots += [r for r in os.environ.get("HERMESCLIP_MEDIA_ROOTS", "").split(os.pathsep) if r]
+    return [os.path.normpath(os.path.expanduser(r)) for r in roots]
+
+
+def local_source(src: str) -> Path:
+    """Resolve a local source path. Only existing video/audio files under a media root
+    are allowed; the check runs on the normalised string before the file system is touched,
+    and again after symlinks are resolved."""
+    norm = os.path.normpath(os.path.abspath(os.path.expanduser(str(src))))
+    if os.path.splitext(norm)[1].lower() not in MEDIA_EXTS:
+        raise ValueError(f"not a video or audio file: {os.path.basename(norm)}")
+    real = os.path.realpath(norm)
+    for root in media_roots():
+        prefix = root.rstrip(os.sep) + os.sep
+        # Both the path as typed and where its symlinks lead must be under the root.
+        if norm.startswith(prefix) and real.startswith(prefix):
+            if not os.path.isfile(real):
+                raise FileNotFoundError(os.path.basename(norm))
+            return Path(real)
+    raise ValueError("local files must be in your home folder, a mounted drive or the library")
+
+
+def _host_is(host: str, domain: str) -> bool:
+    """host is domain or a subdomain of it (not evil-domain.com)."""
+    return host == domain or host.endswith("." + domain)
 
 
 @dataclass
@@ -50,11 +87,11 @@ def kind_of(src: str) -> str:
     if not is_url(src):
         return "file"
     host = (urlparse(src).hostname or "").lower()
-    if host.endswith("youtube.com") or host == "youtu.be" or host.endswith("youtube-nocookie.com"):
+    if _host_is(host, "youtube.com") or host == "youtu.be" or _host_is(host, "youtube-nocookie.com"):
         return "youtube"
     if host in {"x.com", "twitter.com", "mobile.twitter.com", "www.x.com"}:
         return "x"
-    if "twitch.tv" in host:
+    if _host_is(host, "twitch.tv"):
         return "twitch"
     return "url"
 
@@ -62,9 +99,7 @@ def kind_of(src: str) -> str:
 def probe(src: str) -> SourceInfo:
     """Read title / live flag without downloading. Local files get a basename title."""
     if not is_url(src):
-        p = Path(src).expanduser().resolve()
-        if not p.is_file():
-            raise FileNotFoundError(p)
+        p = local_source(src)
         return SourceInfo(
             src=str(p),
             title=p.stem,
@@ -121,10 +156,7 @@ def fetch(
     the same clip pipeline runs. Past livestreams (was_live VODs) download whole.
     """
     if not is_url(src):
-        p = Path(src).expanduser().resolve()
-        if not p.is_file():
-            raise FileNotFoundError(p)
-        return p
+        return local_source(src)
 
     work.mkdir(parents=True, exist_ok=True)
     ytdlp = _ytdlp()
