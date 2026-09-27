@@ -109,3 +109,43 @@ def test_media_path_traversal_is_refused():
     assert studio._safe_media("x", "../../etc/passwd") is None
     assert studio._safe_media("../x", "clip.mp4") is None
     assert studio._safe_media("x", ".hidden.mp4") is None
+
+
+def test_job_ids_and_clip_names_are_slugs():
+    from hermesclip.pipeline import safe_clip_file, safe_job_id
+
+    assert safe_job_id("3da7b951a6b8") and safe_job_id("abc_12-x")
+    for bad in ("", "../x", "a/b", ".hidden", "*", "a[1]", "x" * 80):
+        assert not safe_job_id(bad), bad
+    assert safe_clip_file("clip-01.mp4") and safe_clip_file("Why Mars (part 2).mp4")
+    for bad in ("", "../clip.mp4", "a/b.mp4", ".x.mp4", "clip..mp4"):
+        assert not safe_clip_file(bad), bad
+
+
+def test_local_sources_must_be_media(tmp_path):
+    from hermesclip.download import local_source
+
+    vid = tmp_path / "talk.mp4"
+    vid.write_bytes(b"x")
+    assert local_source(str(vid)) == vid.resolve()
+    key = tmp_path / "id_rsa"
+    key.write_text("secret")
+    for bad in (str(key), "/etc/passwd", str(tmp_path / "missing.mp4")):
+        with pytest.raises((ValueError, FileNotFoundError)):
+            local_source(bad)
+
+
+def test_desk_rejects_non_media_sources(tmp_path):
+    assert studio.check_src("https://www.youtube.com/watch?v=x") is None
+    assert studio.check_src("/etc/passwd")
+    assert studio.check_src("file:///etc/passwd")
+    assert studio.check_src("ftp://x/y.mp4")
+
+
+def test_platform_hosts_are_exact():
+    from hermesclip.download import kind_of
+
+    assert kind_of("https://www.youtube.com/watch?v=x") == "youtube"
+    assert kind_of("https://m.twitch.tv/x") == "twitch"
+    assert kind_of("https://evil-youtube.com/x") == "url"
+    assert kind_of("https://youtube.com.evil.net/x") == "url"

@@ -11,6 +11,24 @@ from urllib.parse import urlparse
 LIVE_DEFAULT_SEC = 20 * 60
 LIVE_MAX_SEC = 2 * 60 * 60
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".ts", ".m4v"}
+# Local sources the desk will open. Anything else (a key file, /etc/passwd) is refused
+# before ffmpeg or the prober ever sees it.
+MEDIA_EXTS = VIDEO_EXTS | {".avi", ".flv", ".ogv", ".mpg", ".mpeg", ".3gp", ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac"}
+
+
+def local_source(src: str) -> Path:
+    """Resolve a local source path; only existing media files are allowed."""
+    p = Path(src).expanduser().resolve()
+    if p.suffix.lower() not in MEDIA_EXTS:
+        raise ValueError(f"not a video or audio file: {p.name}")
+    if not p.is_file():
+        raise FileNotFoundError(p.name)
+    return p
+
+
+def _host_is(host: str, domain: str) -> bool:
+    """host is domain or a subdomain of it (not evil-domain.com)."""
+    return host == domain or host.endswith("." + domain)
 
 
 @dataclass
@@ -50,11 +68,11 @@ def kind_of(src: str) -> str:
     if not is_url(src):
         return "file"
     host = (urlparse(src).hostname or "").lower()
-    if host.endswith("youtube.com") or host == "youtu.be" or host.endswith("youtube-nocookie.com"):
+    if _host_is(host, "youtube.com") or host == "youtu.be" or _host_is(host, "youtube-nocookie.com"):
         return "youtube"
     if host in {"x.com", "twitter.com", "mobile.twitter.com", "www.x.com"}:
         return "x"
-    if "twitch.tv" in host:
+    if _host_is(host, "twitch.tv"):
         return "twitch"
     return "url"
 
@@ -62,9 +80,7 @@ def kind_of(src: str) -> str:
 def probe(src: str) -> SourceInfo:
     """Read title / live flag without downloading. Local files get a basename title."""
     if not is_url(src):
-        p = Path(src).expanduser().resolve()
-        if not p.is_file():
-            raise FileNotFoundError(p)
+        p = local_source(src)
         return SourceInfo(
             src=str(p),
             title=p.stem,
@@ -121,10 +137,7 @@ def fetch(
     the same clip pipeline runs. Past livestreams (was_live VODs) download whole.
     """
     if not is_url(src):
-        p = Path(src).expanduser().resolve()
-        if not p.is_file():
-            raise FileNotFoundError(p)
-        return p
+        return local_source(src)
 
     work.mkdir(parents=True, exist_ok=True)
     ytdlp = _ytdlp()
