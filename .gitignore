@@ -10,3 +10,6 @@ site/index.pre-review.html
 site/index.schematic.html
 site/nous.html
 .cache/
+
+# the landing-page demo short is a deliberate site asset
+!site/assets/demo-short.mp4
