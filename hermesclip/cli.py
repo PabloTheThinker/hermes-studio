@@ -47,7 +47,8 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--out", default="./clips")
     cap.add_argument("--whisper", default="tiny")
     cap.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default="pop")
-    cap.add_argument("--layout", choices=["fit", "fill"], default="fit")
+    cap.add_argument("--layout", choices=["auto", "fit", "fill", "split"], default="fit")
+    _add_look_args(cap)
     cap.add_argument("--aspect", choices=["9:16", "16:9", "1:1", "4:5"], default="9:16")
     cap.add_argument("--no-hook", action="store_true")
 
@@ -68,7 +69,29 @@ def main(argv: list[str] | None = None) -> int:
     cop.add_argument("src", help="job directory, job id, or transcript.json")
     cop.add_argument("--clip-title", default="")
 
+    rsp = sub.add_parser("restyle", help="re-render one clip with a new look or new in/out points (old file goes to .trash)")
+    rsp.add_argument("job", help="library job id")
+    rsp.add_argument("file", help="clip file, e.g. clip-01.mp4")
+    rsp.add_argument("--layout", choices=["auto", "fit", "fill", "split"], default=None)
+    _add_look_args(rsp)
+    rsp.add_argument("--style", choices=["pop", "impact", "clean", "glow", "neon", "boxed"], default=None)
+    rsp.add_argument("--no-captions", action="store_true")
+    rsp.add_argument("--no-hook", action="store_true")
+    rsp.add_argument("--start", type=float, default=None, help="new start on the source, seconds")
+    rsp.add_argument("--end", type=float, default=None, help="new end on the source, seconds")
+    rsp.add_argument("--title", default="")
+
     args = p.parse_args(argv)
+    if args.cmd == "restyle":
+        from hermesclip.pipeline import restyle_clip
+
+        res = restyle_clip(
+            args.job, args.file, look=_look_from(args), style=args.style,
+            captions=False if args.no_captions else None, hook=False if args.no_hook else None,
+            start=args.start, end=args.end, fixes=_fixes_from(args), title=args.title or None,
+        )
+        print(json.dumps(res, indent=2))
+        return 0 if res.get("ok") else 1
     if args.cmd == "run":
         return _run(args)
     if args.cmd == "captions":
@@ -115,6 +138,39 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
+
+def _add_look_args(q: argparse.ArgumentParser, default_layout: str | None = "auto") -> None:
+    q.add_argument("--face", choices=["top", "bottom"], default=None, help="split: facecam band on top or bottom")
+    q.add_argument("--face-size", type=float, default=None, help="split: face band share of height, 20-60 (%%)")
+    q.add_argument("--face-box", default="", help="split: manual camera box x,y,w,h in %% of the source (e.g. 76,64,22,30)")
+    q.add_argument("--filter", default=None, choices=["none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"])
+    q.add_argument("--caption-pos", default=None, choices=["auto", "top", "middle", "bottom"])
+    q.add_argument("--audio", default=None, choices=["off", "clean"], help="clean = denoise + loudness to -14 LUFS")
+    q.add_argument("--progress", action="store_true", help="thin amber progress bar")
+    q.add_argument("--fix", action="append", default=[], help="word fix, e.g. --fix cloud=Claude (repeatable)")
+
+
+def _look_from(args: argparse.Namespace) -> dict:
+    lk = {}
+    if getattr(args, "layout", None):
+        lk["layout"] = args.layout
+    for k, a in (("face", "face"), ("filter", "filter"), ("caption_pos", "caption_pos"), ("audio", "audio")):
+        v = getattr(args, a, None)
+        if v:
+            lk[k] = v
+    if getattr(args, "face_size", None):
+        lk["face_ratio"] = args.face_size
+    if getattr(args, "face_box", ""):
+        lk["face_box"] = args.face_box
+    if getattr(args, "progress", False):
+        lk["progress"] = True
+    return lk
+
+
+def _fixes_from(args: argparse.Namespace) -> str:
+    return ",".join(getattr(args, "fix", []) or [])
+
+
 def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("src")
     run.add_argument("--out", default="./clips")
@@ -135,10 +191,11 @@ def _add_run_args(run: argparse.ArgumentParser) -> None:
     run.add_argument("--no-captions", action="store_true", help="Cut and frame without burning captions")
     run.add_argument(
         "--layout",
-        choices=["fit", "fill"],
-        default="fit",
-        help="fit = whole frame on blur. fill = punch-in crop.",
+        choices=["auto", "fit", "fill", "split"],
+        default="auto",
+        help="auto = Hermes picks from the frame. fit = whole frame on blur. fill = speaker crop. split = facecam band + screen.",
     )
+    _add_look_args(run)
     run.add_argument("--work", default="")
     run.add_argument(
         "--live-seconds",
@@ -171,6 +228,8 @@ def _run(args: argparse.Namespace) -> int:
         aspect=getattr(args, "aspect", "9:16"),
         keywords=getattr(args, "keywords", "") or "",
         captions=not getattr(args, "no_captions", False),
+        look=_look_from(args),
+        fixes=_fixes_from(args),
         on_progress=lambda stage, pct, msg: print(f"{stage} {pct:.0%} {msg}", flush=True),
     )
     if getattr(args, "recommend", False):

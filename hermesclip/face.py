@@ -12,7 +12,19 @@ def even(value: float) -> int:
 
 
 def face_norm(video: Path, start: float, end: float) -> tuple[float, float] | None:
-    """Return (nx, ny) in 0–1 if a face is found in the clip window."""
+    """Return (nx, ny) centre in 0–1 if a face is found in the clip window."""
+    box = face_box(video, start, end)
+    if not box:
+        return None
+    return box[0] + box[2] / 2, box[1] + box[3] / 2
+
+
+def face_box(video: Path, start: float, end: float, samples: int = 5) -> tuple[float, float, float, float] | None:
+    """Median face box (nx, ny, nw, nh) in 0–1 across the clip window, or None.
+
+    Locked for the whole clip on purpose: a crop that follows the face each frame drifts
+    and reads as amateur (streamer-tool research). Small corner facecams are found too.
+    """
     try:
         import cv2
         if not hasattr(cv2, "CascadeClassifier"):
@@ -33,9 +45,9 @@ def face_norm(video: Path, start: float, end: float) -> tuple[float, float] | No
     if det.empty():
         return None
     span = max(end - start, 0.4)
-    stamps = [start + span * t for t in (0.2, 0.5, 0.8)]
-    xs: list[float] = []
-    ys: list[float] = []
+    n = max(3, samples)
+    stamps = [start + span * (i + 0.5) / n for i in range(n)]
+    boxes: list[tuple[float, float, float, float]] = []
     with tempfile.TemporaryDirectory(prefix="hermesclip-face-") as tmp:
         tmp_p = Path(tmp)
         for i, t in enumerate(stamps):
@@ -51,7 +63,7 @@ def face_norm(video: Path, start: float, end: float) -> tuple[float, float] | No
                     "-frames:v",
                     "1",
                     "-vf",
-                    "scale=320:-1",
+                    "scale=640:-2",
                     "-q:v",
                     "5",
                     str(dest),
@@ -64,19 +76,18 @@ def face_norm(video: Path, start: float, end: float) -> tuple[float, float] | No
             if img is None:
                 continue
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            faces = det.detectMultiScale(gray, 1.1, 4, minSize=(24, 24))
+            faces = det.detectMultiScale(gray, 1.1, 5, minSize=(18, 18))
             if len(faces) == 0:
                 continue
             x, y, w, h = max(faces, key=lambda b: b[2] * b[3])
             ih, iw = gray.shape[:2]
-            xs.append((x + w / 2) / max(iw, 1))
-            ys.append((y + h / 2) / max(ih, 1))
-    if not xs:
+            boxes.append((x / iw, y / ih, w / iw, h / ih))
+    if not boxes:
         return None
-    xs.sort()
-    ys.sort()
-    mid = len(xs) // 2
-    return xs[mid], ys[mid]
+    # Median per coordinate: one stray detection can't move the crop.
+    mid = len(boxes) // 2
+    cols = [sorted(b[k] for b in boxes) for k in range(4)]
+    return float(cols[0][mid]), float(cols[1][mid]), float(cols[2][mid]), float(cols[3][mid])
 
 
 def fill_crop_xy(

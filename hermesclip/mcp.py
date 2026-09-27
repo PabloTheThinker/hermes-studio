@@ -19,11 +19,45 @@ TOOLS = [
                 "prompt": {"type": "string"},
                 "keywords": {"type": "string"},
                 "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5", "source"]},
-                "layout": {"type": "string", "enum": ["fit", "fill"]},
+                "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "description": "auto picks from the frame; split = facecam band + screen/game"},
+                "face": {"type": "string", "enum": ["top", "bottom"], "description": "split: face band on top or bottom"},
+                "face_size": {"type": "number", "description": "split: face band % of height (20-60)"},
+                "face_box": {"type": "string", "description": "split: manual camera box x,y,w,h in % of source"},
+                "filter": {"type": "string", "enum": ["none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"]},
+                "caption_pos": {"type": "string", "enum": ["auto", "top", "middle", "bottom"]},
+                "audio": {"type": "string", "enum": ["off", "clean"]},
+                "progress": {"type": "boolean"},
+                "fixes": {"type": "string", "description": "word fixes: cloud=Claude, marz=Mars"},
                 "mode": {"type": "string", "enum": ["clip", "captions", "reframe", "tighten", "transcript"]},
                 "whisper": {"type": "string", "description": "fast | balanced | accurate"},
             },
             "required": ["src"],
+        },
+    },
+    {
+        "name": "restyle",
+        "description": "Edit one library clip: new layout (auto/fit/fill/split), face top/bottom, band size, colour filter, caption spot/style, audio clean-up, progress bar, word fixes, or new start/end on the source. Old file goes to .trash. Does not post.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "job": {"type": "string"},
+                "file": {"type": "string"},
+                "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "description": "auto picks from the frame; split = facecam band + screen/game"},
+                "face": {"type": "string", "enum": ["top", "bottom"], "description": "split: face band on top or bottom"},
+                "face_size": {"type": "number", "description": "split: face band % of height (20-60)"},
+                "face_box": {"type": "string", "description": "split: manual camera box x,y,w,h in % of source"},
+                "filter": {"type": "string", "enum": ["none", "punch", "warm", "cool", "cinematic", "vintage", "bw", "bright"]},
+                "caption_pos": {"type": "string", "enum": ["auto", "top", "middle", "bottom"]},
+                "audio": {"type": "string", "enum": ["off", "clean"]},
+                "progress": {"type": "boolean"},
+                "fixes": {"type": "string", "description": "word fixes: cloud=Claude, marz=Mars"},
+                "style": {"type": "string", "enum": ["pop", "impact", "clean", "glow", "neon", "boxed"]},
+                "captions": {"type": "boolean"},
+                "start": {"type": "number"},
+                "end": {"type": "number"},
+                "title": {"type": "string"},
+            },
+            "required": ["job", "file"],
         },
     },
     {
@@ -129,8 +163,34 @@ def _cli(argv: list[str]) -> str:
     return text[-8000:] or json.dumps({"ok": True})
 
 
+def _look_argv(args: dict) -> list[str]:
+    argv: list[str] = []
+    for k, flag in (("layout", "--layout"), ("face", "--face"), ("face_size", "--face-size"), ("face_box", "--face-box"),
+                    ("filter", "--filter"), ("caption_pos", "--caption-pos"), ("audio", "--audio")):
+        if args.get(k) not in (None, ""):
+            argv += [flag, str(args[k])]
+    if args.get("progress"):
+        argv.append("--progress")
+    for part in str(args.get("fixes") or "").split(","):
+        if "=" in part:
+            argv += ["--fix", part.strip()]
+    return argv
+
+
 def _call(name: str, args: dict) -> str:
     args = args or {}
+    if name == "restyle":
+        argv = ["restyle", str(args.get("job") or ""), str(args.get("file") or "")] + _look_argv(args)
+        if args.get("style"):
+            argv += ["--style", str(args["style"])]
+        if args.get("captions") is False:
+            argv.append("--no-captions")
+        for k in ("start", "end"):
+            if args.get(k) not in (None, ""):
+                argv += ["--" + k, str(float(args[k]))]
+        if args.get("title"):
+            argv += ["--title", str(args["title"])]
+        return _cli(argv)
     if name == "run":
         argv = ["run", str(args.get("src") or ""), "--out", str(args.get("out") or str(Path.home() / ".hermes" / "clips"))]
         if args.get("max_clips"):
@@ -141,8 +201,7 @@ def _call(name: str, args: dict) -> str:
             argv += ["--keywords", str(args["keywords"])]
         if args.get("aspect"):
             argv += ["--aspect", str(args["aspect"])]
-        if args.get("layout"):
-            argv += ["--layout", str(args["layout"])]
+        argv += _look_argv(args)
         if args.get("mode"):
             argv += ["--mode", str(args["mode"])]
         if args.get("whisper"):
