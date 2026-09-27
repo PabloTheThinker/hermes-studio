@@ -129,6 +129,76 @@
     footer a { color: var(--mute); text-decoration: none; }
     footer a:hover { color: var(--ink); }
 
+    /* Scroll demo: one pinned stage, scrubbed by scroll (reversible, no autoplay). */
+    .demo { position: relative; border-bottom: 1px solid var(--line); }
+    .js .demo { height: 640vh; }
+    .demo-pin { padding: clamp(4rem, 8vw, 7rem) 0; }
+    .js .demo-pin { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 0; display: flex; align-items: center; overflow: hidden; }
+    .demo-grid { display: grid; grid-template-columns: minmax(250px, .78fr) 1.5fr; gap: clamp(2rem, 4vw, 4.5rem); align-items: center; width: 100%; }
+    .demo-copy .display { font-size: clamp(36px, 4.2vw, 60px); margin-bottom: 1.4rem; }
+    .demo-steps { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+    .demo-steps li { display: grid; grid-template-columns: 34px 1fr; padding: .62rem 0; border-bottom: 1px solid var(--line); color: var(--dim); transition: color .3s var(--ease); }
+    .demo-steps li b { font: 500 12px var(--mono); padding-top: .28rem; transition: color .3s var(--ease); }
+    .demo-steps li h3 { margin: 0; font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: 19px; line-height: 1.15; }
+    .demo-steps li p { grid-column: 2; margin: 0; font-size: 14px; color: var(--mute); max-height: 0; opacity: 0; overflow: hidden; transition: max-height .35s var(--ease), opacity .35s var(--ease), margin .35s var(--ease); }
+    .demo-steps li.on { color: var(--ink); }
+    .demo-steps li.on b { color: var(--amber); }
+    .demo-steps li.on p { max-height: 5em; opacity: 1; margin-top: .3rem; }
+
+    .stage { position: relative; }
+    .screen { position: relative; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--line); overflow: hidden; transform-origin: 50% 60%; }
+    .screen .src { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; will-change: clip-path, transform; }
+    .chip { position: absolute; left: 3%; top: 5%; display: flex; gap: .7rem; align-items: center; background: rgba(11,11,12,.88); border: 1px solid var(--line-2); padding: .45rem .75rem; font: 500 12px var(--mono); color: var(--ink); }
+    .chip .ok { color: var(--amber); }
+    .facebox { position: absolute; left: 32.2%; top: 11%; width: 21%; height: 48%; border: 2px solid var(--amber); opacity: 0; }
+    .facebox span, .guide span { position: absolute; left: -2px; top: -1.7em; background: var(--amber); color: var(--amber-ink); font: 500 11px var(--mono); padding: .15em .45em; white-space: nowrap; }
+    .guide { position: absolute; top: 0; bottom: 0; left: 26.9%; width: 31.64%; border: 2px dashed var(--amber); opacity: 0; }
+    .guide span { top: .5em; left: .5em; }
+    .tx { position: absolute; right: 3%; top: 6%; bottom: 6%; width: 42%; background: rgba(11,11,12,.9); border-left: 2px solid var(--amber); padding: .9rem 1rem; font: 13px/1.55 var(--mono); color: var(--dim); overflow: hidden; opacity: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+    .tx em { font-style: normal; color: var(--ink); }
+    .tx .t { color: var(--amber); }
+    .cap { position: absolute; left: 50%; bottom: 17%; width: 29%; transform: translateX(-50%); text-align: center; font-weight: 800; font-variation-settings: "wdth" 112; text-transform: uppercase; font-size: clamp(13px, 1.55vw, 22px); line-height: 1.08; color: #fff; text-shadow: 0 2px 0 #000, 0 0 14px rgba(0,0,0,.85); opacity: 0; }
+    .cap .k { color: var(--amber); }
+    .take { position: absolute; inset: 0; background: rgba(11,11,12,.95); display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 100%); gap: 5%; padding: 4.5% 5%; opacity: 0; pointer-events: none; }
+    .take img { height: 100%; width: auto; max-width: none; aspect-ratio: 9 / 16; object-fit: cover; border: 1px solid var(--line-2); display: block; min-height: 0; }
+    .take .files { align-self: center; }
+    .take .ttl { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; font-size: clamp(16px, 1.9vw, 26px); line-height: .98; margin: 0 0 1rem; }
+    .take .fr { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 0; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); opacity: 0; transform: translateY(8px); }
+    .take .fr b { color: var(--ink); font-weight: 500; }
+    .take .fr.post b { color: var(--amber); }
+
+    .track { position: relative; height: 76px; margin-top: 12px; border: 1px solid var(--line); background: var(--panel); overflow: hidden; }
+    .track .lbl { position: absolute; left: .7rem; top: .35rem; background: var(--panel); padding: 0 .3rem; font: 500 11px var(--mono); color: var(--dim); z-index: 3; }
+    .track .clock { position: absolute; right: .7rem; top: .35rem; background: var(--panel); padding: 0 .3rem; font: 500 11px var(--mono); color: var(--ink); z-index: 3; }
+    .wave { position: absolute; left: 0; right: 0; bottom: 8px; height: 44px; display: flex; align-items: center; gap: 1px; padding: 0 1px; transition: opacity .3s; }
+    .wave i { flex: 1; background: var(--line-2); border-radius: 1px; }
+    .wave i.lit { background: var(--ink); }
+    .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); left: 0; z-index: 2; opacity: 0; }
+    .win { position: absolute; bottom: 6px; height: 48px; border: 1px solid rgba(255,200,61,.55); background: rgba(255,200,61,.08); z-index: 1; opacity: 0; transition: opacity .25s, background .25s, border-color .25s; }
+    .win.pick { border: 2px solid var(--amber); background: rgba(255,200,61,.28); z-index: 2; }
+    .gap { position: absolute; bottom: 6px; height: 48px; z-index: 2; background: repeating-linear-gradient(135deg, rgba(205,128,50,.55) 0 4px, rgba(205,128,50,.18) 4px 8px); border: 1px solid var(--ember); opacity: 0; }
+    .demo-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
+    .demo-bar i { display: block; height: 100%; background: var(--amber); transform-origin: left; transform: scaleX(0); }
+    .demo:not(.live) .demo-bar { display: none; }
+    .demo.still { height: auto; }
+    .demo.still .demo-pin { position: static; height: auto; padding: clamp(4rem, 8vw, 7rem) 0; }
+    .demo.still .demo-steps li { color: var(--ink); }
+    .demo.still .demo-steps li p { max-height: none; opacity: 1; margin-top: .3rem; }
+
+    @media (max-width: 860px) {
+      .demo-grid { grid-template-columns: 1fr; gap: 1.2rem; }
+      .demo-copy .display { font-size: 30px; margin-bottom: .8rem; }
+      .demo.live .demo-steps li:not(.on) { display: none; }
+      .demo-steps li p { font-size: 13px; }
+      .tx { font-size: 10.5px; width: 46%; padding: .5rem .6rem; }
+      .chip { font-size: 10px; padding: .3rem .5rem; }
+      .take { gap: 4%; padding: 4% 4%; }
+      .take .kicker, .take .fr:nth-child(4) { display: none; }
+      .take .ttl { font-size: 13px; margin-bottom: .45rem; }
+      .take .fr { font-size: 9.5px; padding: .25rem 0; flex-direction: column; gap: 0; }
+      .track { height: 64px; }
+    }
+
     .reveal { opacity: 0; transform: translateY(14px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
     .reveal.in { opacity: 1; transform: none; }
     @media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } html { scroll-behavior: auto; } }
@@ -152,7 +222,7 @@
 <body>
   <nav class="top"><div class="w">
     <a class="word" href="./">Hermes <b>Studio</b></a>
-    <div class="links"><a href="#tools">Tools</a><a href="#examples">Examples</a><a href="#how">How it works</a><a href="#install">Install</a></div>
+    <div class="links"><a href="#demo">Demo</a><a href="#tools">Tools</a><a href="#examples">Examples</a><a href="#how">How it works</a><a href="#install">Install</a></div>
     <a class="btn" href="https://github.com/PabloTheThinker/hermes-studio">GitHub</a>
   </div></nav>
 
@@ -160,7 +230,7 @@
     <p class="kicker">Video tools for Hermes Agent</p>
     <h1 class="display"><span class="echo" data-t="Cut on">Cut on</span><br><span class="amber">your machine.</span></h1>
     <p class="lede">Hermes Studio turns long video into shorts, captions, reframes and transcripts with local Whisper and FFmpeg. Your agent runs it. Your files stay home. Nothing posts until you do.</p>
-    <div class="cta"><a class="btn primary" href="#install">Install the plugin</a><a class="btn" href="#tools">See the tools</a></div>
+    <div class="cta"><a class="btn primary" href="#install">Install the plugin</a><a class="btn" href="#demo">Watch it work</a></div>
     <div class="facts">
       <div><b>5 tools</b><span>One job each</span></div>
       <div><b>0 uploads</b><span>Local Whisper · FFmpeg</span></div>
@@ -168,6 +238,53 @@
       <div><b>$0</b><span>No credits, no minutes</span></div>
     </div>
   </div></header>
+
+  <section class="demo" id="demo" aria-label="Scroll demo: Hermes Studio turning a talk into a short">
+    <div class="demo-pin">
+      <div class="w demo-grid">
+        <div class="demo-copy">
+          <p class="kicker">Scroll to run it</p>
+          <h2 class="display">Watch it<br><span class="amber">work.</span></h2>
+          <ol class="demo-steps">
+            <li class="on"><b>01</b><h3>Drop</h3><p>A file or a link. Studio probes it first: length, shape, live or not.</p></li>
+            <li><b>02</b><h3>Listen</h3><p>Local Whisper writes every word with its timing. Nothing leaves your machine.</p></li>
+            <li><b>03</b><h3>Score</h3><p>Hermes reads the take and scores windows for hook, flow and value.</p></li>
+            <li><b>04</b><h3>Frame</h3><p>It finds the speaker and locks a vertical crop on the face.</p></li>
+            <li><b>05</b><h3>Caption</h3><p>Word-by-word captions. The spoken word lights up as it lands.</p></li>
+            <li><b>06</b><h3>Tighten</h3><p>Long pauses and filler come out of the timeline.</p></li>
+            <li><b>07</b><h3>Take</h3><p>A named short, caption files and the transcript. You post it.</p></li>
+          </ol>
+        </div>
+        <div class="stage" aria-hidden="true">
+          <div class="screen">
+            <img class="src" src="assets/ex-talk-src.jpg" alt="">
+            <div class="guide"><span>9:16</span></div>
+            <div class="facebox"><span>face</span></div>
+            <div class="chip"><span>talk.mp4</span><span>1:00</span><span>1280×720</span><span class="ok">probe ok</span></div>
+            <div class="tx"></div>
+            <div class="cap"></div>
+            <div class="take">
+              <img src="assets/ex-talk-out.jpg" alt="" loading="lazy">
+              <div class="files">
+                <p class="kicker" style="margin-bottom:.5rem">Named from its own words</p>
+                <p class="ttl">Most of us sought advice from each other</p>
+                <div class="fr"><b>clip_01.mp4</b><span>9:16 · 0:08 · −14 LUFS</span></div>
+                <div class="fr"><b>talk.srt · talk.vtt</b><span>word timings</span></div>
+                <div class="fr"><b>talk.txt</b><span data-words>190 words</span></div>
+                <div class="fr post"><b>Posted</b><span>Never. That's yours.</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="track">
+            <span class="lbl">source</span><span class="clock">0:00 / 1:00</span>
+            <div class="wave"></div>
+            <div class="ph"></div>
+          </div>
+        </div>
+      </div>
+      <div class="demo-bar"><i></i></div>
+    </div>
+  </section>
 
   <section class="ch" id="tools"><div class="w">
     <div class="ch-head reveal">
@@ -279,6 +396,165 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
   <script>
     const io = new IntersectionObserver((es) => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } }), { rootMargin: "0px 0px -8% 0px" });
     document.querySelectorAll(".reveal").forEach(el => io.observe(el));
+    // Scroll demo — every frame is a pure function of scroll progress, so it scrubs both ways.
+    (() => {
+      const sec = document.getElementById("demo");
+      if (!sec) return;
+      const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      document.documentElement.classList.add("js");
+      sec.classList.add(reduce ? "still" : "live");
+      const q = (s) => sec.querySelector(s), qa = (s) => [...sec.querySelectorAll(s)];
+      const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+      const seg = (p, a, b) => clamp((p - a) / (b - a));
+      const ease = (t) => 1 - Math.pow(1 - t, 3);
+      const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+      const DUR = 60, FACE = 0.427, CROPW = 0.3164, CLIP = [12.34, 20.2];
+      const STEPS = [0, .12, .30, .44, .60, .76, .88];
+      const LBL = ["source · probe", "listening · local whisper", "scoring windows · hook, flow, value", "framing · face lock", "captions · word timing", "tighten · pauses and filler", "take"];
+      const el = { steps: qa(".demo-steps li"), bar: q(".demo-bar i"), screen: q(".screen"), img: q(".src"), chip: q(".chip"), ok: q(".chip .ok"),
+        tx: q(".tx"), face: q(".facebox"), guide: q(".guide"), cap: q(".cap"), take: q(".take"), rows: qa(".take .fr"),
+        lbl: q(".track .lbl"), clock: q(".track .clock"), wave: q(".wave"), ph: q(".ph"), track: q(".track") };
+      let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [];
+
+      function build() {
+        const N = 120;
+        for (let i = 0; i < N; i++) {
+          const a = (i * DUR) / N, b = ((i + 1) * DUR) / N;
+          let on = 0;
+          for (const [, s, e] of W) on += Math.max(0, Math.min(b, e) - Math.max(a, s));
+          const f = clamp(on / (b - a));
+          const h = 8 + 92 * f * (0.45 + 0.55 * Math.abs(Math.sin(i * 1.71) * Math.cos(i * 0.37)));
+          const bar = document.createElement("i");
+          bar.style.height = h.toFixed(1) + "%";
+          el.wave.appendChild(bar); bars.push(bar);
+        }
+        // candidate windows = sentences from the real transcript
+        let st = null;
+        for (const [w, s, e] of W) {
+          if (st === null) st = s;
+          if (/[.?!]$/.test(w)) { if (e - st > 3) wins.push([st, e]); st = null; }
+        }
+        wins = wins.map(([a, b]) => {
+          const d = document.createElement("div");
+          d.className = "win"; d.style.left = (100 * a / DUR) + "%"; d.style.width = (100 * (b - a) / DUR) + "%";
+          if (Math.abs(a - CLIP[0]) < 0.05) { d.classList.add("pick-me"); d.dataset.l = `picked ${mmss(a)}–${mmss(b)}`; }
+          el.track.appendChild(d); return d;
+        });
+        // what tighten removes: pauses over 0.45 s and filler words, straight from the timings
+        for (let i = 0; i < W.length - 1; i++) {
+          const g = W[i + 1][1] - W[i][2];
+          if (g > 0.45) gaps.push([W[i][2], g]);
+        }
+        for (const [w, s, e] of W) if (/^(um|uh|so)[,.]?$/i.test(w)) gaps.push([s, Math.max(e - s, 0.25)]);
+        cut = gaps.reduce((t, [, g]) => t + g, 0);
+        gaps = gaps.map(([a, g]) => {
+          const d = document.createElement("div");
+          d.className = "gap"; d.style.left = (100 * a / DUR) + "%"; d.dataset.w = Math.max(0.6, 100 * g / DUR);
+          el.track.appendChild(d); return d;
+        });
+        capWords = W.filter(([, s]) => s >= CLIP[0] - 0.01 && s < CLIP[1]);
+        const n = q("[data-words]"); if (n) n.textContent = `${W.length} words`;
+      }
+
+      function progress() {
+        if (reduce) return 0.7;
+        const r = sec.getBoundingClientRect(), span = r.height - innerHeight;
+        return span > 0 ? clamp(-r.top / span) : 0;
+      }
+
+      function draw() {
+        const p = progress();
+        const step = STEPS.reduce((k, a, i) => (p >= a ? i : k), 0);
+        el.steps.forEach((li, i) => li.classList.toggle("on", reduce || i === step));
+        el.bar.style.transform = `scaleX(${p})`;
+        el.lbl.textContent = LBL[step];
+
+        // 01 drop
+        const t0 = ease(seg(p, 0, .1));
+        el.screen.style.opacity = (0.3 + 0.7 * t0).toFixed(3);
+        el.screen.style.transform = `scale(${0.95 + 0.05 * t0})`;
+        el.chip.style.opacity = (t0 * (1 - seg(p, .42, .46))).toFixed(3);
+        el.ok.style.opacity = seg(p, .07, .1);
+
+        // 02 listen
+        const tl = seg(p, .12, .29), now = DUR * tl;
+        const listening = p >= .1 && p < .31;
+        el.tx.style.opacity = (seg(p, .11, .14) * (1 - seg(p, .29, .32))).toFixed(3);
+        el.ph.style.opacity = listening ? 1 : (p >= .60 && p < .76 ? 1 : 0);
+        if (W.length) {
+          const heard = W.filter(([, s]) => s <= now).slice(-34);
+          el.tx.innerHTML = heard.length
+            ? `<div><span class="t">${mmss(heard[0][1])}</span> ` + heard.map(([w], i) => i >= heard.length - 3 ? `<em>${w}</em>` : w).join(" ") + "</div>"
+            : `<div><span class="t">0:00</span> …</div>`;
+          const litUpTo = p < .12 ? 0 : p >= .29 ? bars.length : Math.floor(bars.length * tl);
+          bars.forEach((b, i) => b.classList.toggle("lit", i < litUpTo && p < .76));
+        }
+        el.wave.style.opacity = p >= .30 && p < .76 ? .35 : p >= .76 ? .25 : 1;
+
+        // 03 score
+        const ts = seg(p, .30, .43);
+        wins.forEach((d, i) => {
+          const show = p >= .30 && p < .76 && ts >= (i / wins.length) * .7;
+          const picked = d.classList.contains("pick-me") && ts > .82;
+          d.style.opacity = show ? (picked || ts <= .82 ? 1 : .35) : 0;
+          d.classList.toggle("pick", picked || (d.classList.contains("pick-me") && p >= .43 && p < .76));
+        });
+
+        // 04 frame: face box, crop guide, crop closes, crop slides to centre
+        const tf = seg(p, .44, .59);
+        el.face.style.opacity = (seg(tf, 0, .18) * (1 - seg(tf, .55, .7))).toFixed(3);
+        el.guide.style.opacity = (seg(tf, .2, .32) * (1 - seg(tf, .72, .82))).toFixed(3);
+        const c = ease(seg(tf, .35, .75)), m = ease(seg(tf, .7, 1));
+        const L = (FACE - CROPW / 2) * 100 * c, R = (1 - (FACE + CROPW / 2)) * 100 * c;
+        el.img.style.clipPath = `inset(0 ${R.toFixed(2)}% 0 ${L.toFixed(2)}%)`;
+        const shift = (0.5 - FACE) * 100 * m;
+        el.img.style.transform = `translateX(${shift.toFixed(2)}%)`;
+        const px = (shift / 100) * el.screen.clientWidth;
+        el.guide.style.transform = el.face.style.transform = `translateX(${px.toFixed(1)}px)`;
+
+        // 05 caption: time runs through the picked clip
+        const tc = seg(p, .60, .75), ct = CLIP[0] + tc * (CLIP[1] - CLIP[0]);
+        el.cap.style.opacity = (seg(p, .58, .62) * (1 - seg(p, .87, .9))).toFixed(3);
+        if (capWords.length) {
+          let k = capWords.findIndex(([, s, e]) => ct >= s && ct < e);
+          if (k < 0) k = capWords.reduce((j, [, s], i) => (s <= ct ? i : j), 0);
+          const a = Math.floor(k / 3) * 3;
+          el.cap.innerHTML = capWords.slice(a, a + 3).map(([w], i) => a + i === k ? `<span class="k">${w}</span>` : w).join(" ");
+        }
+
+        // 06 tighten: real pauses and filler, collapsing
+        const tt = seg(p, .76, .87), squeeze = ease(seg(tt, .35, .95));
+        gaps.forEach((d) => {
+          d.style.opacity = (seg(p, .75, .78) * (1 - seg(p, .9, .93))).toFixed(3);
+          d.style.width = (d.dataset.w * (1 - squeeze)).toFixed(3) + "%";
+        });
+
+        // clock
+        let clock;
+        if (p < .12) clock = `0:00 / 1:00`;
+        else if (p < .30) clock = `${mmss(now)} / 1:00`;
+        else if (p < .60) clock = `clip ${mmss(CLIP[0])}–${mmss(CLIP[1])}`;
+        else if (p < .76) clock = `${mmss(ct)} · clip`;
+        else clock = `${(DUR - cut * squeeze).toFixed(1)} s / ${DUR.toFixed(1)} s`;
+        el.clock.textContent = clock;
+        el.ph.style.left = p < .6 ? `${(100 * now / DUR).toFixed(2)}%` : `${(100 * ct / DUR).toFixed(2)}%`;
+
+        // 07 take
+        const tk = seg(p, .88, .97);
+        el.take.style.opacity = ease(seg(tk, 0, .35)).toFixed(3);
+        el.rows.forEach((r, i) => {
+          const t = ease(seg(tk, .2 + i * .15, .45 + i * .15));
+          r.style.opacity = t.toFixed(3); r.style.transform = `translateY(${(8 * (1 - t)).toFixed(1)}px)`;
+        });
+      }
+
+      let ticking = false;
+      const kick = () => { if (!ticking) { ticking = true; requestAnimationFrame(() => { ticking = false; draw(); }); } };
+      addEventListener("scroll", kick, { passive: true });
+      addEventListener("resize", kick);
+      fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); draw(); }).catch(draw);
+      draw();
+    })();
   </script>
 </body>
 </html>
