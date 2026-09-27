@@ -27,26 +27,22 @@ def media_roots() -> list[str]:
     return [os.path.normpath(os.path.expanduser(r)) for r in roots]
 
 
-def _under(path: str, roots: list[str]) -> bool:
-    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
-
-
 def local_source(src: str) -> Path:
     """Resolve a local source path. Only existing video/audio files under a media root
     are allowed; the check runs on the normalised string before the file system is touched,
     and again after symlinks are resolved."""
-    roots = media_roots()
     norm = os.path.normpath(os.path.abspath(os.path.expanduser(str(src))))
-    if not _under(norm, roots):
-        raise ValueError("local files must be in your home folder, a mounted drive or the library")
     if os.path.splitext(norm)[1].lower() not in MEDIA_EXTS:
         raise ValueError(f"not a video or audio file: {os.path.basename(norm)}")
     real = os.path.realpath(norm)
-    if not _under(real, roots):
-        raise ValueError("link points outside your media folders")
-    if not os.path.isfile(real):
-        raise FileNotFoundError(os.path.basename(norm))
-    return Path(real)
+    for root in media_roots():
+        prefix = root.rstrip(os.sep) + os.sep
+        # Both the path as typed and where its symlinks lead must be under the root.
+        if norm.startswith(prefix) and real.startswith(prefix):
+            if not os.path.isfile(real):
+                raise FileNotFoundError(os.path.basename(norm))
+            return Path(real)
+    raise ValueError("local files must be in your home folder, a mounted drive or the library")
 
 
 def _host_is(host: str, domain: str) -> bool:
