@@ -1,6 +1,6 @@
 [project]
 name = "hermesclip"
-version = "0.3.1"
+version = "0.4.0"
 description = "Hermes Studio — HermesClip, local 9:16 clipper for Hermes Agent"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 reframe = ["opencv-python-headless>=4.8,<5"]
+dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 hermesclip = "hermesclip.cli:main"
@@ -20,3 +21,25 @@ include = ["hermesclip*"]
 
 [tool.setuptools.package-data]
 hermesclip = ["ui/*", "data/*"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+extend-exclude = ["site", "hermesclip/ui"]
+
+[tool.ruff.lint]
+# Real bugs (F, E9, B), import order (I), modern syntax (UP), and security (S) —
+# not a style war.
+select = ["F", "E9", "B", "I", "UP", "S"]
+ignore = [
+  "S603", "S607",  # subprocess with list args to ffmpeg / yt-dlp is the job
+  "S101",          # asserts are fine in tests
+  "S110", "S112",  # best-effort try/except-pass around optional helpers
+  "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

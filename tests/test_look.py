@@ -1,5 +1,7 @@
 """Look layer: layout choice, split band crops, filters, caption spot, audio, word fixes."""
 from hermesclip import look
+from hermesclip.face import Face, FaceTrack
+from hermesclip.framing import split_geometry
 from hermesclip.layout import frame_filters
 from hermesclip.pipeline import _clean_fixes
 
@@ -15,27 +17,26 @@ def test_make_look_defaults_and_clamps():
 
 
 def test_auto_layout_reads_the_frame():
+    talk = Face(0, 0.4, 0.2, 0.2, 0.35, 0.33)
+    cam = Face(0, 0.82, 0.05, 0.09, 0.16, 0.1)
     assert look.choose_layout(None, 1920, 1080, 1080, 1920)[0] == "fit"
-    # Big centred face: talking head -> speaker crop
-    assert look.choose_layout((0.4, 0.2, 0.2, 0.35), 1920, 1080, 1080, 1920)[0] == "fill"
-    # Small face in a corner: facecam -> split
-    assert look.choose_layout((0.82, 0.05, 0.09, 0.16), 1920, 1080, 1080, 1920)[0] == "split"
-    # Already vertical
-    assert look.choose_layout((0.4, 0.2, 0.2, 0.2), 1080, 1920, 1080, 1920)[0] == "fill"
+    assert look.choose_layout(talk, 1920, 1080, 1080, 1920)[0] == "fill"
+    assert look.choose_layout(cam, 1920, 1080, 1080, 1920)[0] == "split"
+    assert look.choose_layout(talk, 1080, 1920, 1080, 1920)[0] == "fill"
 
 
 def test_split_bands_add_up_and_flip():
-    box = (0.82, 0.05, 0.09, 0.16)
+    cam = Face(0, 0.82, 0.05, 0.09, 0.16, 0.1)
+    track = FaceTrack([cam], samples=1)
     lk_top = look.make_look({"layout": "split", "face": "top", "face_ratio": 35})
-    g = look.split_geometry(1920, 1080, 1080, 1920, lk_top, box)
+    g = split_geometry(1920, 1080, 1080, 1920, lk_top, cam)
     assert g["face_h"] + g["body_h"] == 1920 and g["face_h"] % 2 == 0
-    for crop in (g["face"], g["body"]):
-        w, h, x, y = crop  # ffmpeg crop order
-        assert x >= 0 and y >= 0 and x + w <= 1920 and y + h <= 1080
-    top = frame_filters(1920, 1080, 1080, 1920, "split", "", look=lk_top, box=box)
+    for c in (g["face"], g["body"]):
+        assert c.x >= 0 and c.y >= 0 and c.x + c.w <= 1920 and c.y + c.h <= 1080
+    top = frame_filters(1920, 1080, 1080, 1920, "split", "", look=lk_top, track=track)
     lk_bot = look.make_look({"layout": "split", "face": "bottom", "face_ratio": 35})
-    bot = frame_filters(1920, 1080, 1080, 1920, "split", "", look=lk_bot, box=box)
-    assert "vstack" in top and "vstack" in bot and top != bot
+    bot = frame_filters(1920, 1080, 1080, 1920, "split", "", look=lk_bot, track=track)
+    assert "[fc][bc]vstack" in top and "[bc][fc]vstack" in bot
 
 
 def test_filters_and_progress():

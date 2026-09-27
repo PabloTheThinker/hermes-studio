@@ -1,5 +1,4 @@
 """Namer tests: parsing, cleaning, offline fallback. No LLM call."""
-import os
 
 from hermesclip import namer
 

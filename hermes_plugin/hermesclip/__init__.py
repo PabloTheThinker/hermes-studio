@@ -404,7 +404,6 @@ def hermesclip_probe(src: str) -> str:
 
 def hermesclip_studio(host: str = "127.0.0.1", port: int = 3870) -> str:
     """Start localhost Studio if it is not already up. Loopback only. Does not post."""
-    import socket
     import time
     import urllib.request
 

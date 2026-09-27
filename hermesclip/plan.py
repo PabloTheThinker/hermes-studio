@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import urllib.request
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from hermesclip.net import post_json
 from hermesclip.transcribe import Transcript, Word
 
 # BridgeClip rubric (local, no OpenRouter). Opus: hook / flow / value / standalone.
@@ -152,17 +152,7 @@ def plan_grok(tr: Transcript, max_clips: int, min_sec: float, max_sec: float) ->
             {"role": "user", "content": _transcript_for_llm(tr)[:12000]},
         ],
     }
-    req = urllib.request.Request(
-        "https://api.x.ai/v1/chat/completions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        body = json.loads(resp.read().decode())
+    body = post_json("https://api.x.ai/v1/chat/completions", payload, headers={"Authorization": f"Bearer {key}"}, timeout=90)
     text = body["choices"][0]["message"]["content"].strip()
     if text.startswith("```"):
         text = text.strip("`")

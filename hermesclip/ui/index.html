@@ -338,6 +338,11 @@
     const fmt = (n) => { if (!n && n !== 0) return ""; const s = Math.floor(n % 60).toString().padStart(2, "0"); return Math.floor(n / 60) + ":" + s; };
     const toolById = (id) => state.tools.find(t => t.id === id);
     async function api(path, opts) {
+      opts = opts || {};
+      if (opts.method && opts.method !== "GET") {
+        opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+        if (!opts.body) opts.body = "{}";
+      }
       const res = await fetch(path, opts);
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);

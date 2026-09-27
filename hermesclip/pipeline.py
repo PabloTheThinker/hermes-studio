@@ -4,12 +4,11 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from hermesclip.download import LIVE_DEFAULT_SEC, SourceInfo, fetch, probe
 from hermesclip.layout import canvas, even, probe_size
@@ -37,7 +36,7 @@ def library_root() -> Path:
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -298,7 +297,7 @@ def new_job(
         extractor = info.extractor
     except Exception:
         info = None
-    from hermesclip.folders import folder_name, platform_of, pretty_title, youtube_title, youtube_id
+    from hermesclip.folders import folder_name, platform_of, pretty_title, youtube_id, youtube_title
 
     job_id = uuid.uuid4().hex[:12]
     platform = platform_of(src, extractor)
@@ -549,7 +548,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
             from hermesclip.namer import ai_titles, clip_text
 
             names, _src = ai_titles([clip_text(tr, pl.start, pl.end) for pl in plans], job.title)
-            for pl, nm in zip(plans, names):
+            for pl, nm in zip(plans, names, strict=False):
                 if nm:
                     pl.title = nm
         save_plan(plans, work / "plan.json")
@@ -697,7 +696,6 @@ def run_once(
 def name_job(job_id: str) -> dict:
     """AI-name every clip in an existing run from its transcript. Returns {ok, titles, source}."""
     from hermesclip.namer import ai_titles, clip_text
-    from hermesclip.transcribe import load_transcript
 
     job = load_job(job_id)
     if not job:
@@ -744,7 +742,7 @@ def name_job(job_id: str) -> dict:
     if not any(texts):
         return {"ok": False, "error": "no words found in these clips"}
     names, src = ai_titles(texts, job.title)
-    for c, nm in zip(clips, names):
+    for c, nm in zip(clips, names, strict=False):
         if nm:
             c["title"] = nm
     job.clips = clips
@@ -828,7 +826,6 @@ def restyle_clip(
     from hermesclip.edit import drop_file
     from hermesclip.namer import clip_text
     from hermesclip.plan import ClipPlan, score_parts
-    from hermesclip.transcribe import load_transcript
 
     job = load_job(job_id)
     if not job:

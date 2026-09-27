@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from hermesclip.download import LIVE_DEFAULT_SEC, probe
+from hermesclip.download import fetch as fetch_src
 from hermesclip.pipeline import run_once
 from hermesclip.plan import plan_grok, plan_heuristic, save_plan
 from hermesclip.transcribe import load_transcript, transcribe
-from hermesclip.download import fetch as fetch_src
 
 
 def main(argv: list[str] | None = None) -> int:
