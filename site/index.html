@@ -195,6 +195,9 @@
     .demo.live .demo-steps li:focus-visible { outline: 1px solid var(--amber); outline-offset: 2px; }
     .snd.nudge { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); font-weight: 600; animation: nudge 1.6s var(--ease) infinite; }
     @keyframes nudge { 50% { box-shadow: 0 0 0 6px rgba(255,200,61,.2); } }
+    .bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; display: none; align-items: center; gap: .6em; background: var(--amber); color: var(--amber-ink); border: 0; font: 600 14px var(--mono); padding: .9em 1.4em; cursor: pointer; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+    .bigplay::before { content: ""; border-style: solid; border-width: .5em 0 .5em .85em; border-color: transparent transparent transparent currentColor; }
+    .demo.live.paused .bigplay { display: inline-flex; }
     .demo-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
     .demo-bar i { display: block; height: 100%; background: var(--amber); transform-origin: left; transform: scaleX(0); }
     .demo:not(.live) .demo-bar { display: none; }
@@ -281,6 +284,7 @@
             <div class="chip"><span>talk.mp4</span><span>1:00</span><span>1280×720</span><span class="ok">probe ok</span></div>
             <div class="tx"></div>
             <div class="cap"></div>
+            <button type="button" class="bigplay" aria-label="Play the demo">Play demo</button>
             <div class="take">
               <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted playsinline preload="metadata"></video><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
               <div class="files">
@@ -609,14 +613,22 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         el.bar.style.transform = `scaleX(${((Math.min(t, T[6]) + vt) / (T[6] + vidDur)).toFixed(4)})`;
         if (takeOn) el.clock.textContent = `${mmss(vt)} / ${mmss(vidDur)} · take`;
         const pp = ctl("pp"); if (pp) pp.textContent = ended ? "Replay" : playing ? "Pause" : "Play";
+        paint();
       }
-      function loop(now) {
-        raf = 0; if (!playing) return;
-        t = Math.min(T[7], t + Math.min(.1, (now - last) / 1000)); last = now;
-        render(); raf = requestAnimationFrame(loop);
+      function paint() { sec.classList.toggle("paused", !reduce && !playing && !ended && started); }
+      let started = false;
+      function tick() {
+        if (!playing) return;
+        const now = performance.now();
+        t = Math.min(T[7], t + Math.min(.25, (now - last) / 1000)); last = now;
+        render();
       }
+      function loop() { raf = 0; if (!playing) return; tick(); raf = requestAnimationFrame(loop); }
+      // some in-app browsers and power-saving modes starve requestAnimationFrame: a plain timer keeps it moving
+      setInterval(() => { if (playing && performance.now() - last > 120) tick(); }, 100);
       function play() {
         if (reduce || ended) return;
+        started = true;
         if (v && v.preload !== "auto") { v.preload = "auto"; v.load(); }   // buffer the take while 01-06 run
         playing = true; last = performance.now();
         if (takeOn && v && v.paused) playTake();
@@ -624,13 +636,24 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         render();
       }
       function pause() { playing = false; if (takeOn && v) v.pause(); render(); }
+      function onScreen() {
+        const r = sec.getBoundingClientRect();
+        const vis = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+        return vis / Math.max(1, Math.min(r.height, innerHeight)) >= .5;
+      }
+      // one place decides play/pause from what is actually on screen (called on scroll, resize, tab switch, load)
+      function check() {
+        if (reduce) return;
+        if (!document.hidden && onScreen()) { if (!userPaused && !playing && !ended) play(); }
+        else if (playing) pause();
+      }
       function jump(i) {                                  // 0-based step; 6 = take
         stopTake(); t = T[i]; userPaused = false;
         if (i === 6) { t = TAKE_AT; startTake(); }
         play();
       }
       if (v) v.addEventListener("ended", () => {        // after the take: loop it quietly, offer a replay
-        ended = true; playing = false; v.muted = true; v.loop = true; v.play().catch(() => {}); nudge(false); render();
+        ended = true; playing = false; v.muted = true; v.loop = true; v.play().catch(() => {}); nudge(false); render(); paint();
       });
       if (el.snd && v) el.snd.addEventListener("click", () => {
         const wasMuted = v.muted;
@@ -653,18 +676,19 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
           li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(i); } });
         });
         const on = (a, f) => { const b = ctl(a); if (b) b.addEventListener("click", f); };
+        const bp = q(".bigplay"); if (bp) bp.addEventListener("click", () => { userPaused = false; play(); });
         on("pp", () => { if (ended) { jump(0); } else if (playing) { userPaused = true; pause(); } else { userPaused = false; play(); } });
         on("replay", () => jump(0));
         on("skip", () => jump(6));
         document.querySelectorAll('a[href="#demo"]').forEach((a) => a.addEventListener("click", () => jump(0)));
-        // play only while at least half of it is on screen; pause when they scroll away or switch tabs
-        let seen = false;
-        new IntersectionObserver(([e]) => {
-          const vis = e.intersectionRect.height / Math.max(1, Math.min(e.boundingClientRect.height, innerHeight));
-          if (vis >= .5) { seen = true; if (!userPaused && !playing) play(); }
-          else if (seen && playing) pause();
-        }, { threshold: [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1] }).observe(sec);
-        document.addEventListener("visibilitychange", () => { if (document.hidden && playing) pause(); });
+        // play while at least half of it is on screen; pause when they scroll away or switch tabs; resume when they come back
+        let pending = 0;
+        const soon = () => { if (!pending) pending = setTimeout(() => { pending = 0; check(); }, 60); };
+        new IntersectionObserver(check, { threshold: [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1] }).observe(sec);
+        addEventListener("scroll", soon, { passive: true });
+        addEventListener("pageshow", check); addEventListener("focus", check);
+        document.addEventListener("visibilitychange", check);
+        setTimeout(check, 300); setTimeout(check, 1500);
       }
       addEventListener("resize", render);
       fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); render(); }).catch(render);
