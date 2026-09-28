@@ -48,11 +48,23 @@
     /* Nav */
     nav.top { position: sticky; top: 0; z-index: 10; background: rgba(11,11,12,.9); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
     nav.top .w { display: flex; align-items: center; gap: 2rem; height: 64px; }
-    .word { font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; letter-spacing: .04em; font-size: 15px; text-decoration: none; }
+    .word { white-space: nowrap; font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; letter-spacing: .04em; font-size: 15px; text-decoration: none; }
     .word b { color: var(--amber); }
     nav.top .links { display: flex; gap: 1.6rem; margin-left: auto; }
     nav.top .links a { text-decoration: none; color: var(--mute); font: 600 12px var(--sans); letter-spacing: .16em; text-transform: uppercase; transition: color .2s var(--ease); }
     nav.top .links a:hover { color: var(--ink); }
+    .pgsnd { display: inline-flex; align-items: center; gap: .5em; min-height: 40px; padding: 0 .9rem; background: transparent; color: var(--amber); border: 1px solid var(--line-2); font: 600 11px var(--sans); letter-spacing: .16em; text-transform: uppercase; cursor: pointer; white-space: nowrap; transition: color .2s var(--ease), border-color .2s var(--ease); }
+    .pgsnd svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .pgsnd .spk { fill: currentColor; }
+    .pgsnd .off { display: none; }
+    .pgsnd[aria-pressed="false"] { color: var(--mute); border-color: var(--line); }
+    .pgsnd[aria-pressed="false"] .on { display: none; }
+    .pgsnd[aria-pressed="false"] .off { display: inline; }
+    .pgsnd:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+    @media (hover: hover) {   /* touch screens keep :hover stuck after a tap, which would paint "off" as on */
+      .pgsnd:hover { border-color: var(--amber); }
+      .pgsnd[aria-pressed="false"]:hover { color: var(--ink); border-color: var(--line-2); }
+    }
 
     /* Hero */
     .hero { padding: clamp(4rem, 10vw, 8rem) 0 clamp(3rem, 6vw, 5rem); border-bottom: 1px solid var(--line); }
@@ -241,7 +253,9 @@
 
     @media (max-width: 860px) {
       nav.top .links { display: none; }
-      nav.top .w { justify-content: space-between; }
+      nav.top .w { justify-content: space-between; gap: .8rem; }
+      nav.top .pgsnd { margin-left: auto; padding: 0 .7rem; letter-spacing: .1em; }
+      nav.top .btn { padding: 0 .9rem; letter-spacing: .12em; }
       .ch-head, .proof, .install { grid-template-columns: 1fr; }
       .row { grid-template-columns: 40px 1fr; gap: .4rem 1rem; }
       .row .desc { grid-column: 2; }
@@ -253,12 +267,28 @@
       .looks div:nth-child(even) { padding-left: 1.4rem; border-left: 1px solid var(--line); }
       .steps div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); margin-top: 1.6rem; }
     }
+    @media (max-width: 480px) {
+      nav.top .w { gap: .6rem; }
+      nav.top .pgsnd { flex: 0 0 44px; width: 44px; min-height: 44px; padding: 0; justify-content: center; }   /* icon-only on phones; label stays for screen readers */
+      nav.top .pgsnd span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+      nav.top .pgsnd svg { width: 20px; height: 20px; }
+      nav.top .btn { flex: 0 0 auto; min-height: 44px; padding: 0 .75rem; font-size: 11px; }
+    }
+    @media (max-width: 370px) {
+      .looks { grid-template-columns: 1fr; }
+      .looks div:nth-child(even) { padding-left: 0; border-left: 0; }
+      .proof > *, .looks > div { min-width: 0; overflow-wrap: anywhere; }
+      .hero .display { font-size: 46px; }           /* "your machine." fits a 320-360px phone without widening the page */
+      .word { font-size: 13px; letter-spacing: .02em; }
+      nav.top .btn { padding: 0 .6rem; letter-spacing: .08em; }
+    }
   </style>
 </head>
 <body>
   <nav class="top"><div class="w">
     <a class="word" href="./">Hermes <b>Studio</b></a>
     <div class="links"><a href="#demo">Demo</a><a href="#tools">Tools</a><a href="#examples">Examples</a><a href="#how">How it works</a><a href="#install">Install</a></div>
+    <button type="button" class="pgsnd" aria-pressed="true" aria-label="Sound for this page" title="Sound for this page"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="spk" d="M4 9h4l5-4v14l-5-4H4z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M16 9l6 6M22 9l-6 6"/></svg><span>Sound on</span></button>
     <a class="btn" href="https://github.com/PabloTheThinker/hermes-studio">GitHub</a>
   </div></nav>
 
@@ -596,7 +626,9 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         return STEPS[i] + (ENDS[i] - STEPS[i]) * clamp((t - T[i]) / DURS[i]);
       };
       const v = el.vid, ctl = (a) => sec.querySelector(`.demo-ctl [data-a="${a}"]`);
-      let t = 0, playing = false, userPaused = false, takeOn = false, ended = false, userMuted = false, vidDur = 15.1, raf = 0, last = 0;
+      const PREF = "hs-sound";
+      const readPref = () => { try { return localStorage.getItem(PREF) !== "off"; } catch (e) { return true; } };
+      let t = 0, playing = false, userPaused = false, takeOn = false, ended = false, userMuted = !readPref(), vidDur = 15.1, raf = 0, last = 0;
       if (v) v.addEventListener("loadedmetadata", () => { if (isFinite(v.duration)) vidDur = v.duration; });
 
       function syncSnd() {
@@ -618,7 +650,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       function srcPlay() {
         if (!sv || svPending || !playing || t >= T[6] || !sv.paused) return;
         sv.muted = userMuted || !hasAct(); srcSync(true); svPending = true;
-        sv.play().then(() => { svPending = false; srcBlocked = false; pill(); })
+        sv.play().then(() => { svPending = false; srcBlocked = false; if (!playing || takeOn || t >= T[6]) sv.pause(); pill(); })
           .catch(() => {                                     // sound refused: carry on muted; if even that is refused, ask for a tap
             if (!sv.muted) { sv.muted = true; sv.play().then(() => { svPending = false; pill(); }).catch(() => { svPending = false; srcBlocked = true; pill(); }); }
             else { svPending = false; srcBlocked = true; pill(); }
@@ -629,8 +661,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       function pill() {
         if (!pre) return;
         const need = srcBlocked || !hasAct();
-        pre.classList.toggle("need", need);
-        pre.textContent = srcBlocked ? "Tap to play" : need ? "Tap for sound" : userMuted ? "Sound off" : "Sound on";
+        pre.textContent = srcBlocked ? "Tap to play" : userMuted ? "Sound off" : need ? "Tap to hear her" : "Sound on";
+        pre.classList.toggle("need", srcBlocked || (need && !userMuted));
         pre.setAttribute("aria-pressed", String(!need && !userMuted));
       }
       function setBlocked(on) { if (takev) takev.classList.toggle("blocked", on); }
@@ -681,24 +713,29 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         if (v && v.preload !== "auto") { v.preload = "auto"; v.load(); }   // buffer the take while 01-06 run
         if (sv && sv.preload !== "auto") sv.preload = "auto";
         playing = true; last = performance.now();
+        if (sv && !sv.paused && sv.muted && !userMuted && hasAct()) sv.muted = false;   // step/replay/play buttons are taps too
         if (takeOn && v && v.paused) playTake();
         if (!raf) raf = requestAnimationFrame(loop);
         render();
       }
       function pause() { playing = false; srcPause(); if (takeOn && v) v.pause(); render(); }
-      function onScreen() {
+      function seen() {
         const r = sec.getBoundingClientRect();
         const vis = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
-        return vis / Math.max(1, Math.min(r.height, innerHeight)) >= .5;
+        return vis / Math.max(1, Math.min(r.height, innerHeight));
       }
+      const onScreen = () => seen() >= .5;
+      // they asked for the demo (tap on it, a step, play): bring it fully into view so the visibility rule agrees with them
+      function bringIn() { if (seen() < .9) sec.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }); }
       // one place decides play/pause from what is actually on screen (called on scroll, resize, tab switch, load)
       function check() {
         if (reduce) return;
-        if (!document.hidden && onScreen()) { if (!userPaused && !playing && !ended) play(); }
-        else if (playing) pause();
+        const f = document.hidden ? 0 : seen();
+        if (f >= .5) { if (!userPaused && !playing && !ended) play(); }
+        else if (playing && f < .25) pause();
       }
       function jump(i) {                                  // 0-based step; 6 = take
-        stopTake(); t = T[i]; userPaused = false; srcSync(true);
+        bringIn(); stopTake(); t = T[i]; userPaused = false; srcSync(true);
         if (i === 6) { t = TAKE_AT; startTake(); }
         play();
       }
@@ -707,45 +744,69 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       });
       if (el.snd && v) el.snd.addEventListener("click", () => {
         const wasMuted = v.muted;
-        userMuted = !wasMuted; v.muted = !wasMuted; nudge(false); setBlocked(false);
+        setSound(wasMuted); setBlocked(false);
         if (wasMuted && ended) { ended = false; v.loop = false; v.currentTime = 0; playing = true; last = performance.now(); if (!raf) raf = requestAnimationFrame(loop); }
         if (wasMuted && v.paused) v.play().catch(() => {});
         syncSnd(); pill(); render();
       });
       const tp = q(".takeplay");
       if (tp && v) tp.addEventListener("click", () => { setBlocked(false); v.muted = userMuted; v.play().then(syncSnd).catch(() => {}); if (!playing && !ended) { userPaused = false; play(); } });
-      let asked = false;
+      let asked = false, pillNeedAtTap = false;
+      const hdr = document.querySelector(".pgsnd");
+      const others = () => [...document.querySelectorAll("video")].filter((x) => x !== sv && x !== v);
       function applyMute() {
         if (sv && !sv.paused) sv.muted = userMuted;
         if (v && takeOn && !ended) v.muted = userMuted;
+        if (userMuted) others().forEach((x) => { x.muted = true; });
         syncSnd();
       }
+      function paintHdr() {
+        if (!hdr) return;
+        hdr.setAttribute("aria-pressed", String(!userMuted));
+        hdr.querySelector("span").textContent = userMuted ? "Sound off" : "Sound on";
+        hdr.setAttribute("aria-label", userMuted ? "Sound is off for this page. Turn sound on" : "Sound is on for this page. Turn all sound off");
+        hdr.title = userMuted ? "Turn sound on" : "Turn all sound off";
+      }
+      // every sound control goes through here: page-wide, remembered for next visit
+      function setSound(on) {
+        userMuted = !on;
+        try { localStorage.setItem(PREF, on ? "on" : "off"); } catch (e) {}
+        applyMute();
+        if (on) {
+          if (sv && playing && !takeOn && t < T[6]) { if (sv.paused) { svPending = false; srcPlay(); } else { sv.muted = false; sv.play().catch(() => {}); } }
+          if (v && takeOn && !ended) { v.muted = false; setBlocked(false); nudge(false); if (v.paused) v.play().catch(() => {}); }
+        }
+        nudge(false); paintHdr(); pill(); syncSnd();
+      }
+      if (hdr) hdr.addEventListener("click", () => setSound(userMuted));
+      others().forEach((x) => { x.muted = userMuted; x.addEventListener("volumechange", () => { if (!x.muted && userMuted) setSound(true); }); });
       if (pre) pre.addEventListener("click", () => {
-        if (!asked) {                                        // first tap: "yes, sound" - start again from 01 so it is heard from the beginning
-          asked = true; userMuted = false;
+        const wasNeed = pillNeedAtTap || pre.classList.contains("need"); pillNeedAtTap = false;
+        if (!asked && wasNeed) {                             // first tap on the nudge: sound on and start again from 01 so it is heard from the beginning
+          asked = true; userMuted = false; setSound(true);
           if (sv) { sv.muted = false; sv.play().catch(() => {}); }
-          if (!takeOn) jump(0); else applyMute();
-        } else { userMuted = !userMuted; applyMute(); if (!playing && !ended) { userPaused = false; play(); } }
+          if (!takeOn) jump(0);
+        } else { asked = true; setSound(userMuted); if (!playing && !ended) { bringIn(); userPaused = false; play(); } }
         pill();
       });
-      // The first real tap/click/key anywhere is the permission browsers want. Use it at once, inside the gesture:
-      //  - unlock the take's video for sound (iOS only lets an element play with sound later if it was started inside a tap)
-      //  - start the source video if the phone refused it (Low Power Mode, in-app browsers)
-      //  - if the take is already playing muted, turn its sound on
       const bless = (e) => {
-        const own = e.target && e.target.closest && e.target.closest(".snd, .sndpre, .takeplay");
+        const soundControl = e.target && e.target.closest && e.target.closest(".snd, .sndpre, .takeplay, .pgsnd");
         const first = !blessed; blessed = true;
+        // Safari runs this before the button's own click: remember the nudge was showing, so that click means "sound on", not "toggle off"
+        if (first && pre && e.target && e.target.closest && e.target.closest(".sndpre") && pre.classList.contains("need")) pillNeedAtTap = true;
         if (v && first && !takeOn) {
           v.muted = true;
           v.play().then(() => { if (!takeOn) { v.pause(); try { v.currentTime = 0; } catch (x) {} } }).catch(() => {});
         }
         if (sv && playing && sv.paused && t < T[6]) { svPending = false; srcPlay(); }
-        else if (!own && sv && !sv.paused && sv.muted && !userMuted) { sv.muted = false; sv.play().catch(() => {}); }
-        if (!own && takeOn && !ended && v && !userMuted && (v.muted || v.paused)) {
+        else if (!soundControl && sv && !sv.paused && sv.muted && !userMuted) {
+          sv.muted = false;
+          if (first && playing && t > .4 && t < T[2]) jump(0);          // still early: restart her sentence from the top, now with sound
+        }
+        if (!soundControl && takeOn && !ended && v && !userMuted && (v.muted || v.paused)) {
           v.muted = false; setBlocked(false); nudge(false);
           if (v.paused) v.play().catch(() => {});
         }
-        setTimeout(() => { pill(); syncSnd(); }, 0);
       };
       ["pointerup", "touchend", "click", "keydown"].forEach((ev) => addEventListener(ev, bless, true));
 
@@ -756,7 +817,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
           li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); jump(i); } });
         });
         const on = (a, f) => { const b = ctl(a); if (b) b.addEventListener("click", f); };
-        const bp = q(".bigplay"); if (bp) bp.addEventListener("click", () => { userPaused = false; play(); });
+        const bp = q(".bigplay"); if (bp) bp.addEventListener("click", () => { bringIn(); userPaused = false; play(); });
         on("pp", () => { if (ended) { jump(0); } else if (playing) { userPaused = true; pause(); } else { userPaused = false; play(); } });
         on("replay", () => jump(0));
         on("skip", () => jump(6));
@@ -764,6 +825,14 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         // play while at least half of it is on screen; pause when they scroll away or switch tabs; resume when they come back
         let pending = 0;
         const soon = () => { if (!pending) pending = setTimeout(() => { pending = 0; check(); }, 60); };
+        // arriving on a #demo link: fonts and images load after the browser's jump and push the demo down, so land it again
+        if (location.hash === "#demo") {
+          let moved = false; const mark = () => { moved = true; };
+          ["wheel", "touchstart", "keydown"].forEach((ev) => addEventListener(ev, mark, { once: true, passive: true }));
+          const land = () => { if (!moved && seen() < .9) sec.scrollIntoView({ block: "start" }); check(); };
+          (document.fonts ? document.fonts.ready : Promise.resolve()).then(land);
+          addEventListener("load", land, { once: true }); setTimeout(land, 1200);
+        }
         new IntersectionObserver(check, { threshold: [0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1] }).observe(sec);
         addEventListener("scroll", soon, { passive: true });
         addEventListener("pageshow", check); addEventListener("focus", check);
@@ -771,7 +840,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         setTimeout(check, 300); setTimeout(check, 1500);
       }
       addEventListener("resize", render);
-      pill();
+      pill(); paintHdr();
       fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); render(); }).catch(render);
       render();
     })();
