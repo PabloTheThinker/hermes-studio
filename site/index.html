@@ -141,6 +141,15 @@
     footer .w { display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; }
     footer a { color: var(--mute); text-decoration: none; }
     footer a:hover { color: var(--ink); }
+    footer .made { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1.2rem 2rem; padding-bottom: 1.8rem; margin-bottom: 1.8rem; border-bottom: 1px solid var(--line); }
+    footer .by { display: flex; flex-direction: column; gap: .35rem; }
+    footer .by small { font: 500 11px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+    footer .by a { color: var(--ink); font-weight: 800; font-variation-settings: "wdth" 125; text-transform: uppercase; letter-spacing: .04em; font-size: 18px; }
+    footer .by a b { color: var(--amber); font-weight: 800; }
+    footer .by a:hover { color: var(--amber); }
+    footer .coffee { gap: .55rem; min-height: 44px; }
+    footer .coffee svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    footer .coffee:hover { color: var(--amber-ink); }
 
     /* Demo: one screen that plays itself 01 -> 07 when it comes into view; the take plays with sound. */
     .demo { position: relative; border-bottom: 1px solid var(--line); }
@@ -468,7 +477,13 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
     </div>
   </div></section>
 
-  <footer><div class="w">
+  <footer><div class="w made">
+    <div class="by">
+      <small>Developed by</small>
+      <a href="https://vektraindustries.com/#software" rel="noopener">Vektra <b>Software</b> →</a>
+    </div>
+    <a class="btn primary coffee" href="https://buymeacoffee.com/vektraindustries" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M17 10h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 2.5v2.5M12 2.5v2.5"/></svg>Buy me a coffee</a>
+  </div><div class="w">
     <span>Hermes Studio · built for <a href="https://hermes-agent.nousresearch.com">Hermes Agent</a> by Nous Research</span>
     <span>MIT licensed · inspired by <a href="https://github.com/bridge-mind/bridgeclip">BridgeClip</a> by BridgeMind</span>
     <span><a href="https://github.com/PabloTheThinker/hermes-studio">GitHub</a></span>
