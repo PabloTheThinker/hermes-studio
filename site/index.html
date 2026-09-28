@@ -122,6 +122,7 @@
     pre { margin: 0; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--amber); padding: 1.3rem 1.5rem; overflow-x: auto; font: 14px/1.8 var(--mono); color: var(--ink); }
     pre .c { color: var(--dim); }
     .install { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+    .install > div { min-width: 0; }   /* grid items default to min-width:auto: a long <pre> line would widen the whole page on phones */
     .install p { color: var(--mute); margin: 0 0 1rem; }
 
     footer { padding: 2.5rem 0 3.5rem; color: var(--dim); font-size: 14px; }
@@ -455,7 +456,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         lbl: q(".track .lbl"), clock: q(".track .clock"), wave: q(".wave"), ph: q(".ph"), track: q(".track"),
         vid: q(".takev video"), snd: q(".snd") };
       if (reduce && el.vid) el.vid.controls = true;
-      let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [], liveCt = null;   // liveCt: real source-video time while it plays
+      let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [], liveCt = null, srcNow = 13.1;   // liveCt: real source-video time while it plays
 
       function build() {
         const N = 120;
@@ -510,16 +511,16 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         el.ok.style.opacity = seg(p, .07, .1);
 
         // 02 listen
-        const tl = seg(p, .12, .29), now = DUR * tl;
+        const tl = seg(p, .12, .29), now = srcNow;
         const listening = p >= .1 && p < .31;
         el.tx.style.opacity = (seg(p, .11, .14) * (1 - seg(p, .29, .32))).toFixed(3);
         el.ph.style.opacity = listening ? 1 : (p >= .60 && p < .76 ? 1 : 0);
         if (W.length) {
-          const heard = W.filter(([, s]) => s <= now).slice(-34);
+          const heard = W.filter(([, s]) => s >= 13.09 && s <= now).slice(-34);
           el.tx.innerHTML = heard.length
             ? `<div><span class="t">${mmss(heard[0][1])}</span> ` + heard.map(([w], i) => i >= heard.length - 3 ? `<em>${w}</em>` : w).join(" ") + "</div>"
             : `<div><span class="t">0:00</span> …</div>`;
-          const litUpTo = p < .12 ? 0 : p >= .29 ? bars.length : Math.floor(bars.length * tl);
+          const litUpTo = p < .12 ? 0 : p >= .29 ? bars.length : Math.floor(bars.length * now / DUR);
           bars.forEach((b, i) => b.classList.toggle("lit", i < litUpTo && p < .76));
         }
         el.wave.style.opacity = p >= .30 && p < .76 ? .35 : p >= .76 ? .25 : 1;
@@ -584,7 +585,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       }
 
       // ---- timeline: seconds per step (01..06), then the take card fades in and the short plays
-      const DURS = [2.2, 4.4, 3.2, 3.4, 4.4, 3.0, 1.4];
+      const SRC0 = 13.1;                                    // "If I could take, if I could give one piece of advice…"
+      const DURS = [2.6, 5.6, 4.2, 4.4, 6.2, 4.5, 1.4];     // 01-03 reach the picked clip (25.5 s) at step 04; 04-06 play it to its end
       const ENDS = [...STEPS.slice(1), 1];
       const T = DURS.reduce((a, d, i) => (a.push(a[i] + d), a), [0]);   // T[i] = start of step i
       const TAKE_AT = T[6] + 0.35;
@@ -607,7 +609,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       const sv = el.img && el.img.tagName === "VIDEO" ? el.img : null;
       const pre = q(".sndpre"), takev = q(".takev");
       let blessed = false, srcBlocked = false, svPending = false;
-      const svAt = (tt) => (tt < T[3] ? tt : CLIP[0] + (tt - T[3]));
+      const svAt = (tt) => SRC0 + Math.min(tt, T[6]);
       function srcSync(force) {
         if (!sv || !isFinite(sv.duration || NaN) && !force) return;
         const want = Math.min(svAt(Math.min(t, T[6])), CLIP[1] + 2);
@@ -615,9 +617,12 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       }
       function srcPlay() {
         if (!sv || svPending || !playing || t >= T[6] || !sv.paused) return;
-        sv.muted = true; srcSync(true); svPending = true;
+        sv.muted = userMuted || !hasAct(); srcSync(true); svPending = true;
         sv.play().then(() => { svPending = false; srcBlocked = false; pill(); })
-          .catch(() => { svPending = false; srcBlocked = true; pill(); });    // iOS Low Power Mode / in-app browsers refuse even muted video
+          .catch(() => {                                     // sound refused: carry on muted; if even that is refused, ask for a tap
+            if (!sv.muted) { sv.muted = true; sv.play().then(() => { svPending = false; pill(); }).catch(() => { svPending = false; srcBlocked = true; pill(); }); }
+            else { svPending = false; srcBlocked = true; pill(); }
+          });    // iOS Low Power Mode / in-app browsers refuse even muted video
       }
       function srcPause() { if (sv && !sv.paused) sv.pause(); }
       function hasAct() { return blessed || !!(navigator.userActivation && navigator.userActivation.hasBeenActive); }
@@ -648,7 +653,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         if (sv) {
           if (playing && t < T[6]) { if (sv.paused) srcPlay(); else srcSync(false); }
           else if (t >= T[6]) srcPause();
-          liveCt = sv && !sv.paused && t >= T[3] && t < T[6] ? clamp(sv.currentTime, CLIP[0], CLIP[1]) : null;
+          srcNow = !sv.paused ? sv.currentTime : svAt(t);
+          liveCt = t >= T[3] && t < T[6] ? clamp(srcNow, CLIP[0], CLIP[1]) : null;
         }
         const vt = takeOn && v ? Math.min(v.currentTime, vidDur) : 0;
         el.bar.style.transform = `scaleX(${((Math.min(t, T[6]) + vt) / (T[6] + vidDur)).toFixed(4)})`;
@@ -661,7 +667,9 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       function tick() {
         if (!playing) return;
         const now = performance.now();
-        t = Math.min(T[7], t + Math.min(.25, (now - last) / 1000)); last = now;
+        if (sv && !sv.paused && !sv.seeking && t < T[6]) t = clamp(sv.currentTime - SRC0, 0, T[6]);   // her voice is the clock
+        else t = Math.min(T[7], t + Math.min(.25, (now - last) / 1000));
+        last = now;
         render();
       }
       function loop() { raf = 0; if (!playing) return; tick(); raf = requestAnimationFrame(loop); }
@@ -706,9 +714,18 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       });
       const tp = q(".takeplay");
       if (tp && v) tp.addEventListener("click", () => { setBlocked(false); v.muted = userMuted; v.play().then(syncSnd).catch(() => {}); if (!playing && !ended) { userPaused = false; play(); } });
+      let asked = false;
+      function applyMute() {
+        if (sv && !sv.paused) sv.muted = userMuted;
+        if (v && takeOn && !ended) v.muted = userMuted;
+        syncSnd();
+      }
       if (pre) pre.addEventListener("click", () => {
-        if (pre.dataset.need === "1") userMuted = false; else userMuted = !userMuted;   // first tap = "yes, sound"; after that it toggles
-        if (!playing && !ended) { userPaused = false; play(); }
+        if (!asked) {                                        // first tap: "yes, sound" - start again from 01 so it is heard from the beginning
+          asked = true; userMuted = false;
+          if (sv) { sv.muted = false; sv.play().catch(() => {}); }
+          if (!takeOn) jump(0); else applyMute();
+        } else { userMuted = !userMuted; applyMute(); if (!playing && !ended) { userPaused = false; play(); } }
         pill();
       });
       // The first real tap/click/key anywhere is the permission browsers want. Use it at once, inside the gesture:
@@ -717,13 +734,13 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       //  - if the take is already playing muted, turn its sound on
       const bless = (e) => {
         const own = e.target && e.target.closest && e.target.closest(".snd, .sndpre, .takeplay");
-        if (pre) pre.dataset.need = pre.classList.contains("need") ? "1" : "";
         const first = !blessed; blessed = true;
         if (v && first && !takeOn) {
           v.muted = true;
           v.play().then(() => { if (!takeOn) { v.pause(); try { v.currentTime = 0; } catch (x) {} } }).catch(() => {});
         }
         if (sv && playing && sv.paused && t < T[6]) { svPending = false; srcPlay(); }
+        else if (!own && sv && !sv.paused && sv.muted && !userMuted) { sv.muted = false; sv.play().catch(() => {}); }
         if (!own && takeOn && !ended && v && !userMuted && (v.muted || v.paused)) {
           v.muted = false; setBlocked(false); nudge(false);
           if (v.paused) v.play().catch(() => {});
