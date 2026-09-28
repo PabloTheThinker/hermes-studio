@@ -161,6 +161,9 @@
     .take { position: absolute; inset: 0; background: rgba(11,11,12,.95); display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 100%); gap: 5%; padding: 4.5% 5%; opacity: 0; pointer-events: none; }
     .take img { height: 100%; width: auto; max-width: none; aspect-ratio: 9 / 16; object-fit: cover; border: 1px solid var(--line-2); display: block; min-height: 0; }
     .takev { position: relative; height: 100%; aspect-ratio: 9 / 16; min-height: 0; border: 1px solid var(--line-2); background: #000; }
+    .demo.live .take { display: block; padding: 0; }
+    .demo.live .takev { position: absolute; left: 5%; top: 4.5%; width: 28.8%; height: 91%; aspect-ratio: auto; }
+    .demo.live .take .files { position: absolute; left: 38.8%; right: 5%; top: 50%; transform: translateY(-50%); min-width: 0; }
     .takev video { width: 100%; height: 100%; object-fit: cover; display: block; }
     .snd { position: absolute; left: 50%; bottom: 7%; transform: translateX(-50%); background: rgba(11,11,12,.86); color: var(--ink); border: 1px solid var(--line-2); font: 500 11px var(--mono); padding: .4em .8em; cursor: pointer; white-space: nowrap; }
     .snd:hover, .snd:focus-visible { border-color: var(--amber); color: var(--amber); outline: none; }
@@ -198,6 +201,15 @@
     .bigplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 6; display: none; align-items: center; gap: .6em; background: var(--amber); color: var(--amber-ink); border: 0; font: 600 14px var(--mono); padding: .9em 1.4em; cursor: pointer; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
     .bigplay::before { content: ""; border-style: solid; border-width: .5em 0 .5em .85em; border-color: transparent transparent transparent currentColor; }
     .demo.live.paused .bigplay { display: inline-flex; }
+    /* sound pill: ask for the one tap early, so the take can start with sound on its own */
+    .sndpre { position: absolute; left: 3%; bottom: 5%; z-index: 5; display: none; background: rgba(11,11,12,.88); color: var(--ink); border: 1px solid var(--line-2); font: 500 11px var(--mono); padding: .45em .85em; cursor: pointer; white-space: nowrap; }
+    .demo.live .sndpre { display: inline-block; }
+    .demo.live.intake .sndpre { display: none; }
+    .sndpre[aria-pressed="true"] { color: var(--amber); }
+    .sndpre.need { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); font-weight: 600; animation: nudge 1.6s var(--ease) infinite; }
+    .takeplay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3; display: none; background: var(--amber); color: var(--amber-ink); border: 0; font: 600 12px var(--mono); padding: .8em 1.1em; cursor: pointer; white-space: nowrap; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+    .takev.blocked .takeplay { display: inline-block; }
+    .takev.blocked .snd { display: none; }
     .demo-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
     .demo-bar i { display: block; height: 100%; background: var(--amber); transform-origin: left; transform: scaleX(0); }
     .demo:not(.live) .demo-bar { display: none; }
@@ -214,6 +226,8 @@
       .tx { font-size: 10.5px; width: 46%; padding: .5rem .6rem; }
       .chip { font-size: 10px; padding: .3rem .5rem; }
       .take { gap: 4%; padding: 4% 4%; }
+      .demo.live .takev { left: 4%; }
+      .demo.live .take .files { left: 37%; right: 4%; }
       .take .kicker, .take .fr:nth-child(4) { display: none; }
       .take .ttl { font-size: 13px; margin-bottom: .45rem; }
       .take .fr { font-size: 9.5px; padding: .25rem 0; flex-direction: column; gap: 0; }
@@ -278,7 +292,8 @@
         </div>
         <div class="stage" aria-hidden="true">
           <div class="screen">
-            <img class="src" src="assets/ex-talk-src.jpg" alt="">
+            <video class="src" src="assets/demo-src.mp4" poster="assets/demo-src-poster.jpg" muted playsinline preload="metadata" disablepictureinpicture></video>
+            <button type="button" class="sndpre need">Tap for sound</button>
             <div class="guide"><span>9:16</span></div>
             <div class="facebox"><span>face</span></div>
             <div class="chip"><span>talk.mp4</span><span>1:00</span><span>1280×720</span><span class="ok">probe ok</span></div>
@@ -286,7 +301,7 @@
             <div class="cap"></div>
             <button type="button" class="bigplay" aria-label="Play the demo">Play demo</button>
             <div class="take">
-              <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted playsinline preload="metadata"></video><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
+              <div class="takev"><video src="assets/demo-short.mp4" poster="assets/demo-short-poster.jpg" muted playsinline preload="metadata"></video><button type="button" class="takeplay">Play with sound</button><button type="button" class="snd" aria-label="Play with sound">Sound on</button></div>
               <div class="files">
                 <p class="kicker" style="margin-bottom:.5rem">Named from its own words</p>
                 <p class="ttl">Sometimes the opportunities I've gotten</p>
@@ -332,7 +347,7 @@
       <figure class="reveal">
         <div class="pair">
           <div><img src="assets/ex-talk-src.jpg" alt="Wide 16:9 interview frame of a NASA engineer" loading="lazy"><span class="tag">Source · 16:9</span></div>
-          <div><video src="assets/demo-short.mp4" poster="assets/ex-talk-out.jpg" controls muted playsinline preload="none" aria-label="The 15-second vertical short Hermes Studio rendered from this talk"></video><span class="tag"><b>Auto → Speaker</b> · real output, press play</span></div>
+          <div><video src="assets/demo-short.mp4" poster="assets/ex-talk-out.jpg" controls playsinline preload="none" aria-label="The 15-second vertical short Hermes Studio rendered from this talk"></video><span class="tag"><b>Auto → Speaker</b> · real output, press play</span></div>
         </div>
         <figcaption><h3>Talking head</h3><p>Face found, crop locked on it for the whole clip. Word-by-word captions sit clear of the app buttons. Audio cleaned and levelled. That video is Studio's own render, untouched.</p></figcaption>
       </figure>
@@ -439,14 +454,8 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         tx: q(".tx"), face: q(".facebox"), guide: q(".guide"), cap: q(".cap"), take: q(".take"), rows: qa(".take .fr"),
         lbl: q(".track .lbl"), clock: q(".track .clock"), wave: q(".wave"), ph: q(".ph"), track: q(".track"),
         vid: q(".takev video"), snd: q(".snd") };
-      if (el.snd && el.vid) el.snd.addEventListener("click", () => {
-        el.vid.muted = !el.vid.muted;
-        el.snd.setAttribute("aria-pressed", String(!el.vid.muted));
-        el.snd.textContent = el.vid.muted ? "Sound on" : "Sound off";
-        if (!el.vid.muted) { el.vid.currentTime = 0; el.vid.play().catch(() => {}); }
-      });
       if (reduce && el.vid) el.vid.controls = true;
-      let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [];
+      let W = [], bars = [], wins = [], gaps = [], cut = 0, capWords = [], liveCt = null;   // liveCt: real source-video time while it plays
 
       function build() {
         const N = 120;
@@ -537,7 +546,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         el.guide.style.transform = el.face.style.transform = `translateX(${px.toFixed(1)}px)`;
 
         // 05 caption: time runs through the picked clip
-        const tc = seg(p, .60, .75), ct = CLIP[0] + tc * (CLIP[1] - CLIP[0]);
+        const tc = seg(p, .60, .75), ct = liveCt != null ? liveCt : CLIP[0] + tc * (CLIP[1] - CLIP[0]);
         el.cap.style.opacity = (seg(p, .58, .62) * (1 - seg(p, .87, .9))).toFixed(3);
         if (capWords.length) {
           let k = capWords.findIndex(([, s, e]) => ct >= s && ct < e);
@@ -594,21 +603,53 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         el.snd.setAttribute("aria-pressed", String(!v.muted));
       }
       function nudge(on) { if (el.snd) { el.snd.classList.toggle("nudge", on); syncSnd(); } }
+      // ---- the source talk plays for real from step 01 (muted); from 04 it jumps to the picked clip and the captions follow its clock
+      const sv = el.img && el.img.tagName === "VIDEO" ? el.img : null;
+      const pre = q(".sndpre"), takev = q(".takev");
+      let blessed = false, srcBlocked = false, svPending = false;
+      const svAt = (tt) => (tt < T[3] ? tt : CLIP[0] + (tt - T[3]));
+      function srcSync(force) {
+        if (!sv || !isFinite(sv.duration || NaN) && !force) return;
+        const want = Math.min(svAt(Math.min(t, T[6])), CLIP[1] + 2);
+        if (force || Math.abs(sv.currentTime - want) > 0.6) { try { sv.currentTime = want; } catch (e) {} }
+      }
+      function srcPlay() {
+        if (!sv || svPending || !playing || t >= T[6] || !sv.paused) return;
+        sv.muted = true; srcSync(true); svPending = true;
+        sv.play().then(() => { svPending = false; srcBlocked = false; pill(); })
+          .catch(() => { svPending = false; srcBlocked = true; pill(); });    // iOS Low Power Mode / in-app browsers refuse even muted video
+      }
+      function srcPause() { if (sv && !sv.paused) sv.pause(); }
+      function hasAct() { return blessed || !!(navigator.userActivation && navigator.userActivation.hasBeenActive); }
+      function pill() {
+        if (!pre) return;
+        const need = srcBlocked || !hasAct();
+        pre.classList.toggle("need", need);
+        pre.textContent = srcBlocked ? "Tap to play" : need ? "Tap for sound" : userMuted ? "Sound off" : "Sound on";
+        pre.setAttribute("aria-pressed", String(!need && !userMuted));
+      }
+      function setBlocked(on) { if (takev) takev.classList.toggle("blocked", on); }
       function playTake() {
         if (!v) return;
+        setBlocked(false);
         v.muted = userMuted;
-        v.play().then(syncSnd).catch(() => {           // browsers block sound until the visitor has clicked or tapped
-          v.muted = true; nudge(!userMuted);
-          v.play().catch(() => {});
+        v.play().then(() => { syncSnd(); nudge(false); }).catch(() => {    // no tap yet: sound is refused, so play muted and ask
+          v.muted = true;
+          v.play().then(() => nudge(!userMuted)).catch(() => { nudge(false); setBlocked(true); });   // even muted refused: big button
         });
       }
-      function startTake() { takeOn = true; ended = false; if (v) { v.preload = "auto"; v.currentTime = 0; playTake(); } }
-      function stopTake() { takeOn = false; ended = false; if (v) { v.pause(); v.currentTime = 0; } nudge(false); }
+      function startTake() { takeOn = true; ended = false; sec.classList.add("intake"); srcPause(); if (v) { v.preload = "auto"; v.currentTime = 0; playTake(); } }
+      function stopTake() { takeOn = false; ended = false; sec.classList.remove("intake"); setBlocked(false); if (v) { v.pause(); v.currentTime = 0; } nudge(false); }
 
       function render() {
         draw(reduce ? .7 : pAt(t));
         if (reduce) return;
         if (!takeOn && t >= TAKE_AT && playing) startTake();
+        if (sv) {
+          if (playing && t < T[6]) { if (sv.paused) srcPlay(); else srcSync(false); }
+          else if (t >= T[6]) srcPause();
+          liveCt = sv && !sv.paused && t >= T[3] && t < T[6] ? clamp(sv.currentTime, CLIP[0], CLIP[1]) : null;
+        }
         const vt = takeOn && v ? Math.min(v.currentTime, vidDur) : 0;
         el.bar.style.transform = `scaleX(${((Math.min(t, T[6]) + vt) / (T[6] + vidDur)).toFixed(4)})`;
         if (takeOn) el.clock.textContent = `${mmss(vt)} / ${mmss(vidDur)} · take`;
@@ -630,12 +671,13 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         if (reduce || ended) return;
         started = true;
         if (v && v.preload !== "auto") { v.preload = "auto"; v.load(); }   // buffer the take while 01-06 run
+        if (sv && sv.preload !== "auto") sv.preload = "auto";
         playing = true; last = performance.now();
         if (takeOn && v && v.paused) playTake();
         if (!raf) raf = requestAnimationFrame(loop);
         render();
       }
-      function pause() { playing = false; if (takeOn && v) v.pause(); render(); }
+      function pause() { playing = false; srcPause(); if (takeOn && v) v.pause(); render(); }
       function onScreen() {
         const r = sec.getBoundingClientRect();
         const vis = Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
@@ -648,7 +690,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         else if (playing) pause();
       }
       function jump(i) {                                  // 0-based step; 6 = take
-        stopTake(); t = T[i]; userPaused = false;
+        stopTake(); t = T[i]; userPaused = false; srcSync(true);
         if (i === 6) { t = TAKE_AT; startTake(); }
         play();
       }
@@ -657,17 +699,38 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
       });
       if (el.snd && v) el.snd.addEventListener("click", () => {
         const wasMuted = v.muted;
-        userMuted = !wasMuted; v.muted = !wasMuted; nudge(false);
+        userMuted = !wasMuted; v.muted = !wasMuted; nudge(false); setBlocked(false);
         if (wasMuted && ended) { ended = false; v.loop = false; v.currentTime = 0; playing = true; last = performance.now(); if (!raf) raf = requestAnimationFrame(loop); }
         if (wasMuted && v.paused) v.play().catch(() => {});
-        syncSnd(); render();
+        syncSnd(); pill(); render();
       });
-      // the first click or tap anywhere counts as permission: turn the take's sound on if it's playing muted
-      const unlock = (e) => {
-        if (e.target.closest && e.target.closest(".snd")) return;
-        if (takeOn && !ended && v && v.muted && !userMuted) { v.muted = false; nudge(false); }
+      const tp = q(".takeplay");
+      if (tp && v) tp.addEventListener("click", () => { setBlocked(false); v.muted = userMuted; v.play().then(syncSnd).catch(() => {}); if (!playing && !ended) { userPaused = false; play(); } });
+      if (pre) pre.addEventListener("click", () => {
+        if (pre.dataset.need === "1") userMuted = false; else userMuted = !userMuted;   // first tap = "yes, sound"; after that it toggles
+        if (!playing && !ended) { userPaused = false; play(); }
+        pill();
+      });
+      // The first real tap/click/key anywhere is the permission browsers want. Use it at once, inside the gesture:
+      //  - unlock the take's video for sound (iOS only lets an element play with sound later if it was started inside a tap)
+      //  - start the source video if the phone refused it (Low Power Mode, in-app browsers)
+      //  - if the take is already playing muted, turn its sound on
+      const bless = (e) => {
+        const own = e.target && e.target.closest && e.target.closest(".snd, .sndpre, .takeplay");
+        if (pre) pre.dataset.need = pre.classList.contains("need") ? "1" : "";
+        const first = !blessed; blessed = true;
+        if (v && first && !takeOn) {
+          v.muted = true;
+          v.play().then(() => { if (!takeOn) { v.pause(); try { v.currentTime = 0; } catch (x) {} } }).catch(() => {});
+        }
+        if (sv && playing && sv.paused && t < T[6]) { svPending = false; srcPlay(); }
+        if (!own && takeOn && !ended && v && !userMuted && (v.muted || v.paused)) {
+          v.muted = false; setBlocked(false); nudge(false);
+          if (v.paused) v.play().catch(() => {});
+        }
+        setTimeout(() => { pill(); syncSnd(); }, 0);
       };
-      addEventListener("pointerdown", unlock, true); addEventListener("keydown", unlock, true);
+      ["pointerup", "touchend", "click", "keydown"].forEach((ev) => addEventListener(ev, bless, true));
 
       if (!reduce) {
         el.steps.forEach((li, i) => {
@@ -691,6 +754,7 @@ hermesclip run talk.mp4 --mode transcript</pre></div>
         setTimeout(check, 300); setTimeout(check, 1500);
       }
       addEventListener("resize", render);
+      pill();
       fetch("assets/demo-talk.json").then((r) => r.json()).then((d) => { W = d.w; build(); render(); }).catch(render);
       render();
     })();
