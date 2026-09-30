@@ -18,7 +18,8 @@ mkdir -p "$REL"
 cp /work/HermesStudio.AppImage "$REL/Hermes-Studio-9.9.9.AppImage"
 (cd "$REL" && sha256sum Hermes-Studio-9.9.9.AppImage > SHA256SUMS.txt)
 (cd /srv/rel && python3 -m http.server 8765 >/dev/null 2>&1 &)
-sleep 1
+for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+curl -fsS -o /dev/null http://127.0.0.1:8765/ || { echo "FAIL: local release server never came up"; exit 1; }
 
 # A user who cannot become root and has no FUSE.
 useradd -m -s /bin/bash tester

@@ -128,6 +128,11 @@ jobs:
           "$h  $($setup.Name)" | Out-File -Encoding ascii (Join-Path $rel "SHA256SUMS.txt")
           $srv = Start-Process python -ArgumentList "-m", "http.server", "8765", "--directory", $rel -PassThru -WindowStyle Hidden
           Start-Sleep 3
+          $up = $false
+          foreach ($i in 1..30) {
+            try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:8765/SHA256SUMS.txt" | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          }
+          if (-not $up) { throw "local release server never came up" }
           $env:HERMES_STUDIO_DOWNLOAD_BASE = "http://127.0.0.1:8765"
           Invoke-Expression (Get-Content scripts/install.ps1 -Raw)
           $engine = Join-Path $env:LOCALAPPDATA "Programs\Hermes Studio\resources\engine"
