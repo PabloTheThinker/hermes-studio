@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 __plugin_name__ = "hermesclip"
-__plugin_version__ = "0.3.0"
+__plugin_version__ = "0.5.0"
 
 _HERE = Path(__file__).resolve().parent
 _PROJECT = Path.home() / "projects" / "hermesclip"
@@ -42,8 +42,11 @@ def _out_default() -> Path:
 
 
 def _run_mod(argv: list[str], timeout: int = 3600) -> dict:
+    """Run the CLI with --json: stdout is exactly one JSON object, progress goes to stderr."""
     env = os.environ.copy()
     env["PYTHONPATH"] = str(_PROJECT)
+    if "--json" not in argv:
+        argv = [*argv, "--json"]
     try:
         proc = subprocess.run(
             [_python(), "-m", "hermesclip", *argv],
@@ -55,9 +58,13 @@ def _run_mod(argv: list[str], timeout: int = 3600) -> dict:
         )
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+    out = (proc.stdout or "").strip()
     if proc.returncode != 0:
-        return {"ok": False, "error": (proc.stderr or proc.stdout or "")[-2000:], "code": proc.returncode}
-    return {"ok": True, "stdout": proc.stdout or ""}
+        try:
+            return json.loads(out.splitlines()[-1])
+        except Exception:
+            return {"ok": False, "error": (proc.stderr or proc.stdout or "")[-2000:], "code": proc.returncode}
+    return {"ok": True, "stdout": out}
 
 
 def hermesclip_run(

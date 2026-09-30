@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "hermesclip": {
-      "command": "python3",
-      "args": ["-m", "hermesclip.mcp"],
+      "command": "hermesclip",
+      "args": ["mcp"],
       "timeout": 3600
     }
   }

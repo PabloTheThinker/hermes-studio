@@ -17,7 +17,13 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 
 Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline editor (parked).
 
-## Procedure (agents)
+## Fastest path (any agent)
+
+- MCP: `hermesclip mcp install claude|grok|codex|cursor|hermes`, then tools `run` / `show` / `list` / `restyle` / `copy` / `doctor`.
+- CLI: every command takes `--json` (one object on stdout; exit 0 ok, 1 failed, 2 bad input, 3 missing dependency, 4 not found). Long runs: `run … --detach --json` then poll `show <id> --json`.
+- Unsure the box is ready: `hermesclip doctor`.
+
+## Procedure (Hermes plugin tools)
 
 1. `hermesclip_probe` — title / live / duration.
 2. Prefer `hermesclip_recommend` then `hermesclip_run` with those fields, or `hermesclip_run` with `--recommend`.

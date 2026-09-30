@@ -16,65 +16,64 @@ Hermes Studio installs like any desktop app. The engine, FFmpeg and the download
 
 It runs on your computer only. The speech model (about 75 MB) downloads the first time you clip; after that it works offline. Nothing is uploaded or posted.
 
+## Command line
+
+Install once. You need Python 3.11+ and FFmpeg with libass (the desktop app has both built in).
+
+```bash
+uv tool install git+https://github.com/PabloTheThinker/hermes-studio    # or: pipx install git+https://…
+hermesclip doctor                                                      # checks FFmpeg, captions, speech, links
+```
+
+Everyday use:
+
+```bash
+hermesclip run talk.mp4                      # 3 hook-first shorts
+hermesclip run https://youtu.be/ID -n 5      # 5 shorts from a link (live streams too)
+hermesclip run talk.mp4 --mode captions      # caption the whole video
+hermesclip run stream.mp4 --layout split     # facecam on top, gameplay below
+hermesclip run talk.mp4 --prompt "the pricing part" --filter cinematic
+hermesclip list                              # your runs, newest first
+hermesclip show <id>                         # clips, scores, files
+hermesclip open <id>                         # open the folder
+hermesclip studio                            # the desk in your browser
+```
+
+`hermesclip --help` and `hermesclip <command> --help` list everything. Clips are saved to your library (`~/.hermes/clips/library`); `-o DIR` also copies them to DIR. Typos get a "did you mean".
+
+### For scripts and AI agents
+
+- Add `--json` to any command: stdout is exactly one JSON object; progress goes to stderr as JSON lines.
+- Exit codes: `0` ok · `1` the job failed · `2` bad input · `3` missing dependency · `4` not found. Errors carry `code` and a `hint`.
+- `hermesclip run … --detach --json` returns an id straight away; poll `hermesclip show <id> --json` until `status` is `completed` or `failed`.
+- Each clip in a result has `path`, `title`, `score`, `start`, `end` and `seconds`.
+
+## Use it from Claude, Grok, Codex, Cursor or any MCP app
+
+```bash
+hermesclip mcp install claude     # Claude Code
+hermesclip mcp install grok       # Grok CLI
+hermesclip mcp install codex      # Codex CLI
+hermesclip mcp install cursor     # Cursor (~/.cursor/mcp.json)
+hermesclip mcp install hermes     # Hermes Agent (config.yaml)
+hermesclip mcp config             # the JSON block for anything else
+```
+
+Then ask it: *"make 3 shorts from ~/Videos/talk.mp4"*. Tools: `run`, `show`, `list`, `restyle`, `edit`, `probe`, `recommend`, `copy`, `name`, `tools`, `doctor`. Standard MCP stdio; long runs report progress, or pass `detach: true` and poll `show`. The desktop app's **Settings → Use with your AI** shows the same lines with a copy button.
+
 ## Run from source
-
-### Needs
-
-- Linux
-- Python 3.11+
-- FFmpeg with the libass `ass` filter
-
-## Install
 
 ```bash
 git clone https://github.com/PabloTheThinker/hermes-studio.git
 cd hermes-studio
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/pip install -e '.[reframe]'
+.venv/bin/hermesclip doctor
 ```
-
-Hermes skill: copy `skills/hermesclip/` into `$HERMES_HOME/skills/hermesclip/`.
-
-## Localhost Studio
-
-Create · Library · Jobs on loopback.
-
-```bash
-.venv/bin/python -m hermesclip studio --host 127.0.0.1 --port 3870
-```
-
-Open http://127.0.0.1:3870/
-
-Paste a YouTube / X / Twitch URL (including a live stream). Live sources capture a timed slice (default 20 min), then Clip cuts. Finished runs land in Library.
-
-## CLI
-
-```bash
-.venv/bin/python -m hermesclip probe URL
-.venv/bin/python -m hermesclip run VIDEO.mp4 \
-  --out ./clips --max-clips 3 \
-  --layout fit --plan heuristic --pacing tight --style pop
-.venv/bin/python -m hermesclip run 'https://youtube.com/watch?v=…' --live-seconds 1200
-.venv/bin/python -m hermesclip list
-```
-
-- Layout: `fit` (default) | `fill`
-- Styles: `pop` | `impact` | `clean`
-- Pacing: `tight` | `natural`
-- Live: `--live-seconds` (max 7200), `--live-from-start` (YouTube)
 
 ## Hermes plugin
 
-Copy `hermes_plugin/hermesclip/` into `$HERMES_HOME/plugins/hermesclip/` and merge `hermesclip` into `plugins.enabled`. After a **new session**:
-
-- `hermesclip_run`
-- `hermesclip_transcribe`
-- `hermesclip_plan`
-- `hermesclip_list`
-- `hermesclip_probe`
-- `hermesclip_studio`
-
-Does not post.
+Copy `hermes_plugin/hermesclip/` into `$HERMES_HOME/plugins/hermesclip/` and add `hermesclip` to `plugins.enabled` (or use `hermesclip mcp install hermes`). Hermes skill: copy `skills/hermesclip/` into `$HERMES_HOME/skills/hermesclip/`. Tools appear in the next session. Does not post.
 
 ## Site
 

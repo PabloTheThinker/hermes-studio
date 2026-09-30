@@ -388,6 +388,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermesclip.edit import list_trash
 
             return _json(self, 200, {"ok": True, "files": list_trash(Path(job.dir))})
+        if path == "/api/doctor":
+            from hermesclip.api import doctor
+            from hermesclip.mcp import client_config
+
+            return _json(self, 200, {**doctor(), "mcp": client_config()})
         if path.startswith("/media/"):
             parts = path.strip("/").split("/")
             if len(parts) != 3:

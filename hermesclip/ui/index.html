@@ -107,6 +107,7 @@
     .index-row:hover .arw { transform: translateX(4px); color: var(--amber); }
 
     /* Settings: hairline sections */
+    code.mcp-line { font: 500 12px var(--mono); color: var(--ink); background: rgba(255,255,255,.04); border: 1px solid var(--line); padding: .35rem .5rem; display: inline-block; max-width: 100%; overflow-wrap: anywhere; user-select: all; }
     .sec { border-top: 1px solid var(--line); padding: 1.25rem 0 .4rem; display: grid; grid-template-columns: 180px 1fr; gap: 1.25rem; }
     .sec > h3 { margin: 0; font: 600 11px var(--sans); letter-spacing: .2em; text-transform: uppercase; color: var(--mute); padding-top: .3rem; }
     .opts { display: flex; flex-wrap: wrap; gap: 0; border: 1px solid var(--line); margin: 0 0 1rem; width: fit-content; max-width: 100%; }
@@ -795,7 +796,31 @@
 
     function settingsPage() {
       const row = (k, v) => `<div class="index-row"><span>${k}</span><span>${v}</span></div>`;
+      const d = state.doctor;
+      if (!d && !state.doctorLoading) { state.doctorLoading = true; api("/api/doctor").then(r => { state.doctor = r; state.doctorLoading = false; if (state.page === "settings") render(); }).catch(() => { state.doctorLoading = false; }); }
+      const checks = d ? d.checks.map(c => {
+        const mark = c.ok ? `<span style="color:var(--amber)">✓</span>` : c.required ? `<span style="color:#e5484d">✗</span>` : `<span style="color:var(--mute)">!</span>`;
+        return `<div class="index-row"><span>${mark} ${esc(c.name)}</span><span style="min-width:0;overflow-wrap:anywhere">${esc(c.detail)}${c.fix ? `<br><span class="hint">${esc(c.fix)}</span>` : ""}</span></div>`;
+      }).join("") : `<div class="index-row"><span>Checking…</span><span></span></div>`;
+      const cmd = d && d.mcp ? [d.mcp.command, ...d.mcp.args].map(x => /\s/.test(x) ? `"${x}"` : x).join(" ") : "hermesclip mcp";
+      const lines = [
+        ["Claude Code", `claude mcp add --scope user hermesclip -- ${cmd}`],
+        ["Grok", `grok mcp add --scope user hermesclip -- ${cmd}`],
+        ["Codex", `codex mcp add hermesclip -- ${cmd}`],
+        ["Anything else", JSON.stringify({ mcpServers: { hermesclip: d && d.mcp ? { command: d.mcp.command, args: d.mcp.args } : { command: "hermesclip", args: ["mcp"] } } })],
+      ];
+      const ai = lines.map(([k, v], i) => `<div class="index-row"><span>${k}</span><span><code class="mcp-line">${esc(v)}</code> <button class="btn sm" data-copy-line="${i}">Copy</button></span></div>`).join("");
+      state.mcpLines = lines.map(x => x[1]);
+      const mcpNote = d && d.mcp && d.mcp.note ? `<p class="hint" style="margin:.2rem 0 .6rem;color:var(--amber)">${esc(d.mcp.note)}</p>` : "";
       return `<div class="head"><h1>Settings</h1><p class="desc">Everything runs on this computer. Nothing is uploaded.</p></div>
+        <section class="sec"><h3>Health</h3><div>
+          ${d ? `<p class="hint" style="margin:0 0 .6rem">${d.ok ? "Ready. Everything Studio needs is here." : "Something needs fixing. Each line says how."}</p>` : ""}
+          ${checks}
+        </div></section>
+        <section class="sec"><h3>Use with your AI</h3><div>
+          <p class="hint" style="margin:0 0 .6rem">Let Claude, Grok, Codex or any MCP app make clips for you. Run one line in a terminal, then ask it: “make 3 shorts from my video”.</p>
+          ${mcpNote}${ai}
+        </div></section>
         <section class="sec"><h3>Engine</h3><div>
           ${row("Transcription", "Whisper, on this machine")}
           ${row("Rendering", "FFmpeg, on this machine")}
@@ -803,9 +828,10 @@
           ${row("Posting", "Never. You post.")}
         </div></section>
         <section class="sec"><h3>This desk</h3><div>
+          ${row("Version", d ? esc(d.version) : "…")}
           ${row("Saved runs", String(state.library.length))}
           ${row("Jobs", String(state.jobs.length))}
-          ${row("Engine", "hermesclip studio · port 3870")}
+          ${row("Engine", "hermesclip studio · " + esc(location.host))}
         </div></section>`;
     }
     function jobsPage() {
@@ -899,6 +925,12 @@
     }
     function bind() {
       bindClips();
+      document.querySelectorAll("[data-copy-line]").forEach(el => el.onclick = async () => {
+        const text = (state.mcpLines || [])[Number(el.dataset.copyLine)] || "";
+        try { await navigator.clipboard.writeText(text); el.textContent = "Copied"; }
+        catch { const r = document.createRange(); r.selectNodeContents(el.previousElementSibling); const s = getSelection(); s.removeAllRanges(); s.addRange(r); el.textContent = "Selected"; }
+        setTimeout(() => { el.textContent = "Copy"; }, 1600);
+      });
       document.querySelectorAll("main [data-tool]").forEach(el => el.onclick = () => pickTool(el.dataset.tool));
       const all = $("#all-tools"); if (all) all.onclick = (e) => { e.preventDefault(); go("#/tools"); };
       document.querySelectorAll("[data-k]").forEach(el => el.onclick = () => { grabForm(); state[el.dataset.k] = el.dataset.n ? Number(el.dataset.v) : el.dataset.v; render(); });

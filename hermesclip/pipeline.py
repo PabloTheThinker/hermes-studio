@@ -634,7 +634,7 @@ def execute_job(job: Job, on_progress: Progress | None = None) -> Job:
 
 def run_once(
     src: str,
-    out_dir: Path,
+    out_dir: Path | None,
     *,
     max_clips: int = 3,
     whisper: str = "tiny",
@@ -657,6 +657,7 @@ def run_once(
     keywords: str = "",
     look: dict | None = None,
     fixes: dict | None = None,
+    on_created: Callable[[Job], None] | None = None,
 ) -> dict:
     """CLI-shaped run. Writes clips into out_dir (not necessarily the library)."""
     job = new_job(
@@ -683,10 +684,12 @@ def run_once(
     if work:
         job.work = str(work)
         job.save()
+    if on_created:
+        on_created(job)
     job = execute_job(job, on_progress=on_progress)
     dest = Path(job.dir)
     files = [str(dest / c["file"]) for c in job.clips] + [str(dest / f["file"]) for f in (job.files or [])]
-    if out_dir.resolve() != dest.resolve():
+    if out_dir is not None and out_dir.resolve() != dest.resolve():
         out_dir.mkdir(parents=True, exist_ok=True)
         copied = []
         for p in files:
@@ -696,10 +699,27 @@ def run_once(
                 shutil.copy2(srcp, target)
                 copied.append(str(target))
         files = copied or files
+    by_name = {Path(p).name: p for p in files}
+    items = [
+        {
+            "file": c.get("file"),
+            "path": by_name.get(c.get("file") or "", str(dest / (c.get("file") or ""))),
+            "title": c.get("title") or "",
+            "start": c.get("start"),
+            "end": c.get("end"),
+            "seconds": round(float(c["end"]) - float(c["start"]), 1) if c.get("end") is not None and c.get("start") is not None else None,
+            "score": c.get("score"),
+            "virality": c.get("virality"),
+        }
+        for c in job.clips
+    ]
     return {
         "ok": job.status == "completed",
+        "id": job.id,
         "source": job.src,
         "clips": files,
+        "items": items,
+        "dir": job.dir,
         "work": job.work,
         "title": job.title,
         "mode": job.mode,
