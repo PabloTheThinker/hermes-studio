@@ -8,19 +8,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]          # a version tag builds, tests, then publishes the release
-  pull_request:
-    paths:
-      - "desktop/**"
-      - "hermes_studio/**"
-      - "scripts/build-engine-*"
-      - "scripts/clean-test-*"
-      - "scripts/install.*"
-      - "electron-builder.json"
-      - "package.json"
-      - "package-lock.json"
-      - "pyproject.toml"
-      - "README.md"
-      - ".github/workflows/desktop.yml"
+  pull_request:          # every PR; the `changes` job decides whether the app is rebuilt
 permissions:
   contents: read
 concurrency:
@@ -33,7 +21,36 @@ env:
   FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
   FFMPEG_LINUX_SHA256: 68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269
 jobs:
+  # linux and windows are required checks on main. A path filter on the trigger would leave them
+  # "expected" forever on a site-only PR, so every PR runs this job instead; when no app file changed,
+  # linux and windows are skipped, which GitHub counts as passing.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then echo "app=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$files"
+          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|\.github/workflows/desktop\.yml$)'; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+
   linux:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -86,6 +103,8 @@ jobs:
           path: dist/Hermes-Studio-*.AppImage
           retention-days: 14
   windows:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
