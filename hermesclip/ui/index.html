@@ -276,10 +276,11 @@
       <div>
         <p class="rail-h">Desk</p>
         <nav class="rail" id="pages">
-          <button data-page="clips" class="on"><span class="nm">Clips</span><span class="ct" id="clip-ct"></span></button>
+          <button data-page="clips" class="on"><span class="nm">Clips</span><span class="ct" id="clip-ct" title="Clip runs"></span></button>
           <button data-page="create"><span class="nm">Other tools</span></button>
-          <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct"></span></button>
-          <button data-page="jobs"><span class="nm">Jobs</span><span class="ct" id="job-ct"></span></button>
+          <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct" title="Saved runs"></span></button>
+          <button data-page="jobs"><span class="nm">Jobs</span><span class="ct" id="job-ct" title="Jobs"></span></button>
+          <button data-page="settings"><span class="nm">Settings</span></button>
         </nav>
       </div>
       <div>
@@ -372,14 +373,14 @@
         const lib = await api("/api/library"); state.library = lib.runs || []; state.folders = lib.folders || [];
       } catch { return; }
       const live = state.jobs.filter(j => j.status === "queued" || j.status === "running").length;
-      $("#job-ct").textContent = live ? live + " live" : (state.jobs.length || "");
+      $("#job-ct").textContent = live ? live + " live" : (state.jobs.length ? state.jobs.length + " jobs" : "");
       $("#job-ct").classList.toggle("live", !!live);
-      $("#lib-ct").textContent = state.library.length || "";
+      $("#lib-ct").textContent = state.library.length ? state.library.length + " saved" : "";
       const running = state.jobs.filter(j => j.status === "running").length, queued = live - running;
       const tl = $("#top-live"); tl.textContent = [running ? running + " running" : "", queued ? queued + " queued" : ""].filter(Boolean).join(" · "); tl.hidden = !live;
       if (state.open && state.open.pending) { const f = state.library.find(j => j.id === state.open.id); if (f) { state.open = f; try { const t = await api("/api/trash?job=" + encodeURIComponent(f.id)); state.trash = t.files || []; } catch {} render(); } }
       const clipRuns = state.library.filter(j => (j.mode || "clip") === "clip").length;
-      $("#clip-ct").textContent = clipRuns || "";
+      $("#clip-ct").textContent = clipRuns ? clipRuns + " runs" : "";
       if (state.page === "clips" && !state.open) { const pj = $("#projects"); if (pj) { pj.innerHTML = projectsHtml(); bindProjects(); } return; }
       if (state.page === "clips" && state.open) {
         const live = state.library.find(x => x.id === state.open.id);
@@ -403,7 +404,7 @@
       const [page, arg] = [parts[0] || "clips", parts[1] || ""];
       state.err = ""; state.tx = null;
       if (page === "tools") { state.page = "create"; state.open = null; if (arg && toolById(arg)) { state.tool = arg; Object.assign(state, toolById(arg).defaults || {}); } else state.tool = null; }
-      else if (page === "library" || page === "jobs") { state.page = page; state.open = arg ? (state.library.find(j => j.id === arg) || null) : null; }
+      else if (page === "library" || page === "jobs" || page === "settings") { state.page = page; state.open = arg ? (state.library.find(j => j.id === arg) || null) : null; }
       else { state.page = "clips"; state.open = arg ? (state.library.find(j => j.id === arg) || { id: arg, clips: [], pending: true }) : null; if (!state.clipInit) { Object.assign(state, (toolById("clip") || {}).defaults || {}); state.clipInit = true; } }
       renderRail(); render();
       if (state.page === "library" && state.open) openRun(state.open.id, true);
@@ -413,7 +414,7 @@
 
     function render() {
       const main = $("#main .wrap");
-      main.innerHTML = state.page === "clips" ? clipsPage() : state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : jobsPage();
+      main.innerHTML = state.page === "clips" ? clipsPage() : state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : state.page === "settings" ? settingsPage() : jobsPage();
       bind();
     }
 
@@ -791,6 +792,22 @@
     }
 
     /* ---------- Jobs ---------- */
+
+    function settingsPage() {
+      const row = (k, v) => `<div class="index-row"><span>${k}</span><span>${v}</span></div>`;
+      return `<div class="head"><h1>Settings</h1><p class="desc">Everything runs on this computer. Nothing is uploaded.</p></div>
+        <section class="sec"><h3>Engine</h3><div>
+          ${row("Transcription", "Whisper, on this machine")}
+          ${row("Rendering", "FFmpeg, on this machine")}
+          ${row("Cost", "Nothing. No cloud account, no API key")}
+          ${row("Posting", "Never. You post.")}
+        </div></section>
+        <section class="sec"><h3>This desk</h3><div>
+          ${row("Saved runs", String(state.library.length))}
+          ${row("Jobs", String(state.jobs.length))}
+          ${row("Engine", "hermesclip studio · port 3870")}
+        </div></section>`;
+    }
     function jobsPage() {
       const jobs = state.jobs;
       if (!jobs.length) return `<p class="kicker">Jobs</p><h1>Quiet.</h1><div class="empty">Nothing running. Pick a tool to start.</div>`;

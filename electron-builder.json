@@ -1,0 +1,37 @@
+{
+  "appId": "com.vektra.hermesstudio",
+  "productName": "Hermes Studio",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "desktop/**",
+    "resources/icon.png"
+  ],
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "icon": "resources/icon.png",
+    "category": "AudioVideo",
+    "extraResources": [
+      {
+        "from": "build/engine",
+        "to": "engine"
+      }
+    ]
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "icon": "resources/icon.png"
+  },
+  "mac": {
+    "target": [
+      "dmg"
+    ],
+    "icon": "resources/icon.png",
+    "category": "public.app-category.video"
+  }
+}
