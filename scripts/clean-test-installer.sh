@@ -91,10 +91,10 @@ bash install-local.sh < /dev/null | tee rerun.log
 grep -q "Already up to date" rerun.log || { echo "FAIL: re-run re-downloaded"; exit 1; }
 
 echo "== 10. uninstall keeps clips =="
-N=$(find ~/.hermes/clips -name "*.mp4" | wc -l)
+N=$(find "$HOME/.hermes/clips" -name "*.mp4" | wc -l)
 bash install-local.sh --uninstall < /dev/null
 [ ! -e ~/.local/bin/hermes-studio ] && [ ! -d ~/.local/share/hermes-studio ] && [ ! -f ~/.local/share/applications/hermes-studio.desktop ] || { echo "FAIL: uninstall left files"; exit 1; }
-M=$(find ~/.hermes/clips -name "*.mp4" | wc -l)
+M=$(find "$HOME/.hermes/clips" -name "*.mp4" | wc -l)
 [ "$N" -ge 1 ] && [ "$N" = "$M" ] || { echo "FAIL: clips changed ($N -> $M)"; exit 1; }
 echo "uninstall clean; $M clip files kept"
 echo "INSTALLER CLEAN TEST PASSED"

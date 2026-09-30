@@ -7,7 +7,7 @@
 #   1. Downloads the latest desktop app from GitHub Releases and checks its SHA-256.
 #   2. Unpacks it into ~/.local/share/hermes-studio (no FUSE needed, nothing system-wide).
 #   3. Adds Hermes Studio to your app menu and the `hermes-studio` command to ~/.local/bin.
-# Run it again to update. Your clips (~/.hermes/clips) are never touched.
+# Run it again to update. Your clip library is never touched.
 #
 # Options (after `bash -s --` when piped):
 #   --version vX.Y.Z   install that release instead of the latest
@@ -43,7 +43,7 @@ Options:
   --no-modify-path   don't add ~/.local/bin to your shell's PATH
   -h, --help         show this help
 
-Run it again to update. Your clips (~/.hermes/clips) are never touched.
+Run it again to update. Your clip library is never touched.
 EOF
 }
 
@@ -86,7 +86,7 @@ uninstall() {
   [ -f "$DESKTOP_FILE" ] && rm -f "$DESKTOP_FILE"
   [ -d "$DEST" ] && safe_rm "$DEST"
   command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$DATA_HOME/applications" 2>/dev/null || true
-  ok "Hermes Studio removed. Your clips in ~/.hermes/clips were kept."
+  ok "Hermes Studio removed. Your clip library was kept."
 }
 
 check_platform() {
