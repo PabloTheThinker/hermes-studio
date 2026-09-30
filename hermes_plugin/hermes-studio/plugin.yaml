@@ -1,0 +1,20 @@
+name: hermes-studio
+version: "0.5.0"
+description: >
+  Hermes Studio for any Hermes Agent: long video or link in, captioned
+  short clips out. Local Whisper + FFmpeg. Localhost library. Does not post.
+author: "Pablo Navarro"
+kind: standalone
+provides_tools:
+  - hermes_studio_run
+  - hermes_studio_transcribe
+  - hermes_studio_plan
+  - hermes_studio_list
+  - hermes_studio_probe
+  - hermes_studio_desk
+  - hermes_studio_captions
+  - hermes_studio_edit
+  - hermes_studio_recommend
+  - hermes_studio_copy
+  - hermes_studio_restyle
+  - hermes_studio_name

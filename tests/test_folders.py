@@ -1,5 +1,5 @@
 """Platform folders: every source gets a clear home."""
-from hermesclip.folders import folder_name, platform_of, pretty_title, youtube_id
+from hermes_studio.folders import folder_name, platform_of, pretty_title, youtube_id
 
 
 def test_platforms_by_url():
@@ -20,7 +20,7 @@ def test_platforms_by_url():
 
 def test_platforms_for_files():
     assert platform_of("/videos/Youtube_Nmrg1Rn7Ht4.mp4") == "YouTube"
-    assert platform_of("/cache/hermesclip-VQRSnDst6Mc/source.mp4") == "YouTube"
+    assert platform_of("/cache/hermes-studio-VQRSnDst6Mc/source.mp4") == "YouTube"
     assert platform_of("/videos/talk.mp4") == "Local files"
     assert platform_of("/videos/twitch_vod_1.mp4") == "Twitch"
 

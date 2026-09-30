@@ -1,7 +1,7 @@
 [project]
-name = "hermesclip"
+name = "hermes-studio"
 version = "0.5.0"
-description = "Hermes Studio — HermesClip, local 9:16 clipper for Hermes Agent"
+description = "Hermes Studio: long video in, captioned short clips out. Local, for people and AI agents."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
@@ -16,18 +16,18 @@ reframe = ["opencv-python-headless>=4.8,<6"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-hermesclip = "hermesclip.cli:main"
+hermes-studio = "hermes_studio.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["hermesclip*"]
+include = ["hermes_studio*"]
 
 [tool.setuptools.package-data]
-hermesclip = ["ui/*", "data/*"]
+hermes_studio = ["ui/*", "data/*"]
 
 [tool.ruff]
 line-length = 130
 target-version = "py311"
-extend-exclude = ["site", "hermesclip/ui"]
+extend-exclude = ["site", "hermes_studio/ui"]
 
 [tool.ruff.lint]
 # Real bugs (F, E9, B), import order (I), modern syntax (UP), and security (S) —

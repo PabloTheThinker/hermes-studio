@@ -1,9 +1,9 @@
 """Look layer: layout choice, split band crops, filters, caption spot, audio, word fixes."""
-from hermesclip import look
-from hermesclip.face import Face, FaceTrack
-from hermesclip.framing import split_geometry
-from hermesclip.layout import frame_filters
-from hermesclip.pipeline import _clean_fixes
+from hermes_studio import look
+from hermes_studio.face import Face, FaceTrack
+from hermes_studio.framing import split_geometry
+from hermes_studio.layout import frame_filters
+from hermes_studio.pipeline import _clean_fixes
 
 
 def test_make_look_defaults_and_clamps():

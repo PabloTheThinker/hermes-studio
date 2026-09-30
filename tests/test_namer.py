@@ -1,6 +1,6 @@
 """Namer tests: parsing, cleaning, offline fallback. No LLM call."""
 
-from hermesclip import namer
+from hermes_studio import namer
 
 
 def test_clean_strips_noise_and_title_cases():
@@ -18,6 +18,6 @@ def test_offline_title_prefers_strong_line():
 
 
 def test_ai_titles_off_mode(monkeypatch):
-    monkeypatch.setenv("HERMESCLIP_NAMER", "off")
+    monkeypatch.setenv("HERMES_STUDIO_NAMER", "off")
     titles, src = namer.ai_titles(["I made ten thousand dollars in one week."])
     assert src == "offline" and titles[0]

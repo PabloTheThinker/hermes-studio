@@ -2,7 +2,7 @@
 
 import sys
 
-from hermesclip import download
+from hermes_studio import download
 
 
 def test_ytdlp_prefers_own_interpreter_when_importable(monkeypatch):

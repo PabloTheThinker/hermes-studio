@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from hermesclip import studio
-from hermesclip.net import BlockedURL, check_url
+from hermes_studio import studio
+from hermes_studio.net import BlockedURL, check_url
 
 
 def test_host_allow_list():
@@ -16,7 +16,7 @@ def test_host_allow_list():
 
 
 def test_extra_hosts_env(monkeypatch):
-    monkeypatch.setenv("HERMESCLIP_ALLOWED_HOSTS", "studio.lan")
+    monkeypatch.setenv("HERMES_STUDIO_ALLOWED_HOSTS", "studio.lan")
     assert studio.host_allowed("studio.lan:3870")
 
 
@@ -28,7 +28,7 @@ def test_origin_must_match_host():
 
 
 def test_refuses_public_bind(monkeypatch):
-    monkeypatch.delenv("HERMESCLIP_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("HERMES_STUDIO_ALLOW_REMOTE", raising=False)
     with pytest.raises(SystemExit):
         studio.serve("0.0.0.0", 0)
 
@@ -112,7 +112,7 @@ def test_media_path_traversal_is_refused():
 
 
 def test_job_ids_and_clip_names_are_slugs():
-    from hermesclip.pipeline import safe_clip_file, safe_job_id
+    from hermes_studio.pipeline import safe_clip_file, safe_job_id
 
     assert safe_job_id("3da7b951a6b8") and safe_job_id("abc_12-x")
     for bad in ("", "../x", "a/b", ".hidden", "*", "a[1]", "x" * 80):
@@ -123,9 +123,9 @@ def test_job_ids_and_clip_names_are_slugs():
 
 
 def test_local_sources_must_be_media(tmp_path, monkeypatch):
-    from hermesclip.download import local_source
+    from hermes_studio.download import local_source
 
-    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(tmp_path))
+    monkeypatch.setenv("HERMES_STUDIO_MEDIA_ROOTS", str(tmp_path))
 
     vid = tmp_path / "talk.mp4"
     vid.write_bytes(b"x")
@@ -145,7 +145,7 @@ def test_desk_rejects_non_media_sources(tmp_path):
 
 
 def test_platform_hosts_are_exact():
-    from hermesclip.download import kind_of
+    from hermes_studio.download import kind_of
 
     assert kind_of("https://www.youtube.com/watch?v=x") == "youtube"
     assert kind_of("https://m.twitch.tv/x") == "twitch"
@@ -156,9 +156,9 @@ def test_platform_hosts_are_exact():
 def test_local_sources_must_live_under_a_media_root(tmp_path, monkeypatch):
     import os
 
-    from hermesclip.download import local_source
+    from hermes_studio.download import local_source
 
-    monkeypatch.delenv("HERMESCLIP_MEDIA_ROOTS", raising=False)
+    monkeypatch.delenv("HERMES_STUDIO_MEDIA_ROOTS", raising=False)
     outside = tmp_path / "clip.mp4"
     outside.write_bytes(b"x")
     if str(tmp_path).startswith(os.path.expanduser("~")):
@@ -168,16 +168,16 @@ def test_local_sources_must_live_under_a_media_root(tmp_path, monkeypatch):
 
 
 def test_symlink_out_of_roots_is_refused(tmp_path, monkeypatch):
-    from hermesclip.download import local_source
+    from hermes_studio.download import local_source
 
     root = tmp_path / "media"
     root.mkdir()
     secret = tmp_path / "secret.mp4"
     secret.write_bytes(b"x")
     (root / "link.mp4").symlink_to(secret)
-    monkeypatch.setenv("HERMESCLIP_MEDIA_ROOTS", str(root))
-    monkeypatch.setattr("hermesclip.download.Path.home", staticmethod(lambda: root))
-    import hermesclip.pipeline as pl
+    monkeypatch.setenv("HERMES_STUDIO_MEDIA_ROOTS", str(root))
+    monkeypatch.setattr("hermes_studio.download.Path.home", staticmethod(lambda: root))
+    import hermes_studio.pipeline as pl
     monkeypatch.setattr(pl, "library_root", lambda: root)
     with pytest.raises(ValueError):
         local_source(str(root / "link.mp4"))
