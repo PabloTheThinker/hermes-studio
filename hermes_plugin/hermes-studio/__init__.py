@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 __plugin_name__ = "hermes-studio"
-__plugin_version__ = "0.5.0"
+__plugin_version__ = "0.5.1"
 
 _HERE = Path(__file__).resolve().parent
 

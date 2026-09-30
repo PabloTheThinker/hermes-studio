@@ -42,7 +42,7 @@ hermes-studio studio                            # the desk in your browser
 
 `hermes-studio --help` and `hermes-studio <command> --help` list everything. Clips are saved to your library (`clips/library` inside your Hermes folder; `hermes-studio doctor` shows where); `-o DIR` also copies them to DIR. Typos get a "did you mean".
 
-Coming from the old `hermesclip` name? Uninstall it (`uv tool uninstall hermesclip`), install as above, and re-run `hermes-studio mcp install <app>`. Old `HERMESCLIP_*` settings still work.
+Coming from the old `hermesclip` name? Update with the same install line, then re-run `hermes-studio mcp install <app>` so your AI app uses the new name. The old `hermesclip` command still works and tells you the new name. Old `HERMESCLIP_*` settings still work.
 
 ### For scripts and AI agents
 

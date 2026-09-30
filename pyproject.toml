@@ -1,6 +1,6 @@
 [project]
 name = "hermes-studio"
-version = "0.5.0"
+version = "0.5.1"
 description = "Hermes Studio: long video in, captioned short clips out. Local, for people and AI agents."
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 hermes-studio = "hermes_studio.cli:main"
+hermesclip = "hermes_studio.cli:_old_name"
 
 [tool.setuptools.packages.find]
 include = ["hermes_studio*"]

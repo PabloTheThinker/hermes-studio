@@ -715,5 +715,11 @@ def main(argv: list[str] | None = None) -> int:
                                        hint="Run `hermes-studio doctor`. For the full trace: HERMES_STUDIO_DEBUG=1"))
 
 
+def _old_name(argv: list[str] | None = None) -> int:
+    """The old command name. Works, and points people to the new one."""
+    print("Note: the command is now 'hermes-studio' (was 'hermesclip'). This still works.", file=sys.stderr)
+    return main(argv)
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

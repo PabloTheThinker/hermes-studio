@@ -182,4 +182,13 @@ def test_command_is_named_hermes_studio():
     import tomllib
     data = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert data["project"]["name"] == "hermes-studio"
-    assert data["project"]["scripts"] == {"hermes-studio": "hermes_studio.cli:main"}
+    assert data["project"]["scripts"]["hermes-studio"] == "hermes_studio.cli:main"
+    assert data["project"]["scripts"].get("hermesclip") == "hermes_studio.cli:_old_name"
+
+
+def test_old_command_name_still_runs_and_points_to_the_new_one():
+    p = subprocess.run([sys.executable, "-c", "from hermes_studio.cli import _old_name; raise SystemExit(_old_name(['--version']))"],
+                       capture_output=True, text=True, cwd=ROOT, timeout=60)
+    assert p.returncode == 0
+    assert "hermes-studio" in p.stdout
+    assert "now 'hermes-studio'" in p.stderr
