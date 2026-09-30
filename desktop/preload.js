@@ -1,6 +1,6 @@
-// Bridge between the first-run page and the app. Exposes one call: start the engine.
+// Bridge between the app's own pages and the app. One call: try starting the engine again.
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("studio", {
-  startEngine: () => ipcRenderer.invoke("start-engine"),
+  retry: () => ipcRenderer.invoke("retry"),
 });

@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
   "faster-whisper>=1.0.0",
+  # PyAV 19 dropped open(metadata_errors=...), which faster-whisper 1.2.x still passes.
+  "av>=11,<19",
   "yt-dlp>=2026.8.0",
 ]
 

@@ -5,13 +5,21 @@
     "output": "dist"
   },
   "files": [
-    "desktop/**"
+    "desktop/**",
+    "resources/icon.png"
   ],
   "linux": {
     "target": [
       "AppImage"
     ],
-    "icon": "resources/icon.png"
+    "icon": "resources/icon.png",
+    "category": "AudioVideo",
+    "extraResources": [
+      {
+        "from": "build/engine",
+        "to": "engine"
+      }
+    ]
   },
   "win": {
     "target": [
