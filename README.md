@@ -6,7 +6,19 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 
 Long video, YouTube, X, Twitch, or a livestream slice in. Captioned 9:16 shorts out. Nothing is posted for you.
 
-## Needs
+## Download the app
+
+Hermes Studio installs like any desktop app. The engine, FFmpeg and the downloader are inside. No Python, no terminal, no account.
+
+- **Windows:** `Hermes-Studio-Setup-<version>.exe` from [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest). Run it, then open Hermes Studio from the desktop or Start menu.
+- **Linux:** `Hermes-Studio-<version>.AppImage` from [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest). Make it executable (`chmod +x`) and open it.
+- **macOS:** not yet.
+
+It runs on your computer only. The speech model (about 75 MB) downloads the first time you clip; after that it works offline. Nothing is uploaded or posted.
+
+## Run from source
+
+### Needs
 
 - Linux
 - Python 3.11+

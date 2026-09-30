@@ -16,5 +16,4 @@ site/nous.html
 !site/assets/demo-src.mp4
 node_modules/
 dist/
-package-lock.json
 build/

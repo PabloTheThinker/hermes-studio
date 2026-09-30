@@ -66,14 +66,27 @@ def is_url(src: str) -> bool:
     return src.startswith("http://") or src.startswith("https://")
 
 
-def _ytdlp() -> str:
-    sibling = Path(sys.executable).resolve().parent / "yt-dlp"
-    if sibling.is_file():
-        return str(sibling)
+def _ytdlp() -> list[str]:
+    """Command prefix that runs yt-dlp.
+
+    A packaged app (or any venv) that has yt_dlp importable runs it through
+    its own interpreter, so no launcher script or build path is involved and
+    it works the same on Linux, macOS and Windows. Else fall back to a
+    yt-dlp next to the interpreter, then to PATH.
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("yt_dlp") is not None:
+        return [sys.executable, "-m", "yt_dlp"]
+    here = Path(sys.executable).resolve().parent
+    for name in ("yt-dlp", "yt-dlp.exe"):
+        sibling = here / name
+        if sibling.is_file():
+            return [str(sibling)]
     found = shutil.which("yt-dlp")
     if not found:
         raise RuntimeError("yt-dlp is not on PATH")
-    return found
+    return [found]
 
 
 def _node_args() -> list[str]:
@@ -112,7 +125,7 @@ def probe(src: str) -> SourceInfo:
         )
     ytdlp = _ytdlp()
     cmd = [
-        ytdlp,
+        *ytdlp,
         "--no-playlist",
         "--no-update",
         "--dump-single-json",
@@ -178,7 +191,7 @@ def fetch(
 
     out_tmpl = str(work / "source.%(ext)s")
     cmd = [
-        ytdlp,
+        *ytdlp,
         "--no-playlist",
         "--no-update",
         "--no-warnings",
