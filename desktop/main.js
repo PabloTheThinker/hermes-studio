@@ -62,12 +62,15 @@ async function startEngine() {
   const dir = engineDir();
   if (!dir) return { ok: false, error: "This copy of Hermes Studio has no engine inside it." };
   const port = await freePort();
-  const py = path.join(dir, "python", "bin", "python3");
+  const win32 = process.platform === "win32";
+  const py = win32 ? path.join(dir, "python", "python.exe") : path.join(dir, "python", "bin", "python3");
+  const pyBin = win32 ? path.join(dir, "python") : path.join(dir, "python", "bin");
   const env = {
     ...process.env,
-    PATH: [path.join(dir, "bin"), path.join(dir, "python", "bin"), process.env.PATH || ""].join(path.delimiter),
+    PATH: [path.join(dir, "bin"), pyBin, process.env.PATH || ""].join(path.delimiter),
     PYTHONNOUSERSITE: "1",
     PYTHONDONTWRITEBYTECODE: "1",
+    PYTHONUTF8: "1",
   };
   delete env.PYTHONPATH;
   delete env.PYTHONHOME;
@@ -75,7 +78,7 @@ async function startEngine() {
   engine = spawn(
     py,
     ["-c", "import sys; from hermesclip.cli import main; sys.exit(main(sys.argv[1:]))", "studio", "--port", String(port)],
-    { env, stdio: ["ignore", "pipe", "pipe"] },
+    { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const keep = (b) => {
     engineLog.push(...String(b).split("\n").filter(Boolean));
@@ -97,7 +100,12 @@ async function startEngine() {
 function stopEngine() {
   if (engine && engine.exitCode === null) {
     try {
-      engine.kill("SIGTERM");
+      if (process.platform === "win32") {
+        // Kill the whole tree: the engine may have ffmpeg children mid-render.
+        spawn("taskkill", ["/pid", String(engine.pid), "/T", "/F"], { windowsHide: true });
+      } else {
+        engine.kill("SIGTERM");
+      }
     } catch {}
   }
   engine = null;

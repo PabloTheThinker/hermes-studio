@@ -1,0 +1,74 @@
+name: desktop
+# Builds the Hermes Studio desktop app with its engine inside, then installs and
+# tests it on a clean Windows VM. Manual or on PRs that touch the app/engine.
+# Actions are pinned to commit SHAs so a hijacked tag can't run code here.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "hermesclip/**"
+      - "scripts/build-engine-*"
+      - "scripts/clean-test-*"
+      - "electron-builder.json"
+      - "package.json"
+      - "package-lock.json"
+      - "pyproject.toml"
+      - ".github/workflows/desktop.yml"
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # BtbN static FFmpeg (GPL, includes libass). Pinned by release and sha256.
+  FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
+  FFMPEG_WIN_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: FFmpeg (pinned, verified)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:FFMPEG_WIN_URL -OutFile ff.zip
+          $h = (Get-FileHash ff.zip -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne $env:FFMPEG_WIN_SHA256) { throw "ffmpeg sha256 mismatch: $h" }
+          Expand-Archive ff.zip -DestinationPath ff
+          $bin = (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          "FFMPEG_DIR=$bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Build engine
+        shell: pwsh
+        run: ./scripts/build-engine-windows.ps1
+      - name: Build installer
+        shell: pwsh
+        run: |
+          npm ci --no-fund --no-audit
+          npx electron-builder --win nsis --publish never
+          Get-ChildItem dist -Filter *.exe | Format-Table Name, Length
+      - name: Clean-machine test (install, open, clip, screenshots, quit)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist -Filter "Hermes-Studio-Setup-*.exe" | Select-Object -First 1).FullName
+          node scripts/clean-test-windows.js "$setup" "$pwd\site\assets\demo-src.mp4" "$pwd\win-shots"
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-screenshots
+          path: win-shots/
+          if-no-files-found: warn
+      - name: Installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-installer
+          path: dist/Hermes-Studio-Setup-*.exe
+          retention-days: 14

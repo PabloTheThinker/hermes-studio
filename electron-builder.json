@@ -25,7 +25,22 @@
     "target": [
       "nsis"
     ],
-    "icon": "resources/icon.png"
+    "icon": "resources/icon.png",
+    "extraResources": [
+      {
+        "from": "build/engine",
+        "to": "engine"
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Hermes Studio",
+    "artifactName": "Hermes-Studio-Setup-${version}.${ext}"
   },
   "mac": {
     "target": [
