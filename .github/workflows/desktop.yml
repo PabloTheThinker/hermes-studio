@@ -6,6 +6,8 @@ name: desktop
 # Actions are pinned to commit SHAs so a hijacked tag can't run code here.
 on:
   workflow_dispatch:
+  push:
+    tags: ["v*"]          # a version tag builds, tests, then publishes the release
   pull_request:
     paths:
       - "desktop/**"
@@ -163,3 +165,44 @@ jobs:
           name: windows-installer
           path: dist/Hermes-Studio-Setup-*.exe
           retention-days: 14
+  # On a version tag only: publish the exact installers the two clean-machine
+  # jobs above just tested, with their checksums. Nothing is rebuilt here.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tested Linux AppImage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-appimage
+          path: rel
+      - name: Tested Windows installer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-installer
+          path: rel
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
+          [ "v$want" = "$TAG" ] || { echo "tag $TAG does not match pyproject version $want"; exit 1; }
+          cd rel
+          ls -la
+          [ -f "Hermes-Studio-$want.AppImage" ] && [ -f "Hermes-Studio-Setup-$want.exe" ] || { echo "missing an installer"; exit 1; }
+          sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          notes="../docs/releases/$TAG.md"
+          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "Hermes Studio $TAG" "$@" \
+            "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" SHA256SUMS.txt
