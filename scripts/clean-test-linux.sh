@@ -70,7 +70,7 @@ done
 echo "clip job: $S"
 curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"error\": ?[^,]+" | head -1
 echo "== outputs =="
-find ~/.hermes/clips/library -name "*.mp4" 2>/dev/null | head -8
+find "$HOME/.hermes/clips/library" -name "*.mp4" 2>/dev/null | head -8
 # Drive the real window to its screens (xdotool keys a hash change via the URL bar is not
 # available; instead reload the window on each route through the engine page itself).
 sleep 3
