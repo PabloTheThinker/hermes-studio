@@ -44,8 +44,10 @@ examples:
   hermes-studio list                                 your runs, newest first
   hermes-studio show <id>                            the clips in one run
   hermes-studio doctor                               check FFmpeg, speech, links
+  hermes-studio app                                  open the desktop app
   hermes-studio studio                               open the desk in your browser
   hermes-studio mcp install claude                   add the tools to Claude Code
+  hermes-studio update                               get the latest release
 
 agents and scripts: add --json to any command for one JSON object on stdout.
 exit codes: 0 ok, 1 failed, 2 bad input, 3 missing dependency, 4 not found.
@@ -309,6 +311,12 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("--no-browser", action="store_true", help="don't open a browser tab")
 
     sub.add_parser("organize", help="sort the library into platform folders").add_argument("--json", action="store_true")
+
+    ap = sub.add_parser("app", help="open the Hermes Studio desktop app")
+    _common(ap)
+    up = sub.add_parser("update", help="update to the latest release (same way it was installed)")
+    up.add_argument("--check", action="store_true", help="only say whether an update is out")
+    _common(up)
 
     m = sub.add_parser("mcp", help="MCP server for Claude, Grok, Codex, Cursor … (stdio)",
                        description="With no action: serve the Hermes Studio tools over MCP stdio. "
@@ -673,11 +681,36 @@ def cmd_mcp(a: argparse.Namespace, o: Out) -> int:
     return 0 if res.get("ok") else EXIT["failed"]
 
 
+def cmd_app(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio import desktop
+
+    res = desktop.open_app()
+    o.emit(res)
+    o.say(o.green("✓ ") + "opening Hermes Studio" + o.dim(f"  ({_short(res['app'])})"))
+    return 0
+
+
+def cmd_update(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio import desktop
+
+    if not a.check and not o.json:
+        o.say(o.dim("checking for updates…"))
+    res = desktop.update(check_only=a.check)
+    o.emit(res)
+    if res.get("updated"):
+        o.say(o.green("✓ ") + f"updated to {res['latest']}")
+    elif res.get("update_available"):
+        o.say(o.amber("! ") + f"{res['latest']} is out (you have {res['current']}). Update: hermes-studio update")
+    else:
+        o.say(o.green("✓ ") + f"up to date ({res['current']})")
+    return 0
+
+
 COMMANDS = {
     "run": cmd_run, "captions": cmd_run, "list": cmd_list, "ls": cmd_list, "show": cmd_show, "open": cmd_open,
     "probe": cmd_probe, "recommend": cmd_recommend, "restyle": cmd_restyle, "edit": cmd_edit, "name": cmd_name,
     "copy": cmd_copy, "transcribe": cmd_transcribe, "plan": cmd_plan, "tools": cmd_tools, "doctor": cmd_doctor,
-    "studio": cmd_studio, "organize": cmd_organize, "mcp": cmd_mcp,
+    "studio": cmd_studio, "organize": cmd_organize, "mcp": cmd_mcp, "app": cmd_app, "update": cmd_update,
 }
 
 

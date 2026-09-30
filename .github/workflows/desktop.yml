@@ -12,6 +12,7 @@ on:
       - "hermes_studio/**"
       - "scripts/build-engine-*"
       - "scripts/clean-test-*"
+      - "scripts/install.*"
       - "electron-builder.json"
       - "package.json"
       - "package-lock.json"
@@ -63,6 +64,12 @@ jobs:
           docker run --rm -v "$PWD/work:/work" ubuntu:24.04 bash /work/clean-test-linux.sh 2>&1 \
             | grep -vE "^(debconf|dpkg)" | tee work/out/test.log
           grep -q "LINUX CLEAN TEST PASSED" work/out/test.log
+      - name: One-line installer test (fresh ubuntu:24.04, no sudo, no FUSE)
+        run: |
+          cp scripts/install.sh scripts/clean-test-installer.sh work/
+          docker run --rm -v "$PWD/work:/work" ubuntu:24.04 bash /work/clean-test-installer.sh 2>&1 \
+            | grep -vE "^(debconf|dpkg)" | tee work/out/installer-test.log
+          grep -q "INSTALLER CLEAN TEST PASSED" work/out/installer-test.log
       - name: Test output
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -110,6 +117,39 @@ jobs:
         run: |
           $setup = (Get-ChildItem dist -Filter "Hermes-Studio-Setup-*.exe" | Select-Object -First 1).FullName
           node scripts/clean-test-windows.js "$setup" "$pwd\site\assets\demo-src.mp4" "$pwd\win-shots"
+      - name: One-line installer test (install.ps1 from a local copy of the release)
+        shell: pwsh
+        run: |
+          $rel = Join-Path $pwd "fake-release"
+          New-Item -ItemType Directory -Force $rel | Out-Null
+          $setup = Get-ChildItem dist -Filter "Hermes-Studio-Setup-*.exe" | Select-Object -First 1
+          Copy-Item $setup.FullName $rel
+          $h = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLower()
+          "$h  $($setup.Name)" | Out-File -Encoding ascii (Join-Path $rel "SHA256SUMS.txt")
+          $srv = Start-Process python -ArgumentList "-m", "http.server", "8765", "--directory", $rel -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          $up = $false
+          foreach ($i in 1..30) {
+            try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 "http://127.0.0.1:8765/SHA256SUMS.txt" | Out-Null; $up = $true; break } catch { Start-Sleep 2 }
+          }
+          if (-not $up) { throw "local release server never came up" }
+          $env:HERMES_STUDIO_DOWNLOAD_BASE = "http://127.0.0.1:8765"
+          Invoke-Expression (Get-Content scripts/install.ps1 -Raw)
+          $engine = Join-Path $env:LOCALAPPDATA "Programs\Hermes Studio\resources\engine"
+          $cmd = Join-Path $engine "hermes-studio.cmd"
+          & $cmd --version
+          $doc = & $cmd doctor --json | ConvertFrom-Json
+          if (-not $doc.ok) { throw "doctor not ready: $($doc | ConvertTo-Json -Depth 4)" }
+          $cfg = & $cmd mcp config --json | ConvertFrom-Json
+          if ($cfg.command -ne $cmd) { throw "mcp command is '$($cfg.command)', want '$cmd'" }
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if (($userPath -split ";") -notcontains $engine) { throw "command folder not on the user PATH" }
+          $init = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}'
+          $list = '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+          $out = ($init, $list) -join "`n" | & $cmd mcp
+          if (-not ($out -match '"name": "run"')) { throw "no tools over MCP: $out" }
+          Stop-Process -Id $srv.Id -Force
+          "INSTALLER CLEAN TEST PASSED"
       - name: Screenshots
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
