@@ -49,6 +49,24 @@ exec "$(dirname "$0")/python3" -m yt_dlp "$@"
 SH
 chmod +x "$OUT/python/bin/yt-dlp"
 
+# 3b. The `hermes-studio` command. pip's console scripts pin this build path in
+#     their first line, so they are removed and replaced by a relocatable shim.
+rm -f "$OUT/python/bin/hermes-studio" "$OUT/python/bin/hermesclip"
+cat > "$OUT/hermes-studio" <<'SH'
+#!/bin/sh
+# The hermes-studio command, run by the engine inside the Hermes Studio app.
+self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+here="$(dirname "$self")"
+PATH="$here/bin:$here/python/bin:$PATH"
+HERMES_STUDIO_EXE="$self"
+PYTHONNOUSERSITE=1
+PYTHONUTF8=1
+export PATH HERMES_STUDIO_EXE PYTHONNOUSERSITE PYTHONUTF8
+unset PYTHONHOME PYTHONPATH
+exec "$here/python/bin/python3" -m hermes_studio "$@"
+SH
+chmod +x "$OUT/hermes-studio"
+
 # 4. FFmpeg.
 cp "$FFMPEG_DIR/ffmpeg" "$FFMPEG_DIR/ffprobe" "$OUT/bin/"
 

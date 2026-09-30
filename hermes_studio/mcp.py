@@ -402,6 +402,9 @@ def _temporary_mount(exe: str) -> bool:
 
 def client_config() -> dict:
     """The stdio command that starts this server with the Python that is running now."""
+    shim = os.environ.get("HERMES_STUDIO_EXE", "")
+    if shim and Path(shim).is_file() and not _temporary_mount(shim):  # the command inside an installed app
+        return {"command": shim, "args": ["mcp"]}
     bindir = Path(sys.executable).parent  # the venv's bin/Scripts (not resolved: venv pythons are symlinks)
     for name in ("hermes_studio.exe", "hermes-studio") if os.name == "nt" else ("hermes-studio",):
         exe = bindir / name
@@ -412,8 +415,9 @@ def client_config() -> dict:
         return {"command": exe_on_path, "args": ["mcp"]}
     if _temporary_mount(sys.executable):
         return {"command": "hermes-studio", "args": ["mcp"],
-                "note": "The Linux AppImage moves on every launch. Install the command line once "
-                        "(uv tool install git+https://github.com/PabloTheThinker/hermes-studio), then use this."}
+                "note": "This copy runs from a temporary folder. Install it once with the one-line installer "
+                        "(curl -fsSL https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.sh | bash), "
+                        "then use this."}
     return {"command": sys.executable, "args": ["-m", "hermes_studio", "mcp"]}
 
 

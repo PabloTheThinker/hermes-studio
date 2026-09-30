@@ -2,6 +2,17 @@
 
 Hermes Studio (`hermes-studio`) turns long video into captioned short clips on the local machine. It never uploads or posts.
 
+## Installing it for a user
+
+One line; no admin rights, no Python, no FFmpeg (they ship inside the app). It verifies the download's SHA-256.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.sh | bash          # Linux
+irm https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.ps1 | iex                  # Windows PowerShell
+```
+
+Then `hermes-studio doctor --json` should return `"ok": true`, and `hermes-studio mcp install <claude|grok|codex|cursor|hermes>` wires up the AI app. `hermes-studio update` gets newer releases.
+
 ## Using it as an agent
 
 Prefer the MCP server (`hermes-studio mcp`, tools `run`, `show`, `list`, `restyle`, `edit`, `probe`, `recommend`, `copy`, `name`, `tools`, `doctor`). Without MCP, call the CLI with `--json`:

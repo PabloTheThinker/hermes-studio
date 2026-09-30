@@ -41,6 +41,21 @@ if ($LASTEXITCODE -ne 0) { throw "engine install failed" }
 #    A .cmd wrapper, so it never pins this build path.
 Set-Content -Encoding ascii -Path "$Out\python\yt-dlp.cmd" -Value "@`"%~dp0python.exe`" -m yt_dlp %*"
 
+# 3b. The `hermes-studio` command: a relocatable .cmd beside the engine
+#     (pip's Scripts\*.exe launchers pin this build path).
+Remove-Item -Force -ErrorAction SilentlyContinue "$Out\python\Scripts\hermes-studio.exe", "$Out\python\Scripts\hermesclip.exe"
+Set-Content -Encoding ascii -Path "$Out\hermes-studio.cmd" -Value @(
+  "@echo off",
+  "setlocal",
+  "set `"PATH=%~dp0bin;%~dp0python;%PATH%`"",
+  "set `"HERMES_STUDIO_EXE=%~f0`"",
+  "set PYTHONNOUSERSITE=1",
+  "set PYTHONUTF8=1",
+  "set PYTHONHOME=",
+  "set PYTHONPATH=",
+  "`"%~dp0python\python.exe`" -m hermes_studio %*"
+)
+
 # 4. FFmpeg.
 Copy-Item "$FfDir\ffmpeg.exe", "$FfDir\ffprobe.exe" "$Out\bin\"
 

@@ -136,6 +136,8 @@
     .install { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
     .install > div { min-width: 0; }   /* grid items default to min-width:auto: a long <pre> line would widen the whole page on phones */
     .install p { color: var(--mute); margin: 0 0 1rem; }
+    .install pre + p { margin-top: 1.4rem; }
+    .install pre.one { white-space: pre-wrap; word-break: break-all; }
 
     footer { padding: 2.5rem 0 3.5rem; color: var(--dim); font-size: 14px; }
     footer .w { display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; }
@@ -460,20 +462,20 @@
   <section class="ch" id="install"><div class="w">
     <div class="ch-head reveal">
       <h2 class="display">Install.</h2>
-      <p class="lede">Python 3.11+ and FFmpeg. Works as a Hermes Agent plugin, an MCP server or plain CLI.</p>
+      <p class="lede">One line. The app, the engine and FFmpeg come with it. No admin rights, no Python, nothing else to set up. Run it again to update.</p>
     </div>
     <div class="install reveal">
-      <div><p>Plugin for Hermes Agent</p>
-<pre><span class="c"># clone and install</span>
-git clone https://github.com/PabloTheThinker/hermes-studio
-cd hermes-studio && pip install -e .
-<span class="c"># open the desk</span>
-hermes-studio studio</pre></div>
-      <div><p>Or straight from the CLI</p>
-<pre><span class="c"># five tools, one flag</span>
-hermes-studio run talk.mp4 --mode clip
-hermes-studio run talk.mp4 --mode tighten
-hermes-studio run talk.mp4 --mode transcript</pre></div>
+      <div><p>Linux</p>
+<pre class="one">curl -fsSL https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.sh | bash</pre>
+      <p>Windows (PowerShell)</p>
+<pre class="one">irm https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.ps1 | iex</pre></div>
+      <div><p>Then, from any terminal</p>
+<pre><span class="c"># open the app</span>
+hermes-studio app
+<span class="c"># make shorts</span>
+hermes-studio run talk.mp4
+<span class="c"># use it from your AI app</span>
+hermes-studio mcp install claude</pre></div>
     </div>
   </div></section>
 

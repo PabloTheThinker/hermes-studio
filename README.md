@@ -6,19 +6,49 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 
 Long video, YouTube, X, Twitch, or a livestream slice in. Captioned 9:16 shorts out. Nothing is posted for you.
 
-## Download the app
+## Install
 
-Hermes Studio installs like any desktop app. The engine, FFmpeg and the downloader are inside. No Python, no terminal, no account.
+One line. It downloads the latest app from this repo's Releases, checks it against the published SHA-256, and sets everything up. No admin rights, no Python, no FFmpeg, nothing else to install. Run the same line again to update.
 
-- **Windows:** `Hermes-Studio-Setup-<version>.exe` from [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest). Run it, then open Hermes Studio from the desktop or Start menu.
-- **Linux:** `Hermes-Studio-<version>.AppImage` from [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest). Make it executable (`chmod +x`) and open it.
-- **macOS:** not yet.
+**Linux** (any terminal):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.sh | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.ps1 | iex
+```
+
+You get:
+
+- **Hermes Studio** in your app menu (Start menu and desktop on Windows).
+- The **`hermes-studio` command**, using the engine inside the app, so it works with no extra setup.
+- A fixed place your AI apps can start it from: `hermes-studio mcp install claude` just works.
+
+Then:
+
+```bash
+hermes-studio doctor          # everything green?
+hermes-studio app             # open the app
+hermes-studio update          # later: get the newest release
+```
+
+Linux options: `… | bash -s -- --version v0.5.1` pins a release, `--uninstall` removes the app (your clips stay), `--help` lists the rest. It installs to `~/.local/share/hermes-studio` and needs no FUSE.
+
+**macOS:** not yet. The command line below works today.
 
 It runs on your computer only. The speech model (about 75 MB) downloads the first time you clip; after that it works offline. Nothing is uploaded or posted.
 
-## Command line
+### Or download the installer yourself
 
-Install once. You need Python 3.11+ and FFmpeg with libass (the desktop app has both built in).
+From [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest): `Hermes-Studio-Setup-<version>.exe` (Windows) or `Hermes-Studio-<version>.AppImage` (Linux: `chmod +x`, then open it). `SHA256SUMS.txt` lists the checksums.
+
+## Command line only (Python developers)
+
+If you'd rather install it as a Python package: you need Python 3.11+ and FFmpeg with libass (the app above has both built in).
 
 ```bash
 uv tool install git+https://github.com/PabloTheThinker/hermes-studio    # or: pipx install git+https://…
