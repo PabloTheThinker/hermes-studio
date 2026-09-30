@@ -1,6 +1,6 @@
 [project]
 name = "hermes-studio"
-version = "0.5.1"
+version = "0.5.2"
 description = "Hermes Studio: long video in, captioned short clips out. Local, for people and AI agents."
 requires-python = ">=3.11"
 license = { text = "MIT" }
