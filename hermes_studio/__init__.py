@@ -4,7 +4,7 @@ import os as _os
 import sys as _sys
 from pathlib import Path as _Path
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 
 def _use_bundled_tools() -> None:
