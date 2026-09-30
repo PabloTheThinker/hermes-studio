@@ -466,7 +466,13 @@ def doctor() -> dict:
         probe_file.unlink()
         add("library", "Library folder", True, str(root))
     except Exception as exc:
-        add("library", "Library folder", False, str(exc), "Make ~/.hermes/clips/library writable.")
+        from hermes_studio.pipeline import library_root as _lib
+
+        try:
+            where = str(_lib())
+        except Exception:
+            where = "the clips library folder"
+        add("library", "Library folder", False, str(exc), f"Make {where} writable, or set HERMES_HOME to a writable folder.")
 
     namer = os.environ.get("HERMES_STUDIO_NAMER", "ollama").strip().lower() or "ollama"
     if namer == "off":
