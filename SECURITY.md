@@ -9,10 +9,10 @@ instead. You will get an answer within a few days.
 ## How Hermes Studio is built to stay safe
 
 - **Local only.** The desk listens on `127.0.0.1` and refuses any other address unless
-  `HERMESCLIP_ALLOW_REMOTE=1` is set. To reach it from your other devices, put it behind
+  `HERMES_STUDIO_ALLOW_REMOTE=1` is set. To reach it from your other devices, put it behind
   `tailscale serve` (tailnet only). Do not expose it to the public internet: it has no login.
 - **Browser attacks.** The desk only answers requests whose `Host` is loopback, a
-  `*.ts.net` name, or one you list in `HERMESCLIP_ALLOWED_HOSTS` (this stops DNS rebinding).
+  `*.ts.net` name, or one you list in `HERMES_STUDIO_ALLOWED_HOSTS` (this stops DNS rebinding).
   Every write must be `application/json`, and a browser `Origin` must match the host
   (this stops cross-site requests from other tabs). Pages carry a strict Content Security
   Policy, and the desk cannot be framed.

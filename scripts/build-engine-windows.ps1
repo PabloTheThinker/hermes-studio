@@ -1,5 +1,5 @@
 # Build the engine that ships inside the Windows app:
-#   build\engine\python\   portable CPython with hermesclip + deps installed
+#   build\engine\python\   portable CPython with hermes-studio + deps installed
 #   build\engine\bin\      ffmpeg.exe, ffprobe.exe (static, with libass)
 # The desktop app starts build\engine\python\python.exe with build\engine\bin first on PATH.
 # Mirrors scripts/build-engine-linux.sh. Needs: uv on PATH, and FFMPEG_DIR set to a
@@ -54,9 +54,9 @@ foreach ($d in "Lib\test", "Lib\idlelib", "Lib\tkinter", "tcl") {
 $env:PATH = "$Out\bin;$Out\python;$env:SystemRoot\System32"
 $smoke = @'
 import os, shutil, subprocess, sys, tempfile
-import hermesclip.studio, hermesclip.pipeline, faster_whisper, yt_dlp  # noqa: F401
+import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
 from faster_whisper.audio import decode_audio
-from hermesclip.download import _ytdlp
+from hermes_studio.download import _ytdlp
 for tool in ("ffmpeg", "ffprobe"):
     assert shutil.which(tool), f"{tool} not found on PATH"
 print("yt-dlp:", _ytdlp())

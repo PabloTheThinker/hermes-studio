@@ -1,6 +1,6 @@
 """Opus-style score breakdown: hook / flow / value, 0-99."""
-from hermesclip.plan import score_parts
-from hermesclip.transcribe import Word
+from hermes_studio.plan import score_parts
+from hermes_studio.transcribe import Word
 
 
 def _w(text, t):

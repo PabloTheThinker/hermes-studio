@@ -27,7 +27,7 @@ jobs:
           python -m pip install -q --upgrade pip
           python -m pip install -q -e ".[reframe,dev]"
       - name: Lint (bugs, imports, security)
-        run: ruff check hermesclip tests hermes_plugin
+        run: ruff check hermes_studio tests hermes_plugin
       - name: Tests
         run: pytest -q
   secrets:

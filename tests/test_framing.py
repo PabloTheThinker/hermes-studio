@@ -1,6 +1,6 @@
 """Face placement: eye line, headroom, lead room, safe zone, camera choice."""
-from hermesclip import framing
-from hermesclip.face import Face, FaceTrack, main_subject
+from hermes_studio import framing
+from hermes_studio.face import Face, FaceTrack, main_subject
 
 SRC_W, SRC_H, OUT_W, OUT_H = 1920, 1080, 1080, 1920
 
@@ -89,7 +89,7 @@ def test_main_subject_ignores_a_stray_face():
 
 
 def test_facecam_band_is_tight_and_manual_box_is_respected():
-    from hermesclip.look import make_look
+    from hermes_studio.look import make_look
 
     cam = Face(0, 0.80, 0.74, 0.09, 0.2, 0.81)
     g = framing.split_geometry(SRC_W, SRC_H, OUT_W, OUT_H, make_look({"face_ratio": 35}), cam)

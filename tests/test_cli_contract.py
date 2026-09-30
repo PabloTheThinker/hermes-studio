@@ -9,26 +9,26 @@ from pathlib import Path
 
 import pytest
 
-from hermesclip import api, cli, mcp
+from hermes_studio import api, cli, mcp
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def run_cli(*args: str) -> tuple[int, str, str]:
-    p = subprocess.run([sys.executable, "-m", "hermesclip", *args], capture_output=True, text=True, cwd=ROOT, timeout=120)
+    p = subprocess.run([sys.executable, "-m", "hermes_studio", *args], capture_output=True, text=True, cwd=ROOT, timeout=120)
     return p.returncode, p.stdout, p.stderr
 
 
 def test_version_matches_package():
     code, out, _ = run_cli("--version")
     assert code == 0
-    assert out.strip() == f"hermesclip {api.__version__}"
+    assert out.strip() == f"hermes-studio {api.__version__}"
 
 
 def test_no_args_prints_help_and_succeeds():
     code, out, _ = run_cli()
     assert code == 0
-    assert "hermesclip mcp install claude" in out
+    assert "hermes-studio mcp install claude" in out
 
 
 @pytest.mark.parametrize(
@@ -61,16 +61,16 @@ def test_typo_suggests_the_right_command():
 def test_bad_source_never_creates_a_run(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     before = api.library()["total"]
-    with pytest.raises(api.HermesClipError):
+    with pytest.raises(api.HermesStudioError):
         api.run(str(Path.home() / "definitely-not-here.mp4"))
     assert api.library()["total"] == before
 
 
 def test_non_media_file_is_refused_with_the_list(tmp_path):
-    f = Path.home() / ".hermesclip-test-notes.txt"
+    f = Path.home() / ".hermes-studio-test-notes.txt"
     f.write_text("x")
     try:
-        with pytest.raises(api.HermesClipError) as e:
+        with pytest.raises(api.HermesStudioError) as e:
             api.check_source(str(f))
         assert ".mp4" in e.value.hint
     finally:
@@ -78,8 +78,8 @@ def test_non_media_file_is_refused_with_the_list(tmp_path):
 
 
 def test_vocab_matches_the_engine():
-    from hermesclip.captions import STYLES
-    from hermesclip.look import FILTERS
+    from hermes_studio.captions import STYLES
+    from hermes_studio.look import FILTERS
 
     assert set(api.STYLES) == set(STYLES)
     assert set(api.FILTERS) == set(FILTERS)
@@ -107,7 +107,7 @@ def test_parser_covers_every_command():
 
 
 def _mcp(frames: list[bytes]) -> list[dict]:
-    p = subprocess.run([sys.executable, "-m", "hermesclip", "mcp"], input=b"".join(frames), capture_output=True, cwd=ROOT, timeout=60)
+    p = subprocess.run([sys.executable, "-m", "hermes_studio", "mcp"], input=b"".join(frames), capture_output=True, cwd=ROOT, timeout=60)
     raw = p.stdout
     msgs = []
     if raw.startswith(b"Content-Length"):
@@ -150,13 +150,13 @@ def test_mcp_newline_stdio_handshake_and_tools():
 def test_mcp_still_speaks_content_length_framing():
     body = json.dumps(INIT).encode()
     msgs = _mcp([f"Content-Length: {len(body)}\r\n\r\n".encode() + body])
-    assert msgs[0]["result"]["serverInfo"]["name"] == "hermesclip"
+    assert msgs[0]["result"]["serverInfo"]["name"] == "hermes-studio"
 
 
 def test_mcp_stdout_is_protected_from_stray_prints():
     frames = [json.dumps(INIT).encode() + b"\n",
               json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "tools", "arguments": {}}}).encode() + b"\n"]
-    p = subprocess.run([sys.executable, "-c", "import sys; print('noise'); from hermesclip.mcp import serve; print('more noise'); sys.exit(serve())"],
+    p = subprocess.run([sys.executable, "-c", "import sys; print('noise'); from hermes_studio.mcp import serve; print('more noise'); sys.exit(serve())"],
                        input=b"".join(frames), capture_output=True, cwd=ROOT, timeout=60)
     lines = [x for x in p.stdout.splitlines() if x.strip()]
     assert len(lines) == 2  # init + tools result, nothing else
@@ -170,3 +170,16 @@ def test_install_dry_run_and_config():
     assert cfg["args"][-1] == "mcp"
     res = mcp.install("cursor", dry_run=True)
     assert res["ok"] and res["dry_run"]
+
+
+def test_old_setting_names_still_work():
+    code = "import os; os.environ['HERMESCLIP_NAMER']='off'; import hermes_studio; print(os.environ['HERMES_STUDIO_NAMER'])"
+    p = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, timeout=60)
+    assert p.stdout.strip() == "off"
+
+
+def test_command_is_named_hermes_studio():
+    import tomllib
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert data["project"]["name"] == "hermes-studio"
+    assert data["project"]["scripts"] == {"hermes-studio": "hermes_studio.cli:main"}

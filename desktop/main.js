@@ -1,5 +1,5 @@
 // Hermes Studio desktop app.
-// The app ships its own engine (portable Python + hermesclip + FFmpeg) under
+// The app ships its own engine (portable Python + hermes-studio + FFmpeg) under
 // resources/engine. On open it starts that engine on a free loopback port,
 // waits for it, and loads the desk. On quit it stops the engine.
 // Dev fallback: HERMES_STUDIO_URL, or build/engine in the repo.
@@ -77,7 +77,7 @@ async function startEngine() {
   engineLog = [];
   engine = spawn(
     py,
-    ["-c", "import sys; from hermesclip.cli import main; sys.exit(main(sys.argv[1:]))", "studio", "--port", String(port)],
+    ["-c", "import sys; from hermes_studio.cli import main; sys.exit(main(sys.argv[1:]))", "studio", "--port", String(port)],
     { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const keep = (b) => {

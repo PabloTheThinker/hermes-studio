@@ -2,7 +2,7 @@
 
 Turning a 16:9 video into a 9:16 short throws away about two thirds of the picture. What
 decides whether a clip looks professional is where the face ends up in the part you keep.
-This note sets out the rules `hermesclip/framing.py` follows and where each one comes from.
+This note sets out the rules `hermes_studio/framing.py` follows and where each one comes from.
 
 ## Detection
 

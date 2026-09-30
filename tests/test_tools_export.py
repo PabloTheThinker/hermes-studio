@@ -1,10 +1,10 @@
 """Smoke tests for the Studio tool catalogue and transcript exports (no media needed)."""
 from pathlib import Path
 
-from hermesclip import tools
-from hermesclip.export import _stamp, write_exports
-from hermesclip.pipeline import MODES
-from hermesclip.transcribe import Transcript, Word
+from hermes_studio import tools
+from hermes_studio.export import _stamp, write_exports
+from hermes_studio.pipeline import MODES
+from hermes_studio.transcribe import Transcript, Word
 
 
 def test_catalogue_matches_pipeline_modes():

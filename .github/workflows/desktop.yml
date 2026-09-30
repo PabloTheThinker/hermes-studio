@@ -9,7 +9,7 @@ on:
   pull_request:
     paths:
       - "desktop/**"
-      - "hermesclip/**"
+      - "hermes_studio/**"
       - "scripts/build-engine-*"
       - "scripts/clean-test-*"
       - "electron-builder.json"

@@ -1,6 +1,6 @@
 # Hermes Studio
 
-Video tools for [Hermes Agent](https://hermes-agent.nousresearch.com/). **HermesClip** is the clipper (now). A timeline editor comes later under this title.
+Video tools for people and AI agents, built for [Hermes Agent](https://hermes-agent.nousresearch.com/). One name everywhere: the app, the `hermes-studio` command, the MCP server and the Hermes plugin.
 
 Repo: https://github.com/PabloTheThinker/hermes-studio
 
@@ -22,41 +22,44 @@ Install once. You need Python 3.11+ and FFmpeg with libass (the desktop app has 
 
 ```bash
 uv tool install git+https://github.com/PabloTheThinker/hermes-studio    # or: pipx install git+https://…
-hermesclip doctor                                                      # checks FFmpeg, captions, speech, links
+# gives you the `hermes-studio` command
+hermes-studio doctor                                                      # checks FFmpeg, captions, speech, links
 ```
 
 Everyday use:
 
 ```bash
-hermesclip run talk.mp4                      # 3 hook-first shorts
-hermesclip run https://youtu.be/ID -n 5      # 5 shorts from a link (live streams too)
-hermesclip run talk.mp4 --mode captions      # caption the whole video
-hermesclip run stream.mp4 --layout split     # facecam on top, gameplay below
-hermesclip run talk.mp4 --prompt "the pricing part" --filter cinematic
-hermesclip list                              # your runs, newest first
-hermesclip show <id>                         # clips, scores, files
-hermesclip open <id>                         # open the folder
-hermesclip studio                            # the desk in your browser
+hermes-studio run talk.mp4                      # 3 hook-first shorts
+hermes-studio run https://youtu.be/ID -n 5      # 5 shorts from a link (live streams too)
+hermes-studio run talk.mp4 --mode captions      # caption the whole video
+hermes-studio run stream.mp4 --layout split     # facecam on top, gameplay below
+hermes-studio run talk.mp4 --prompt "the pricing part" --filter cinematic
+hermes-studio list                              # your runs, newest first
+hermes-studio show <id>                         # clips, scores, files
+hermes-studio open <id>                         # open the folder
+hermes-studio studio                            # the desk in your browser
 ```
 
-`hermesclip --help` and `hermesclip <command> --help` list everything. Clips are saved to your library (`~/.hermes/clips/library`); `-o DIR` also copies them to DIR. Typos get a "did you mean".
+`hermes-studio --help` and `hermes-studio <command> --help` list everything. Clips are saved to your library (`~/.hermes/clips/library`); `-o DIR` also copies them to DIR. Typos get a "did you mean".
+
+Coming from the old `hermesclip` name? Uninstall it (`uv tool uninstall hermesclip`), install as above, and re-run `hermes-studio mcp install <app>`. Old `HERMESCLIP_*` settings still work.
 
 ### For scripts and AI agents
 
 - Add `--json` to any command: stdout is exactly one JSON object; progress goes to stderr as JSON lines.
 - Exit codes: `0` ok · `1` the job failed · `2` bad input · `3` missing dependency · `4` not found. Errors carry `code` and a `hint`.
-- `hermesclip run … --detach --json` returns an id straight away; poll `hermesclip show <id> --json` until `status` is `completed` or `failed`.
+- `hermes-studio run … --detach --json` returns an id straight away; poll `hermes-studio show <id> --json` until `status` is `completed` or `failed`.
 - Each clip in a result has `path`, `title`, `score`, `start`, `end` and `seconds`.
 
 ## Use it from Claude, Grok, Codex, Cursor or any MCP app
 
 ```bash
-hermesclip mcp install claude     # Claude Code
-hermesclip mcp install grok       # Grok CLI
-hermesclip mcp install codex      # Codex CLI
-hermesclip mcp install cursor     # Cursor (~/.cursor/mcp.json)
-hermesclip mcp install hermes     # Hermes Agent (config.yaml)
-hermesclip mcp config             # the JSON block for anything else
+hermes-studio mcp install claude     # Claude Code
+hermes-studio mcp install grok       # Grok CLI
+hermes-studio mcp install codex      # Codex CLI
+hermes-studio mcp install cursor     # Cursor (~/.cursor/mcp.json)
+hermes-studio mcp install hermes     # Hermes Agent (config.yaml)
+hermes-studio mcp config             # the JSON block for anything else
 ```
 
 Then ask it: *"make 3 shorts from ~/Videos/talk.mp4"*. Tools: `run`, `show`, `list`, `restyle`, `edit`, `probe`, `recommend`, `copy`, `name`, `tools`, `doctor`. Standard MCP stdio; long runs report progress, or pass `detach: true` and poll `show`. The desktop app's **Settings → Use with your AI** shows the same lines with a copy button.
@@ -68,12 +71,12 @@ git clone https://github.com/PabloTheThinker/hermes-studio.git
 cd hermes-studio
 python3 -m venv .venv
 .venv/bin/pip install -e '.[reframe]'
-.venv/bin/hermesclip doctor
+.venv/bin/hermes-studio doctor
 ```
 
 ## Hermes plugin
 
-Copy `hermes_plugin/hermesclip/` into `$HERMES_HOME/plugins/hermesclip/` and add `hermesclip` to `plugins.enabled` (or use `hermesclip mcp install hermes`). Hermes skill: copy `skills/hermesclip/` into `$HERMES_HOME/skills/hermesclip/`. Tools appear in the next session. Does not post.
+Copy `hermes_plugin/hermes-studio/` into `$HERMES_HOME/plugins/hermes-studio/` and add `hermes-studio` to `plugins.enabled` (or use `hermes-studio mcp install hermes`). Hermes skill: copy `skills/hermes-studio/` into `$HERMES_HOME/skills/hermes-studio/`. Tools appear in the next session. Does not post.
 
 ## Site
 

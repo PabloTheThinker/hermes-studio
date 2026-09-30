@@ -2,7 +2,7 @@
 # Clean-machine test for the Linux AppImage.
 # Runs inside a fresh ubuntu:24.04 container: installs ONLY what a desktop
 # user already has (a display server + the libraries Electron needs), NOT
-# python, ffmpeg or hermesclip. Then opens the app, waits for its own engine,
+# python, ffmpeg or hermes-studio. Then opens the app, waits for its own engine,
 # screenshots the window, runs one real clip job through the engine's API,
 # and screenshots the finished run.
 set -euo pipefail
@@ -14,7 +14,7 @@ apt-get install -y -qq --no-install-recommends \
   libfuse2t64 libatomic1 fonts-dejavu-core >/dev/null
 
 echo "== clean machine check =="
-for t in python3 ffmpeg hermesclip yt-dlp; do
+for t in python3 ffmpeg hermes-studio yt-dlp; do
   if command -v "$t" >/dev/null; then echo "  $t: PRESENT (not clean!)"; else echo "  $t: absent"; fi
 done
 
@@ -35,7 +35,7 @@ sleep 2
 APP=$!
 PORT=""
 for i in $(seq 1 90); do
-  PORT=$(for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p" 2>/dev/null; echo; done | grep "hermesclip.cli" | grep -oE "\-\-port [0-9]+" | head -1 | cut -d" " -f2 || true)
+  PORT=$(for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p" 2>/dev/null; echo; done | grep "hermes_studio.cli" | grep -oE "\-\-port [0-9]+" | head -1 | cut -d" " -f2 || true)
   if [ -n "$PORT" ] && curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then break; fi
   sleep 1
 done

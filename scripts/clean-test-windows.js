@@ -33,7 +33,7 @@ function onPath(tool) {
   // The runner image ships its own python/ffmpeg; hide them so the app can only use what it carries.
   const cleanPath = [path.join(process.env.SystemRoot, "System32"), process.env.SystemRoot, path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0")].join(";");
   process.env.PATH = cleanPath;
-  for (const t of ["python", "ffmpeg", "yt-dlp", "hermesclip"]) log(`  ${t}: ${onPath(t) ? "PRESENT (not clean!)" : "absent"}`);
+  for (const t of ["python", "ffmpeg", "yt-dlp", "hermes-studio"]) log(`  ${t}: ${onPath(t) ? "PRESENT (not clean!)" : "absent"}`);
 
   log("== install ==");
   execFileSync(setup, ["/S"], { stdio: "inherit" });

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the engine that ships inside the Linux app:
-#   build/engine/python/   portable CPython with hermesclip + deps installed
+#   build/engine/python/   portable CPython with hermes-studio + deps installed
 #   build/engine/bin/      ffmpeg, ffprobe (static, with libass)
-# The desktop app starts  build/engine/python/bin/python3 -c "...hermesclip studio..."
+# The desktop app starts  build/engine/python/bin/python3 -c "...hermes-studio studio..."
 # with build/engine/bin first on PATH. Nothing here depends on the build machine.
 set -euo pipefail
 
@@ -61,7 +61,7 @@ rm -rf "$OUT/python/lib/python$PYVER/test" "$OUT/python/lib/python$PYVER/idlelib
 #    audio the way faster-whisper does (catches PyAV/faster-whisper API drift).
 PATH="$OUT/bin:$OUT/python/bin:/usr/bin:/bin" "$PY" - <<'PY'
 import os, shutil, subprocess, sys, tempfile
-import hermesclip.studio, hermesclip.pipeline, faster_whisper, yt_dlp  # noqa: F401
+import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
 from faster_whisper.audio import decode_audio
 for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
     assert shutil.which(tool), f"{tool} not found on PATH"
