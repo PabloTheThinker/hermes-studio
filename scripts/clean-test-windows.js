@@ -11,8 +11,11 @@ const os = require("os");
 const path = require("path");
 const { _electron: electron } = require("playwright-core");
 
-const [setup, sample, outDir] = process.argv.slice(2);
+const [setup, sampleSrc, outDir] = process.argv.slice(2);
 fs.mkdirSync(outDir, { recursive: true });
+// The engine only accepts files in the home folder, a mounted drive or the library.
+const sample = path.join(os.homedir(), "sample-test.mp4");
+fs.copyFileSync(sampleSrc, sample);
 const log = (...a) => console.log(...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
