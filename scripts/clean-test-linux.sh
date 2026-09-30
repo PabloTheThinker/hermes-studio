@@ -11,7 +11,7 @@ apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   xvfb xauth x11-apps imagemagick curl ca-certificates \
   libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libatk-bridge2.0-0t64 libdrm2 \
-  libfuse2t64 fonts-dejavu-core >/dev/null
+  libfuse2t64 libatomic1 fonts-dejavu-core >/dev/null
 
 echo "== clean machine check =="
 for t in python3 ffmpeg hermesclip yt-dlp; do
@@ -57,7 +57,7 @@ for i in $(seq 1 240); do
   sleep 2
 done
 echo "job: $S"
-curl -s "http://127.0.0.1:$PORT/api/jobs" | head -c 600; echo
+case "$S" in *completed*) ;; *) echo "FAIL: captions job did not complete"; curl -s "http://127.0.0.1:$PORT/api/jobs" | head -c 600; echo; exit 1;; esac
 echo "== real CLIP job (find moments + captions) =="
 curl -s -X POST -H "Content-Type: application/json" -H "Origin: http://127.0.0.1:$PORT" \
   "http://127.0.0.1:$PORT/api/jobs" \
@@ -68,17 +68,20 @@ for i in $(seq 1 300); do
   sleep 2
 done
 echo "clip job: $S"
-curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"error\": ?[^,]+" | head -1
+case "$S" in *completed*) ;; *) echo "FAIL: clip job did not complete"; curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"error\": ?[^,]+" | head -1; exit 1;; esac
 echo "== outputs =="
+N=$(find "$HOME/.hermes/clips/library" -name "clip-*.mp4" 2>/dev/null | wc -l)
 find "$HOME/.hermes/clips/library" -name "*.mp4" 2>/dev/null | head -8
+[ "$N" -ge 1 ] || { echo "FAIL: no clips written"; exit 1; }
 # Drive the real window to its screens (xdotool keys a hash change via the URL bar is not
 # available; instead reload the window on each route through the engine page itself).
 sleep 3
 import -window root /work/out/clean-02-after-job.png
 kill $APP; sleep 2
-if for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p" 2>/dev/null; echo; done | grep -qE "^[^ ]*/python3 -c .* studio --port [0-9]+"; then echo "ENGINE STILL RUNNING AFTER QUIT"; else echo "engine stopped on quit"; fi
+if for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p" 2>/dev/null; echo; done | grep -qE "^[^ ]*/python3 -c .* studio --port [0-9]+"; then echo "FAIL: ENGINE STILL RUNNING AFTER QUIT"; exit 1; else echo "engine stopped on quit"; fi
 if [ -f /work/pw/shots.js ] && [ -x /work/node/bin/node ]; then
   echo "== screenshots of the real window (fresh launch) =="
   /work/node/bin/node /work/pw/shots.js
 fi
+echo "LINUX CLEAN TEST PASSED"
 '

@@ -1,6 +1,8 @@
 name: desktop
 # Builds the Hermes Studio desktop app with its engine inside, then installs and
-# tests it on a clean Windows VM. Manual or on PRs that touch the app/engine.
+# tests it on a clean machine: a fresh ubuntu:24.04 container (Linux AppImage)
+# and a Windows VM (NSIS installer). Manual or on PRs that touch the app/engine.
+# The tested installers are uploaded as artifacts; releases are cut from them.
 # Actions are pinned to commit SHAs so a hijacked tag can't run code here.
 on:
   workflow_dispatch:
@@ -14,6 +16,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "pyproject.toml"
+      - "README.md"
       - ".github/workflows/desktop.yml"
 permissions:
   contents: read
@@ -24,7 +27,55 @@ env:
   # BtbN static FFmpeg (GPL, includes libass). Pinned by release and sha256.
   FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
   FFMPEG_WIN_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
+  FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
+  FFMPEG_LINUX_SHA256: 68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269
 jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: FFmpeg (pinned, verified)
+        run: |
+          curl -fsSL "$FFMPEG_LINUX_URL" -o ff.tar.xz
+          echo "$FFMPEG_LINUX_SHA256  ff.tar.xz" | sha256sum -c -
+          mkdir ff && tar -xJf ff.tar.xz -C ff
+          echo "FFMPEG_DIR=$(dirname "$(find "$PWD/ff" -type f -name ffmpeg | head -1)")" >> "$GITHUB_ENV"
+      - name: Build engine
+        run: ./scripts/build-engine-linux.sh
+      - name: Build AppImage
+        run: |
+          npm ci --no-fund --no-audit
+          npx electron-builder --linux AppImage --publish never
+          ls -lh dist/*.AppImage
+      - name: Clean-machine test (fresh ubuntu:24.04, open, captions + clip job, quit)
+        run: |
+          mkdir -p work/out
+          cp dist/Hermes-Studio-*.AppImage work/HermesStudio.AppImage
+          cp site/assets/demo-src.mp4 work/sample.mp4
+          cp scripts/clean-test-linux.sh work/
+          docker run --rm -v "$PWD/work:/work" ubuntu:24.04 bash /work/clean-test-linux.sh 2>&1 \
+            | grep -vE "^(debconf|dpkg)" | tee work/out/test.log
+          grep -q "LINUX CLEAN TEST PASSED" work/out/test.log
+      - name: Test output
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-test
+          path: work/out/
+          if-no-files-found: warn
+      - name: AppImage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-appimage
+          path: dist/Hermes-Studio-*.AppImage
+          retention-days: 14
   windows:
     runs-on: windows-latest
     timeout-minutes: 60

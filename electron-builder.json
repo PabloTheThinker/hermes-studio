@@ -14,6 +14,7 @@
     ],
     "icon": "resources/icon.png",
     "category": "AudioVideo",
+    "artifactName": "Hermes-Studio-${version}.${ext}",
     "extraResources": [
       {
         "from": "build/engine",
