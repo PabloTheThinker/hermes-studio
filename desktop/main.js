@@ -1,8 +1,10 @@
 // Hermes Studio desktop window.
 // The desk already exists as a local page. This window is the app around it:
 // its own frame, a menu, and a graceful screen when the local engine is down.
-const { app, BrowserWindow, Menu, shell } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain } = require("electron");
 const http = require("http");
+const { spawn } = require("child_process");
+const path = require("path");
 
 const DESK = process.env.HERMES_STUDIO_URL || "http://127.0.0.1:3870/";
 
@@ -20,6 +22,28 @@ function engineUp() {
   });
 }
 
+let winRef = null;
+
+ipcMain.handle("start-engine", async () => {
+  try {
+    const child = spawn("hermesclip", ["studio"], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch (e) {
+    return { ok: false, error: String(e.message || e) };
+  }
+  const up = await waitForEngine(12);
+  if (up && winRef) winRef.loadURL(DESK);
+  return up ? { ok: true } : { ok: false, error: "The engine did not answer in time." };
+});
+
+async function waitForEngine(tries) {
+  for (let i = 0; i < tries; i++) {
+    if (await engineUp()) return true;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+  return false;
+}
+
 function offlinePage() {
   return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -31,8 +55,16 @@ function offlinePage() {
   code { color:#ffc83d; }
 </style></head><body><div>
   <h1>Hermes Studio can't reach its engine.</h1>
-  <p>The clipping engine isn't running on this computer. Start it, then reopen the app.</p>
-  <p><code>hermesclip studio</code></p>
+  <p>The clipping engine isn't running on this computer.</p>
+  <p><button id="go" style="background:#ffc83d;color:#110c00;border:0;border-radius:999px;padding:8px 18px;font-weight:700;cursor:pointer">Start the engine</button></p>
+  <p id="msg"></p>
+  <script>
+    document.getElementById("go").onclick = async () => {
+      document.getElementById("msg").textContent = "Starting…";
+      const r = await window.studio.startEngine();
+      document.getElementById("msg").textContent = r.ok ? "Engine started. Reloading…" : ("Couldn't start it: " + r.error);
+    };
+  </script>
 </div></body></html>`)}`;
 }
 
@@ -45,9 +77,10 @@ async function createWindow() {
     backgroundColor: "#0b0b0c",
     title: "Hermes Studio",
     autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
 
+  winRef = win;
   const up = await engineUp();
   if (up) win.loadURL(DESK);
   else win.loadURL(offlinePage());
