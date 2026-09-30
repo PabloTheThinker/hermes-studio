@@ -1,0 +1,1 @@
+{"appId":"com.vektra.hermesstudio","productName":"Hermes Studio","directories":{"output":"dist"},"files":["desktop/**"],"linux":{"target":["AppImage"]}}

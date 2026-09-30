@@ -14,3 +14,6 @@ site/nous.html
 # the landing-page demo short is a deliberate site asset
 !site/assets/demo-short.mp4
 !site/assets/demo-src.mp4
+node_modules/
+dist/
+package-lock.json
