@@ -1,1 +1,29 @@
-{"appId":"com.vektra.hermesstudio","productName":"Hermes Studio","directories":{"output":"dist"},"files":["desktop/**"],"linux":{"target":["AppImage"]}}
+{
+  "appId": "com.vektra.hermesstudio",
+  "productName": "Hermes Studio",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "desktop/**"
+  ],
+  "linux": {
+    "target": [
+      "AppImage"
+    ],
+    "icon": "resources/icon.png"
+  },
+  "win": {
+    "target": [
+      "nsis"
+    ],
+    "icon": "resources/icon.png"
+  },
+  "mac": {
+    "target": [
+      "dmg"
+    ],
+    "icon": "resources/icon.png",
+    "category": "public.app-category.video"
+  }
+}
