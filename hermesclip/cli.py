@@ -151,7 +151,7 @@ class _Parser(argparse.ArgumentParser):
         hint = f"Run: {self.prog} --help"
         m = re.search(r"invalid choice: '([^']*)' \(choose from (.*)\)", message)
         if m:
-            options = re.findall(r"'([^']*)'", m.group(2))
+            options = re.findall(r"'([^']*)'", m.group(2)) or [x.strip() for x in m.group(2).split(",") if x.strip()]
             close = difflib.get_close_matches(m.group(1), options, n=1, cutoff=0.5)
             what = "command" if "<command>" in message or "cmd" in message.split(":")[0] else "value"
             message = f"Unknown {what} '{m.group(1)}'. Choose from: {', '.join(options)}"
