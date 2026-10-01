@@ -1459,23 +1459,35 @@ def test_ripple_trim_of_a_clip_with_both_crossfades():
 
 
 @pytest.mark.parametrize(
-    "d23, op, key",
+    "d23, op, xid",
     [
-        (None, {"op": "trim_clip", "id": "c1", "src_out": S // 4, "ripple": True}, "src_out"),  # out xfade H
-        (None, {"op": "trim_clip", "id": "c1", "src_in": 4 * S - S // 4, "ripple": True}, "src_in"),
-        (H, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + 3 * S // 4, "ripple": True}, "src_out"),  # in+out = S
-        (None, {"op": "trim_clip", "id": "c1", "src_out": H, "ripple": True}, "src_out"),  # exactly the out xfade
-        (None, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + H, "ripple": True}, "src_out"),  # exactly the in xfade
+        # one crossfade doesn't fit on its own: that crossfade
+        (None, {"op": "trim_clip", "id": "c1", "src_out": S // 4, "ripple": True}, "t12"),  # out xfade H
+        (None, {"op": "trim_clip", "id": "c1", "src_in": 4 * S - S // 4, "ripple": True}, "t12"),
+        (None, {"op": "trim_clip", "id": "c1", "src_out": H, "ripple": True}, "t12"),  # exactly the out xfade
+        (None, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + H, "ripple": True}, "t12"),  # exactly the in xfade
+        # each fits alone, not both together (in + out = S, c2 = 3/4 s): the outgoing one
+        (H, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + 3 * S // 4, "ripple": True}, "t23"),
+        # neither fits alone (c2 = 1/4 s): the outgoing one
+        (H, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + S // 4, "ripple": True}, "t23"),
     ],
 )
-def test_a_ripple_trim_shorter_than_its_crossfades_need_is_rejected(d23, op, key):
+@pytest.mark.parametrize("k", [0, 1])
+def test_a_ripple_trim_shorter_than_its_crossfades_need_is_transition_too_long(d23, op, xid, k):
     log = xfade_log(d23=d23)
-    v = log.version
+    v, h0 = log.version, h(log)
+    ops = [{"op": "set_fade", "id": "c3", "fade_in": 0}] * k + [op]
     with pytest.raises(O.OplogError) as e:
-        apply(log, HUMAN, op)
+        apply(log, HUMAN, *ops)
     x = e.value.extra
-    assert (e.value.code, x["rule"], x["path"]) == ("invalid_op", "transition_overlap_mismatch", f"/ops/0/{key}")
-    assert log.version == v
+    assert (e.value.code, x["rule"], x["path"], x["id"], x["op_index"]) == (
+        "invalid_op",
+        "transition_too_long",
+        f"/ops/{k}",
+        xid,
+        k,
+    )
+    assert log.version == v and h(log) == h0 and item(log.doc, xid)["type"] == "transition"
 
 
 def test_a_ripple_trim_exactly_as_long_as_both_crossfades_is_allowed():
@@ -1526,5 +1538,5 @@ def test_random_ripple_trims_with_crossfades_cover_changed_ids_and_round_trip_ov
                 rejected += 1
     # a too-short trim is refused before validation; a clip that grows into the next one on a
     # crossfade-free join is the usual overlap
-    assert set(rules) <= {"transition_overlap_mismatch", "overlap"}, rules
-    assert done > 300 and rules.get("transition_overlap_mismatch", 0) >= 5
+    assert set(rules) <= {"transition_too_long", "overlap"}, rules
+    assert done > 300 and rules.get("transition_too_long", 0) >= 5

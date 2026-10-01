@@ -121,8 +121,14 @@ Decisions:
   - An **incoming** crossfade stays at the clip's start, unchanged.
   - **Too short:** the trimmed clip must be longer than each of its crossfades and at least as
     long as both together, so the previous and next clips can abut but never overlap. Anything
-    shorter is `invalid_op` / `transition_overlap_mismatch` at the trim field
-    (`/ops/k/src_out`, `/ops/k/src_in` or `/ops/k/dur`). It's checked before anything moves.
+    shorter is `invalid_op` / `transition_too_long` at the op (`/ops/k`), with `id` set to the
+    crossfade that doesn't fit (Ada and Glyph's ruling). It's checked before anything moves.
+    - If one crossfade doesn't fit on its own, `id` is that crossfade's id. If neither fits on
+      its own, it's the outgoing one.
+    - If each fits on its own but not both together, `id` is the outgoing crossfade's id.
+    - `transition_too_long` is an op-level rule, not a timeline (validator) rule. It has the same
+      shape as a validator problem on one item (`rule`, `path`, message, `id`), like
+      `fade_too_long`.
   - **Without `ripple`:** nothing shifts. An end trim of a clip with an outgoing crossfade still
     fails validation with `transition_overlap_mismatch`, as before.
   - `changed_ids` comes from the resolved diff, so it lists the trimmed clip, the shifted items,
@@ -134,15 +140,15 @@ Decisions:
 
 | `code` | When | Extra |
 |---|---|---|
-| `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
+| `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()`; for `transition_too_long` also `id` (the crossfade) |
 | `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, and `id` (the id that wasn't found); op-level ones also `op_index` |
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
 | `undo_blocked` | see below | `reason`, `op_ids`, `path` (`/op_id` or `/group_id`) and `id` (the op_id or group_id asked for); with `reason: "dependents"` also `blocking_op_ids` (by `seq`); with `reason: "inverse_invalid"` also `rule` and `problems` |
 
-Op-level `rule`s (16): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
+Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
 `not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `id_reused`, `bad_track_role`,
 `non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
-plus every timeline rule.
+`transition_too_long`, plus every timeline rule.
 
 - **Id types:** every id an op names must be a string. That covers `id`, `track`, each entry
   of `between` and `ids`, and `anchor.to`. Anything else (a number, `null`, a list, an object

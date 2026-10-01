@@ -134,11 +134,19 @@ class OplogError(HermesStudioError):
 
 class _OpError(Exception):
     def __init__(
-        self, rule: str, message: str, key: str | tuple | None = None, *, code: str = "invalid_op", ident: Any = None
+        self,
+        rule: str,
+        message: str,
+        key: str | tuple | None = None,
+        *,
+        code: str = "invalid_op",
+        ident: Any = None,
+        item_id: str | None = None,
     ) -> None:
         super().__init__(message)
         self.rule, self.message, self.key, self.code = rule, message, key, code
         self.ident = ident  # for not_found: the id that wasn't there
+        self.item_id = item_id  # the one item the problem is about, like a validator problem's id
 
 
 # --------------------------------------------------------------------------- doc helpers
@@ -486,13 +494,22 @@ def op_trim_clip(ctx: _Ctx, a: dict) -> list[dict]:
         din, dout = (xin["dur"] if xin else 0), (xout["dur"] if xout else 0)
         # Each crossfade must fit inside the clip and leave the clips in order (longer than
         # each one), and the two must not overlap each other (at least their sum).
-        if not (new_dur >= din + dout and new_dur > max(din, dout)):
-            k = "dur" if "dur" in a else "src_out" if "src_out" in a else "src_in"
+        # Name one crossfade: one that doesn't fit on its own (the outgoing one first); else,
+        # when each fits alone but not both together, the outgoing one.
+        culprit = None
+        if xout and new_dur <= dout:
+            culprit = xout
+        elif xin and new_dur <= din:
+            culprit = xin
+        elif new_dur < din + dout:
+            culprit = xout
+        if culprit is not None:
             raise _OpError(
-                "transition_overlap_mismatch",
-                f"the trim leaves {it['id']!r} {new_dur} ticks long; its crossfades need more than "
-                f"{max(din, dout)} and at least {din + dout}",
-                k,
+                "transition_too_long",
+                f"the trim leaves {it['id']!r} {new_dur} ticks long, too short for crossfade "
+                f"{culprit['id']!r} ({culprit['dur']} ticks); it needs more than {max(din, dout)} "
+                f"and at least {din + dout}",
+                item_id=culprit["id"],
             )
     if ripple and new_dur != old_dur:
         # The cut is where the next clip starts: with an outgoing crossfade that's the start of
@@ -950,6 +967,8 @@ class Oplog:
                 a, inv = _apply_one(ctx, op, internal)
             except _OpError as e:
                 found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
+                if e.item_id is not None:
+                    found_id = {"id": e.item_id}
                 raise OplogError(
                     e.code,
                     f"op {k}: {e.message}",
