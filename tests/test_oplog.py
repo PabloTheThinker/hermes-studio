@@ -1717,3 +1717,18 @@ def test_retries_at_every_seq_still_match_after_load_with_engine_picked_ids(tmp_
             assert which.call(HUMAN, "timeline_apply", omitted)["op_id"] == e["op_id"]
             assert which.call(HUMAN, "timeline_apply", named)["op_id"] == e["op_id"]
             _mismatch(which, HUMAN, "timeline_apply", {**omitted, "ops": [{**omitted["ops"][0], "id": "zz9"}]})
+
+
+@pytest.mark.parametrize("media", ["nope", "", 7, None, ["m1"], {"id": "m1"}, True, "M1", "m1 "], ids=repr)
+def test_insert_clip_with_junk_media_is_unknown_media_at_the_op_arg(media):
+    log = new_log()
+    ops = [
+        {"op": "add_marker", "at": 0, "label": "x"},
+        {"op": "insert_clip", "track": "V1", "media": media, "src": [0, S], "at": 20 * S},
+    ]
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, *ops)
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "unknown_media", "/ops/1/media", 1)
+    assert "id" not in x and log.version == 0 and log.history_list() == []
+    assert apply(log, HUMAN, {**ops[1], "media": "m1"})["new_version"] == 1  # a real media id still works

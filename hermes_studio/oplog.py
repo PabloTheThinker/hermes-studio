@@ -323,6 +323,9 @@ def _timed(a: dict, item: dict) -> None:
 
 def op_insert_clip(ctx: _Ctx, a: dict) -> list[dict]:
     _, tr = _track(ctx.doc, a["track"])
+    m = a["media"]
+    if not (isinstance(m, str) and m in ctx.doc.get("media", {})):  # the op's own arg, not the doc path
+        raise _OpError("unknown_media", f"no media {m!r}", "media")
     iid = _new_id(ctx, a, "c")
     it = {
         "id": iid,

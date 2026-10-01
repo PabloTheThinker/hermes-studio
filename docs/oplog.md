@@ -150,6 +150,11 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
 `non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
 `transition_too_long`, plus every timeline rule.
 
+- **Media:** `insert_clip`'s `media` must be the id of an entry in the doc's `media`. Anything
+  else (an unknown or empty string, a number, `null`, a list, an object or a bool) is
+  `invalid_op` / `unknown_media` at the op's own arg, `/ops/k/media`, with no `id`, checked
+  before the doc is validated (so never at the doc path `/tracks/…/media`). `unknown_media` is the
+  existing timeline rule, so no new rule id.
 - **Id types:** every id an op names must be a string. That covers `id`, `track`, each entry
   of `between` and `ids`, and `anchor.to`. Anything else (a number, `null`, a list, an object
   or a bool) is `invalid_op` / `bad_arg` at that id's own path (`/ops/k/id`, `/ops/k/anchor/to`,
