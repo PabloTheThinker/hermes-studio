@@ -663,6 +663,27 @@ def op_set_fade(ctx: _Ctx, a: dict) -> list[dict]:
     return _set(ctx, it["id"], sets)
 
 
+_TEXT_FIELDS = ("text", "style")  # what edit_text may change; text may be "", style may not
+
+
+def op_edit_text(ctx: _Ctx, a: dict) -> list[dict]:
+    """Replace a text item's ``text`` and/or ``style`` (whole strings; anything not given stays).
+    Values are checked here, at ``/ops/k/text`` / ``/ops/k/style``, with the validator's own rule
+    ids (``wrong_type``, ``not_nfc``): never normalised, never at the doc path."""
+    _, _, it = _find(ctx.doc, a["id"])
+    if it["type"] != "text":
+        raise _OpError("bad_arg", f"edit_text takes a text item id; {it['id']!r} is a {it['type']}", "id", item_id=it["id"])
+    if not any(k in a for k in _TEXT_FIELDS):
+        raise _OpError("missing_arg", "edit_text needs 'text' and/or 'style'")
+    for k in _TEXT_FIELDS:
+        if k in a:
+            c = T._Checker()
+            if not c.string(a[k], "", empty=k == "text"):
+                pr = c.problems[0]
+                raise _OpError(pr.rule, f"'{k}' {pr.message}", k, item_id=it["id"])
+    return _set(ctx, it["id"], {k: a[k] for k in _TEXT_FIELDS if k in a})
+
+
 def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     if a["anchor"] is None:
@@ -688,6 +709,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_props": (op_set_props, frozenset({"id", "props"}), frozenset()),
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
+    "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
     "add_text": (
         op_add_text,
         frozenset({"dur", "text", "style"}),

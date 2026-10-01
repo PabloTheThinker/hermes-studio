@@ -84,6 +84,7 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `set_props` | `id, props` (merged into the clip's props) | `set_fields` with the old `props` |
 | `set_fade` | `id, fade_in?, fade_out?` (clips and text) | `set_fields` with the old values |
 | `set_anchor` | `id, anchor` or `anchor: null, at` | `set_fields` with the old `at`/`anchor` |
+| `edit_text` | `id, text?, style?` (a text item; at least one of `text`/`style`) | `set_fields` with the old values of the fields given |
 
 Internal ops (`set_fields`, `shift_items`, `delete_item`, `insert_item`, `insert_marker`,
 `insert_track`, `join_clips`) only appear in inverses and undo entries; a caller sending one gets
@@ -163,6 +164,26 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
 `non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
 `transition_too_long`, plus every timeline rule.
 
+- **`edit_text`** (S2b) changes a text item's `text` and/or `style` on any text track.
+  - Each field given replaces the old value as a whole string. `style` is a single style name in
+    the S1 schema, not an object, so there are no style sub-keys to merge. A field left out
+    stays as it is, and so does everything else on the item (`dur`, `at`/`anchor`, fades,
+    `split_from`).
+  - Checks, in order:
+    1. the usual `unknown_arg`/`missing_arg` (`id`);
+    2. `id` must be a string (`bad_arg` at `/ops/k/id`);
+    3. it must exist (`not_found` at `/ops/k/id`, `id` = the missing id);
+    4. it must be a text item (`bad_arg` at `/ops/k/id`, `id` = the clip or transition);
+    5. at least one of `text`/`style` is needed (`missing_arg` at `/ops/k`);
+    6. then each value, at the op's own arg (`/ops/k/text`, `/ops/k/style`), with the validator's
+       rule ids and `id` = the text item: not a string, an empty `style`, or a lone surrogate is
+       `wrong_type`; non-NFC is `not_nfc`. `text` may be `""`.
+  - Strings are never normalised. What's stored is exactly what was sent (NFD is rejected, not
+    converted). No new rule id.
+  - The inverse is `set_fields` with the old values of just the fields given, so undo and redo
+    restore the hash exactly.
+  - `changed_ids` is `[id]` when something changed. An edit to the same values is still an entry
+    (a new version, the same hash, `changed_ids: []`), like `set_fade` with its current values.
 - **Media:** `insert_clip`'s `media` must be the id of an entry in the doc's `media`. Anything
   else (an unknown or empty string, a number, `null`, a list, an object or a bool) is
   `invalid_op` / `unknown_media` at the op's own arg, `/ops/k/media`, with no `id`, checked

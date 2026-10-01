@@ -1787,3 +1787,275 @@ def test_rule_counts_stay_17_op_level_and_36_validator():
     listed = text.split("Op-level `rule`s (17):")[1].split("plus every timeline rule")[0]
     assert len(listed.split("`")[1::2]) == 17
     assert len(T.RULES) == 36 and "transition_too_long" not in T.RULES
+
+
+# --------------------------------------------------------------------------- S2b: edit_text
+
+
+def _text(log: O.Oplog, iid: str = "x1") -> dict:
+    return item(log.doc, iid)
+
+
+def _edit(log: O.Oplog, session: O.Session = HUMAN, iid: str = "x1", **fields) -> dict:
+    return apply(log, session, {"op": "edit_text", "id": iid, **fields})
+
+
+def _op_error(log: O.Oplog, *ops: dict) -> O.OplogError:
+    v, h0, n = log.version, h(log), len(log.history_list())
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, *ops)
+    assert (log.version, h(log), len(log.history_list())) == (v, h0, n), "nothing applied"
+    return e.value
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"text": "Hola"}, {"style": "bold"}, {"text": "Hola", "style": "bold"}, {"text": ""}],
+    ids=["text-only", "style-only", "both", "empty-text"],
+)
+def test_edit_text_replaces_only_the_fields_given(fields):
+    log = new_log()
+    before = copy.deepcopy(_text(log))
+    r = _edit(log, **fields)
+    after = _text(log)
+    assert after == {**before, **fields}, "every other field (dur, anchor, fades, the field not given) is untouched"
+    assert r["changed_ids"] == ["x1"]
+    e = log.history_list()[-1]
+    assert e["ops"] == [{"op": "edit_text", "id": "x1", **fields}]
+    assert e["inverse"] == [{"op": "set_fields", "id": "x1", "set": {k: before[k] for k in fields}, "unset": []}]
+
+
+def test_edit_text_style_only_then_text_only_keep_each_other():
+    log = new_log()
+    _edit(log, style="bold")
+    _edit(log, text="second")
+    assert (_text(log)["text"], _text(log)["style"]) == ("second", "bold")
+    _edit(log, style="pop")
+    assert (_text(log)["text"], _text(log)["style"]) == ("second", "pop")
+
+
+_ODD = [
+    "",
+    "caf\u00e9 \u00fcber na\u00efve",  # precomposed (NFC)
+    "\U0001f469\u200d\U0001f4bb ok \U0001f1ea\U0001f1f8",  # ZWJ sequence, flag
+    "\u65e5\u672c\u8a9e \ud55c\uad6d\uc5b4",
+    "\u05e9\u05dc\u05d5\u05dd \u0645\u0631\u062d\u0628\u0627",  # RTL
+    "line one\nline two\ttab  double  space ",
+    "\u00c5ngstr\u00f6m",  # U+00C5, the NFC form of U+212B
+    "quotes \" ' \\ </script>",
+]
+
+
+@pytest.mark.parametrize("s", _ODD, ids=range(len(_ODD)))
+def test_edit_text_stores_strings_byte_for_byte(s, tmp_path):
+    assert unicodedata.normalize("NFC", s) == s
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    _edit(log, text=s, style=s or "s")
+    assert _text(log)["text"].encode("utf-8") == s.encode("utf-8")
+    line = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+    assert line["ops"][0]["text"] == s
+    again = O.Oplog.load(base(), p)
+    assert _text(again)["text"].encode("utf-8") == s.encode("utf-8") and h(again) == h(log)
+    assert T.canonical_hash(O.replay(base(), log.history_list())) == h(log)
+
+
+@pytest.mark.parametrize(
+    "fields, rule, path",
+    [
+        ({"text": 7}, "wrong_type", "/ops/0/text"),
+        ({"text": None}, "wrong_type", "/ops/0/text"),
+        ({"text": ["a"]}, "wrong_type", "/ops/0/text"),
+        ({"text": True}, "wrong_type", "/ops/0/text"),
+        ({"style": ""}, "wrong_type", "/ops/0/style"),
+        ({"style": {"font": "x"}}, "wrong_type", "/ops/0/style"),
+        ({"text": "a\ud800b"}, "wrong_type", "/ops/0/text"),  # lone surrogate
+        ({"style": "\udfff"}, "wrong_type", "/ops/0/style"),
+        ({"text": "cafe\u0301"}, "not_nfc", "/ops/0/text"),  # NFD: rejected, never normalised
+        ({"style": "Cafe\u0301"}, "not_nfc", "/ops/0/style"),
+        ({"text": "ok", "style": 3}, "wrong_type", "/ops/0/style"),
+    ],
+)
+def test_edit_text_bad_values_get_the_validators_rule_at_the_op_arg(fields, rule, path):
+    log = new_log()
+    e = _op_error(log, {"op": "edit_text", "id": "x1", **fields})
+    assert (e.code, e.extra["rule"], e.extra["path"], e.extra["id"], e.extra["op_index"]) == ("invalid_op", rule, path, "x1", 0)
+    assert rule in T.RULES
+    json.dumps(e.as_dict())  # a clean, serialisable error
+
+
+@pytest.mark.parametrize(
+    "op, code, rule, path, ident",
+    [
+        ({"id": "c1", "text": "a"}, "invalid_op", "bad_arg", "/ops/0/id", "c1"),  # a clip
+        ({"id": "t12", "text": "a"}, "invalid_op", "bad_arg", "/ops/0/id", "t12"),  # a transition
+        ({"id": "nope", "text": "a"}, "not_found", "not_found", "/ops/0/id", "nope"),
+        ({"id": "x1"}, "invalid_op", "missing_arg", "/ops/0", None),
+        ({"text": "a"}, "invalid_op", "missing_arg", "/ops/0/id", None),
+        ({"id": 5, "text": "a"}, "invalid_op", "bad_arg", "/ops/0/id", None),
+        ({"id": None, "text": "a"}, "invalid_op", "bad_arg", "/ops/0/id", None),
+        ({"id": "x1", "text": "a", "dur": S}, "invalid_op", "unknown_arg", "/ops/0/dur", None),
+    ],
+    ids=["clip", "transition", "missing", "no-fields", "no-id", "int-id", "null-id", "extra-arg"],
+)
+def test_edit_text_on_a_non_text_item_or_a_missing_id_is_a_clean_error(op, code, rule, path, ident):
+    log = xfade_log()  # has a crossfade t12
+    e = _op_error(log, {"op": "edit_text", **op})
+    x = e.extra
+    assert (e.code, x["rule"], x["path"], x.get("id")) == (code, rule, path, ident)
+    json.dumps(e.as_dict())
+
+
+def test_edit_text_as_op_k_reports_op_k():
+    log = new_log()
+    e = _op_error(log, {"op": "add_marker", "at": 0, "label": "m"}, {"op": "edit_text", "id": "c1", "style": "x"})
+    assert (e.extra["path"], e.extra["op_index"], e.extra["id"]) == ("/ops/1/id", 1, "c1")
+
+
+def test_edit_text_undo_and_redo_restore_state_hashes_and_changed_ids(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    d0, h0 = copy.deepcopy(log.doc), h(log)
+    r = _edit(log, text="Nuevo", style="bold")
+    d1, h1 = copy.deepcopy(log.doc), h(log)
+    assert h1 != h0 and r["changed_ids"] == ["x1"]
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert h(log) == h0 and _text(log) == item(d0, "x1") and u["changed_ids"] == ["x1"]
+    rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "r1"})
+    assert h(log) == h1 and _text(log) == item(d1, "x1") and rd["changed_ids"] == ["x1"]
+    again = O.Oplog.load(base(), p)
+    assert h(again) == h1 and T.canonical_hash(O.replay(base(), log.history_list())) == h1
+
+
+def test_edit_text_to_the_same_values_is_an_entry_with_no_changed_ids():
+    log = new_log()
+    h0, cur = h(log), _text(log)
+    r = _edit(log, text=cur["text"], style=cur["style"])
+    assert r["new_version"] == 1 and r["changed_ids"] == [] and h(log) == h0
+    assert undo(log, HUMAN, op_id=r["op_id"])["changed_ids"] == [] and h(log) == h0
+
+
+def test_edit_text_in_a_group_undoes_as_one_entry():
+    log = new_log()
+    h0 = h(log)
+    apply(log, HUMAN, {"op": "add_text", "dur": S, "text": "b", "style": "pop", "at": 0, "id": "x9"}, group_id="g")
+    apply(log, HUMAN, {"op": "edit_text", "id": "x1", "text": "one"}, group_id="g")
+    apply(log, HUMAN, {"op": "edit_text", "id": "x9", "style": "bold"}, group_id="g")
+    u = undo(log, HUMAN, group_id="g")
+    assert h(log) == h0 and sorted(u["changed_ids"]) == ["x1", "x9"]
+
+
+def test_an_exact_edit_text_retry_returns_the_cached_result():
+    log = new_log()
+    nfc = "Ni\u00f1o caf\u00e9 \U0001f469\u200d\U0001f4bb"
+    calls = [
+        {"ops": [{"op": "edit_text", "id": "x1", "text": nfc}], "client_op_id": "e1"},
+        {"ops": [{"op": "edit_text", "id": "x1", "style": "bold"}], "client_op_id": "e2"},  # style only
+    ]
+    for c in calls:
+        args = {**c, "base_version": log.version, "summary": "edit"}
+        r = log.call(HUMAN, "timeline_apply", args)
+        n = len(log.history_list())
+        assert log.call(HUMAN, "timeline_apply", copy.deepcopy(args))["op_id"] == r["op_id"]
+        assert len(log.history_list()) == n
+    first = {**calls[0], "base_version": 0, "summary": "edit"}
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfd != nfc
+    _mismatch(log, HUMAN, "timeline_apply", {**first, "ops": [{"op": "edit_text", "id": "x1", "text": nfd}]})  # NFD ≠ NFC
+    _mismatch(log, HUMAN, "timeline_apply", {**first, "ops": [{"op": "edit_text", "id": "x1", "text": nfc + "!"}]})
+    _mismatch(log, HUMAN, "timeline_apply", {**first, "ops": [{"op": "edit_text", "id": "x1", "text": nfc, "style": "pop"}]})
+    second = {**calls[1], "base_version": 1, "summary": "edit"}
+    _mismatch(log, HUMAN, "timeline_apply", {**second, "ops": [{"op": "edit_text", "id": "x1", "style": "bold", "text": nfc}]})
+
+
+def test_an_nfd_edit_text_is_rejected_the_same_way_every_time():
+    log = new_log()
+    nfd = {
+        "base_version": 0,
+        "summary": "edit",
+        "client_op_id": "n1",
+        "ops": [{"op": "edit_text", "id": "x1", "text": "cafe\u0301"}],
+    }
+    for _ in range(2):
+        with pytest.raises(O.OplogError) as e:
+            log.call(HUMAN, "timeline_apply", nfd)
+        assert (e.value.extra["rule"], e.value.extra["path"]) == ("not_nfc", "/ops/0/text")
+    assert log.history_list() == []
+
+
+def test_edit_text_retry_survives_load(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    args = {"base_version": 0, "summary": "edit", "client_op_id": "e1", "ops": [{"op": "edit_text", "id": "x1", "style": "bold"}]}
+    r = log.call(HUMAN, "timeline_apply", args)
+    again = O.Oplog.load(base(), p)
+    assert again.call(HUMAN, "timeline_apply", args)["op_id"] == r["op_id"]
+    _mismatch(again, HUMAN, "timeline_apply", {**args, "ops": [{"op": "edit_text", "id": "x1", "style": "pop"}]})
+
+
+def test_a_later_edit_text_blocks_undo_of_an_earlier_one_as_a_dependent():
+    log = new_log()
+    a = _edit(log, text="one")
+    b = _edit(log, style="bold")
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, op_id=a["op_id"])
+    x = e.value.extra
+    assert (e.value.code, x["reason"], x["op_ids"], x["blocking_op_ids"]) == (
+        "undo_blocked",
+        "dependents",
+        [b["op_id"]],
+        [b["op_id"]],
+    )
+
+
+def test_an_agent_cannot_undo_a_humans_edit_text():
+    log = new_log()
+    a = _edit(log, text="mine")
+    with pytest.raises(O.OplogError) as e:
+        undo(log, hermes(), op_id=a["op_id"])
+    assert (e.value.extra["reason"], e.value.extra["op_ids"]) == ("actor", [a["op_id"]])
+
+
+_STRINGS = ["", "a", "Hola", "caf\u00e9", "\U0001f600", "\u65e5\u672c", "x\ny", "bold", "pop", "Big Title"]
+
+
+def test_edit_text_apply_undo_redo_restores_hashes_over_300_seeds():
+    edits = 0
+    for seed in range(300):
+        rng = random.Random(seed)
+        log = new_log()
+        hashes = [h(log)]
+        for _ in range(rng.randrange(2, 8)):
+            texts = [i["id"] for t in log.doc["tracks"] if t["role"] == "text" for i in t["items"]]
+            if texts and rng.random() < 0.6:
+                fields = {
+                    k: rng.choice(_STRINGS[1:] if k == "style" else _STRINGS)
+                    for k in rng.choice([["text"], ["style"], ["text", "style"]])
+                }
+                ops = [{"op": "edit_text", "id": rng.choice(texts), **fields}]
+            else:
+                ops = [_random_op(rng, log.doc)]
+            before = h(log)
+            try:
+                r = apply(log, rng.choice([HUMAN, hermes()]), *ops)
+            except O.OplogError as e:
+                assert e.code in ("invalid_op", "not_found") and h(log) == before
+                continue
+            after = h(log)
+            edits += ops[0]["op"] == "edit_text"
+            u = undo(log, HUMAN, op_id=r["op_id"])
+            assert h(log) == before and u["changed_ids"] == r["changed_ids"]
+            rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
+            assert h(log) == after and rd["changed_ids"] == r["changed_ids"]
+            hashes.append(after)
+        assert T.canonical_hash(O.replay(base(), log.history_list())) == hashes[-1]
+    assert edits > 300
+
+
+def test_edited_text_survives_the_otio_round_trip():
+    log = new_log()
+    s = "Ni\u00f1o \U0001f469\u200d\U0001f4bb\nl\u00ednea"
+    _edit(log, text=s, style="Big Title")
+    d = log.doc
+    back = T.from_otio(T.to_otio(d))
+    assert back == T.normalize(d) and item(back, "x1")["text"] == s and item(back, "x1")["style"] == "Big Title"
