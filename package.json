@@ -6,7 +6,7 @@
   },
   "name": "hermes-studio",
   "productName": "Hermes Studio",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Local video tools for Hermes Agent. Clips, captions, library.",
   "main": "desktop/main.js",
   "author": "Pablo Navarro",

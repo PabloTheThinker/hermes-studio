@@ -1,6 +1,7 @@
 # Build the engine that ships inside the Windows app:
 #   build\engine\python\   portable CPython with hermes-studio + deps installed
 #   build\engine\bin\      ffmpeg.exe, ffprobe.exe (static, with libass)
+#   build\engine\NOTICE, LICENSE, licenses\   third-party notices + license texts
 # The desktop app starts build\engine\python\python.exe with build\engine\bin first on PATH.
 # Mirrors scripts/build-engine-linux.sh. Needs: uv on PATH, and FFMPEG_DIR set to a
 # folder holding ffmpeg.exe + ffprobe.exe (with libass).
@@ -34,7 +35,8 @@ $Py = "$Out\python\python.exe"
 Remove-Item -Force -ErrorAction SilentlyContinue "$Out\python\Lib\EXTERNALLY-MANAGED"
 
 # 2. The engine and its libraries.
-uv pip install --python $Py --no-cache "$Root[reframe]"
+# Exact PyAV / OpenCV versions: NOTICE names them and the FFmpeg libraries they bundle.
+uv pip install --python $Py --no-cache -c "$Root\packaging\engine-constraints.txt" "$Root[reframe]"
 if ($LASTEXITCODE -ne 0) { throw "engine install failed" }
 
 # 3. yt-dlp beside the interpreter (download.py looks there first).
@@ -56,8 +58,10 @@ Set-Content -Encoding ascii -Path "$Out\hermes-studio.cmd" -Value @(
   "`"%~dp0python\python.exe`" -m hermes_studio %*"
 )
 
-# 4. FFmpeg.
+# 4. FFmpeg (a separate GPL program), plus the notices and license texts it needs.
 Copy-Item "$FfDir\ffmpeg.exe", "$FfDir\ffprobe.exe" "$Out\bin\"
+Copy-Item "$Root\NOTICE", "$Root\LICENSE" "$Out\"
+Copy-Item -Recurse "$Root\licenses" "$Out\licenses"
 
 # 5. Trim what the app never runs.
 Get-ChildItem -Recurse -Directory -Filter "__pycache__" "$Out\python" | Remove-Item -Recurse -Force
@@ -67,6 +71,7 @@ foreach ($d in "Lib\test", "Lib\idlelib", "Lib\tkinter", "tcl") {
 
 # 6. Smoke test: imports, tools on PATH, and a real audio decode.
 $env:PATH = "$Out\bin;$Out\python;$env:SystemRoot\System32"
+$env:ENGINE_OUT = $Out
 $smoke = @'
 import os, shutil, subprocess, sys, tempfile
 import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
@@ -78,6 +83,19 @@ print("yt-dlp:", _ytdlp())
 wav = os.path.join(tempfile.mkdtemp(), "tone.wav")
 subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=440:d=1", wav], check=True)
 assert len(decode_audio(wav)) > 8000, "audio decode returned nothing"
+# NOTICE must name the exact FFmpeg build and PyAV/OpenCV wheels that ship.
+import re, av
+from importlib.metadata import version
+notice = open(os.path.join(os.environ["ENGINE_OUT"], "NOTICE"), encoding="utf-8").read()
+ver = subprocess.run(["ffmpeg", "-hide_banner", "-version"], capture_output=True, text=True).stdout.split()[2]
+build = re.sub(r"-\d{8}$", "", ver)  # drop BtbN's date suffix
+assert build in notice, f"NOTICE does not name the bundled ffmpeg build {build}"
+assert f"PyAV {av.__version__}" in notice, f"NOTICE does not name PyAV {av.__version__}"
+assert f"FFmpeg {av.ffmpeg_version_info}" in notice, f"NOTICE does not name PyAV's FFmpeg {av.ffmpeg_version_info}"
+for lib, v in av.library_versions.items():
+    assert f"{lib} {'.'.join(map(str, v))}" in notice, f"NOTICE does not list {lib} {v}"
+assert f"opencv-python-headless {version('opencv-python-headless')}" in notice, "NOTICE does not name the bundled OpenCV wheel"
+print("notices ok: ffmpeg", build, "| PyAV", av.__version__, "FFmpeg", av.ffmpeg_version_info)
 print("engine ok:", sys.version.split()[0])
 '@
 $smoke | & $Py -

@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 env:
   # BtbN static FFmpeg (GPL, includes libass). Pinned by release and sha256.
+  # NOTICE names this exact build; tests/test_notices.py fails if these change without it.
   FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
   FFMPEG_WIN_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
   FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
@@ -42,7 +43,7 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then echo "app=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           files=$(git diff --name-only "$BASE" "$HEAD")
           echo "$files"
-          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|\.github/workflows/desktop\.yml$)'; then
+          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|\.github/workflows/desktop\.yml$)'; then
             echo "app=true" >> "$GITHUB_OUTPUT"
           else
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -74,6 +75,18 @@ jobs:
           npm ci --no-fund --no-audit
           npx electron-builder --linux AppImage --publish never
           ls -lh dist/*.AppImage
+      - name: Notices inside the AppImage (byte-identical to the repo)
+        run: |
+          set -euo pipefail
+          app="$(ls dist/Hermes-Studio-*.AppImage)"
+          (mkdir -p x && cd x && "../$app" --appimage-extract >/dev/null)
+          for f in NOTICE LICENSE licenses/*; do
+            for dir in resources resources/engine; do
+              cmp "$f" "x/squashfs-root/$dir/$f"
+            done
+          done
+          x/squashfs-root/resources/engine/bin/ffmpeg -hide_banner -version | head -1
+          rm -rf x
       - name: Clean-machine test (fresh ubuntu:24.04, open, captions + clip job, quit)
         run: |
           mkdir -p work/out
@@ -133,6 +146,24 @@ jobs:
           npm ci --no-fund --no-audit
           npx electron-builder --win nsis --publish never
           Get-ChildItem dist -Filter *.exe | Format-Table Name, Length
+      - name: Notices inside the installer (7z, byte-identical to the repo)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist -Filter "Hermes-Studio-Setup-*.exe" | Select-Object -First 1).FullName
+          7z x -y "-ox\setup" $setup | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z could not open the installer" }
+          7z x -y "-ox\app" 'x\setup\$PLUGINSDIR\app-64.7z' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z could not open app-64.7z" }
+          $files = @("NOTICE", "LICENSE") + (Get-ChildItem licenses -File | ForEach-Object { "licenses\$($_.Name)" })
+          foreach ($f in $files) {
+            foreach ($dir in "resources", "resources\engine") {
+              $want = (Get-FileHash $f).Hash
+              $got = (Get-FileHash "x\app\$dir\$f").Hash
+              if ($want -ne $got) { throw "$dir\$f differs from the repo copy" }
+            }
+          }
+          & x\app\resources\engine\bin\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          Remove-Item -Recurse -Force x
       - name: Clean-machine test (install, open, clip, screenshots, quit)
         shell: pwsh
         run: |
@@ -218,10 +249,18 @@ jobs:
           cd rel
           ls -la
           [ -f "Hermes-Studio-$want.AppImage" ] && [ -f "Hermes-Studio-Setup-$want.exe" ] || { echo "missing an installer"; exit 1; }
-          sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" > SHA256SUMS.txt
+          # Source for this release, and the corresponding source of the bundled FFmpeg
+          # (exact commit + the BtbN build scripts that pin every library); see NOTICE.
+          git -C .. archive --format=tar.gz --prefix="hermes-studio-$want/" -o "$PWD/hermes-studio-$want-source.tar.gz" HEAD
+          ff_tag="$(echo "$FFMPEG_LINUX_URL" | cut -d/ -f8)"
+          ff_commit="$(grep -m1 -oE 'FFmpeg/FFmpeg/archive/[0-9a-f]{40}' ../NOTICE | cut -d/ -f4)"
+          curl -fsSL "https://github.com/FFmpeg/FFmpeg/archive/$ff_commit.tar.gz" -o "ffmpeg-$ff_commit-source.tar.gz"
+          curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/archive/refs/tags/$ff_tag.tar.gz" -o "FFmpeg-Builds-$ff_tag.tar.gz"
+          src=("hermes-studio-$want-source.tar.gz" "ffmpeg-$ff_commit-source.tar.gz" "FFmpeg-Builds-$ff_tag.tar.gz")
+          sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" > SHA256SUMS.txt
           cat SHA256SUMS.txt
           notes="../docs/releases/$TAG.md"
           if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "Hermes Studio $TAG" "$@" \
-            "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" SHA256SUMS.txt
+            "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" SHA256SUMS.txt
