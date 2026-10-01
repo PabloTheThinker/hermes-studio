@@ -272,6 +272,51 @@ def test_non_object_doc_is_rejected():
         assert rules(d) == {"not_object"}
 
 
+def _refused(d) -> set[str]:
+    """canonical_hash and stamp_hash both raise TimelineError (never TypeError & co.); its rules."""
+    with pytest.raises(T.TimelineError) as a:
+        T.canonical_hash(d)
+    with pytest.raises(T.TimelineError) as b:
+        T.stamp_hash(d)
+    assert a.value.problems == b.value.problems == T.validate(d)
+    return set(a.value.rules)
+
+
+@pytest.mark.parametrize("role", [[], {}, ["main"], {"x": 1}, 1, None, True])
+def test_a_role_of_the_wrong_type_is_bad_track_role(role):
+    d = doc()
+    i = next(k for k, t in enumerate(d["tracks"]) if t["id"] == "A1")
+    d["tracks"][i]["role"] = role
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("bad_track_role", f"/tracks/{i}/role")]
+    assert "id" not in V(d)[0]
+    assert _refused(d) == {"bad_track_role"}
+
+
+@pytest.mark.parametrize("key", [1, ("t",), None])
+def test_a_non_string_key_is_unknown_field(key):
+    # JSON can't make one, but a Python caller can; sorting mixed key types used to raise TypeError
+    d = doc()
+    d["tracks"][0][key] = "x"
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("unknown_field", f"/tracks/0/{key}")]
+    assert _refused(d) == {"unknown_field"}
+
+
+@pytest.mark.parametrize("where", ["style", "text", "label", "media_path"])
+def test_a_lone_surrogate_is_wrong_type_not_an_encode_error(where):
+    bad = json.loads('"a\\ud800"')  # valid JSON, but not encodable as UTF-8
+    d = doc()
+    if where == "label":
+        d["markers"][0]["label"], path, iid = bad, "/markers/0/label", "k2"
+    elif where == "media_path":
+        d["media"]["m1"]["path"], path, iid = bad, "/media/m1/path", None
+    else:
+        t = next(k for k, t in enumerate(d["tracks"]) if t["id"] == "T1")
+        d["tracks"][t]["items"][1][where], path, iid = bad, f"/tracks/{t}/items/1/{where}", "t2"
+    (p,) = V(d)
+    assert (p["rule"], p["path"], p.get("id")) == ("wrong_type", path, iid)
+    assert _refused(d) == {"wrong_type"}
+
+
 # --------------------------------------------------------------------------- desk rulings
 
 

@@ -49,7 +49,10 @@ frozen after slice 1: any change means `hs.timeline/2`.
 Every object is strict: unknown fields are rejected. Times are integer ticks; floats and bools are
 rejected anywhere a number is expected. Other fractions are reduced `[num, den]` pairs
 (`volume` 0–4, `speed` 1/10–10, `crop` `{x, y, w, h}` in 0–1 inside the frame). Every string must
-be NFC-normalized. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
+be NFC-normalized (`not_nfc`) and encodable as UTF-8: a lone surrogate such as JSON `"\ud800"`
+fails as `wrong_type`. A value of the wrong type anywhere (a list or object as a track `role`, a
+non-string key) is reported as a problem, never raised: `validate()` always returns a list, and
+`canonical_hash()` / `stamp_hash()` raise only `TimelineError`. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
 (media, tracks, items and markers).
 
 **Tracks.** The roles are exactly `text` (`T<n>`), `main` (`V1`, required, the only video

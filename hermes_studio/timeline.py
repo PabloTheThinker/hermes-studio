@@ -208,7 +208,7 @@ class _Checker:
             self.bad("not_object", path, "must be an object")
             return False
         ok = True
-        for k in sorted(set(obj) - required - optional):
+        for k in sorted(set(obj) - required - optional, key=repr):  # keys may not be strings
             if k in ATTRIBUTION_KEYS:
                 self.bad("attribution_field", _j(path, k), f"'{k}' is not allowed in a timeline")
             else:
@@ -240,6 +240,11 @@ class _Checker:
             return False
         if not empty and not v:
             self.bad("wrong_type", path, "must not be empty")
+            return False
+        try:
+            v.encode("utf-8")
+        except UnicodeEncodeError:
+            self.bad("wrong_type", path, "must be valid Unicode text (no lone surrogates)")
             return False
         if unicodedata.normalize("NFC", v) != v:
             self.bad("not_nfc", path, "must be NFC-normalized Unicode")
@@ -363,7 +368,7 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
         if not c.keys(tr, tp, TRACK_KEYS):
             continue
         role, tid = tr["role"], tr["id"]
-        if role not in ROLES:
+        if not isinstance(role, str) or role not in ROLES:
             c.bad("bad_track_role", _j(tp, "role"), f"role must be one of {', '.join(ROLE_ORDER)}")
             continue
         if not c.ident(tid, _j(tp, "id")):
