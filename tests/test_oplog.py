@@ -1620,3 +1620,100 @@ def test_the_log_line_and_same_call_share_one_encoding(tmp_path):
     log.call(HUMAN, "timeline_apply", {**APPLY, "summary": _NFC})
     line = p.read_text(encoding="utf-8").splitlines()[0]
     assert line == O._canon(json.loads(line)) and _NFC in line
+
+
+def _replayed_states(entries: list[dict]) -> list[tuple[str, set[str]]]:
+    """(hash, retired ids) after each prefix of ``entries``, from base, the way load and the old
+    same-call check worked them out."""
+    then = O.Oplog(base())
+    out = [(then.doc["hash"], set(then._retired))]
+    for e in entries:
+        new, _, _ = then._run(e["ops"], internal=True)
+        then._retire(new)
+        then._doc = new
+        out.append((new["hash"], set(then._retired)))
+    return out
+
+
+def _busy_log(seed: int, n: int, **kw) -> O.Oplog:
+    rng = random.Random(seed)
+    log = new_log(**kw)
+    k = 0
+    while len(log.history_list()) < n:
+        k += 1
+        entries = log.history_list()
+        if entries and rng.random() < 0.15:
+            try:
+                tool = rng.choice(["history_undo", "history_redo"])
+                log.call(HUMAN, tool, {"op_id": rng.choice(entries)["op_id"], "client_op_id": f"u{k}"})
+            except O.OplogError:
+                pass
+            continue
+        ops = [_random_op(rng, log.doc) for _ in range(rng.randrange(1, 3))]
+        try:
+            log.call(HUMAN, "timeline_apply", {"base_version": log.version, "ops": ops, "summary": "s", "client_op_id": f"k{k}"})
+        except O.OplogError:
+            pass
+    return log
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_same_call_checkpoints_equal_a_full_replay(seed, monkeypatch, tmp_path):
+    monkeypatch.setattr(O, "CHECKPOINT_EVERY", 3)
+    p = tmp_path / "oplog.jsonl"
+    log = _busy_log(seed, 30, path=p)
+    states = _replayed_states(log.history_list())
+    assert sorted(log._checkpoints) == list(range(0, 31, 3))
+    for again in (log, O.Oplog.load(base(), p)):
+        assert sorted(again._checkpoints) == sorted(log._checkpoints)
+        for n, (doc, retired) in again._checkpoints.items():
+            assert (doc["hash"], set(retired)) == states[n], n
+
+
+def test_an_identical_retry_reruns_at_most_one_checkpoint_span(monkeypatch):
+    log = new_log()
+    for i in range(3 * O.CHECKPOINT_EVERY + 5):
+        log.call(
+            HUMAN,
+            "timeline_apply",
+            {**APPLY, "base_version": log.version, "client_op_id": f"k{i}", "ops": [{"op": "add_marker", "at": i, "label": "x"}]},
+        )
+    runs = []
+    real = O.Oplog._run
+    monkeypatch.setattr(O.Oplog, "_run", lambda self, *a, **kw: runs.append(1) or real(self, *a, **kw))
+    for i, e in enumerate(log.history_list()):
+        runs.clear()
+        retry = {
+            **APPLY,
+            "base_version": e["base_version"],
+            "client_op_id": f"k{i}",
+            "ops": [{"op": "add_marker", "at": i, "label": "x"}],
+        }
+        assert log.call(HUMAN, "timeline_apply", retry)["op_id"] == e["op_id"]
+        assert len(runs) == (e["seq"] - 1) % O.CHECKPOINT_EVERY + 1  # the entries since the checkpoint, plus the retry itself
+        _mismatch(log, HUMAN, "timeline_apply", {**retry, "ops": [{"op": "add_marker", "at": i + 1, "label": "x"}]})
+
+
+def test_retries_at_every_seq_still_match_after_load_with_engine_picked_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(O, "CHECKPOINT_EVERY", 4)
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    for i in range(11):  # every call lets the engine pick the marker id
+        log.call(
+            HUMAN,
+            "timeline_apply",
+            {**APPLY, "base_version": log.version, "client_op_id": f"k{i}", "ops": [{"op": "add_marker", "at": i, "label": "x"}]},
+        )
+    again = O.Oplog.load(base(), p)
+    for i, e in enumerate(log.history_list()):
+        omitted = {
+            **APPLY,
+            "base_version": e["base_version"],
+            "client_op_id": f"k{i}",
+            "ops": [{"op": "add_marker", "at": i, "label": "x"}],
+        }
+        named = {**omitted, "ops": [{**omitted["ops"][0], "id": e["ops"][0]["id"]}]}
+        for which in (log, again):
+            assert which.call(HUMAN, "timeline_apply", omitted)["op_id"] == e["op_id"]
+            assert which.call(HUMAN, "timeline_apply", named)["op_id"] == e["op_id"]
+            _mismatch(which, HUMAN, "timeline_apply", {**omitted, "ops": [{**omitted["ops"][0], "id": "zz9"}]})

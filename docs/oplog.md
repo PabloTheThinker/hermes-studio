@@ -217,6 +217,9 @@ store and the lock are Slice 3.
     - `base_version`, `summary` and `group_id` are equal;
     - the ops, re-run on the doc and retired ids as they were before that entry, produce exactly
       the logged ops. So leaving out an id the engine picked, or naming that same id, both match.
+      The doc and retired ids are kept as a checkpoint after every 16th entry (live and after
+      `load`), so a retry re-runs at most 15 entries from the nearest one instead of the whole
+      log. The result is the same as re-running from `base`.
   - `history_undo` / `history_redo`:
     - the target is the same (`op_id`, or `group_id` for an undo);
     - `summary` is the same; without one, the line's summary must be that tool's default
