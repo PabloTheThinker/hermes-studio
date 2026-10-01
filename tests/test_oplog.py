@@ -2090,3 +2090,77 @@ def test_a_noop_edit_text_has_empty_changed_ids_on_apply_undo_and_redo(op):
     rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
     assert rd["changed_ids"] == [] and h(log) == h0 and log.version == 3
     assert [e["changed_ids"] for e in log.history_list()] == [[], [], []]
+
+
+# --------------------------------------------------------------------------- S2b: Prove's extra checks
+
+
+def test_undo_of_edit_text_after_its_item_was_deleted_is_undo_blocked_and_applies_nothing():
+    log = new_log()
+    e = _edit(log, text="new", style="bold")
+    d = apply(log, HUMAN, {"op": "delete_clip", "id": "x1"})
+    v, h0, n = log.version, h(log), len(log.history_list())
+    with pytest.raises(O.OplogError) as err:
+        undo(log, HUMAN, op_id=e["op_id"])
+    x = err.value.extra
+    assert (err.value.code, x["reason"], x["op_ids"], x["blocking_op_ids"]) == (
+        "undo_blocked",
+        "dependents",
+        [d["op_id"]],
+        [d["op_id"]],
+    )
+    assert (x["path"], x["id"]) == ("/op_id", e["op_id"])
+    assert (log.version, h(log), len(log.history_list())) == (v, h0, n)
+    assert "x1" not in {i["id"] for t in log.doc["tracks"] for i in t["items"]}
+
+
+def test_edit_delete_then_undo_both_restores_the_old_text_and_style(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    h0, old = h(log), copy.deepcopy(_text(log))
+    e = _edit(log, text="new", style="bold")
+    edited = copy.deepcopy(_text(log))
+    d = apply(log, HUMAN, {"op": "delete_clip", "id": "x1"})
+    undo(log, HUMAN, op_id=d["op_id"])  # the delete first: x1 comes back as edited
+    assert _text(log) == edited
+    u = undo(log, HUMAN, op_id=e["op_id"])  # then the edit
+    assert _text(log) == old and (_text(log)["text"], _text(log)["style"]) == ("Hi", "pop")
+    assert h(log) == h0 and u["changed_ids"] == ["x1"]
+    assert h(O.Oplog.load(base(), p)) == h0
+
+
+def test_an_exact_retry_of_a_noop_edit_text_returns_the_cached_entry():
+    log = new_log()
+    args = {
+        "base_version": 0,
+        "summary": "same",
+        "client_op_id": "noop1",
+        "ops": [{"op": "edit_text", "id": "x1", "text": "Hi", "style": "pop"}],
+    }
+    r = log.call(HUMAN, "timeline_apply", args)
+    assert r["changed_ids"] == [] and len(log.history_list()) == 1
+    for _ in range(2):
+        again = log.call(HUMAN, "timeline_apply", copy.deepcopy(args))
+        assert again["op_id"] == r["op_id"] and again["new_version"] == r["new_version"] == 1
+        assert len(log.history_list()) == 1 and log.version == 1
+
+
+def test_edit_text_inverse_only_holds_the_fields_given_and_clients_cannot_send_set_fields(tmp_path):
+    log = new_log()
+    for fields in ({"text": "a"}, {"style": "b"}, {"text": "c", "style": "d"}):
+        _edit(log, **fields)
+        inv = log.history_list()[-1]["inverse"]
+        assert len(inv) == 1 and inv[0]["op"] == "set_fields" and set(inv[0]["set"]) == set(fields) and inv[0]["unset"] == []
+    # set_fields is internal: a client sending it gets unknown_op, whatever it tries to change
+    for sets in ({"dur": S}, {"text": "x"}, {"type": "clip"}):
+        e = _op_error(log, {"op": "set_fields", "id": "x1", "set": sets})
+        assert (e.extra["rule"], e.extra["path"]) == ("unknown_op", "/ops/0/op")
+    # and a log line whose inverse was widened to another field doesn't load
+    p = tmp_path / "oplog.jsonl"
+    log2 = new_log(path=p)
+    _edit(log2, text="z")
+    line = json.loads(p.read_text(encoding="utf-8"))
+    line["inverse"][0]["set"]["dur"] = S
+    p.write_text(json.dumps(line, ensure_ascii=False) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="does not reproduce"):
+        O.Oplog.load(base(), p)

@@ -180,10 +180,18 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
        `wrong_type`; non-NFC is `not_nfc`. `text` may be `""`.
   - Strings are never normalised. What's stored is exactly what was sent (NFD is rejected, not
     converted). No new rule id.
-  - The inverse is `set_fields` with the old values of just the fields given, so undo and redo
-    restore the hash exactly.
-  - `changed_ids` is `[id]` when the value changes and `[]` for a no-op (same hash), same as `set_fade`; undo and redo list the same ids as the apply.
-    A no-op edit is still an entry (a new version, the same hash).
+  - The inverse is internal `set_fields` holding the old values of only the fields given (`text`
+    and/or `style`), so undo and redo restore the hash exactly. Clients can't send `set_fields`
+    (`unknown_op`), and `load` rejects a line whose stored inverse doesn't match the one
+    re-derived from its ops.
+  - `changed_ids` is `[id]` when the value changes and `[]` for a no-op (same hash), same as
+    `set_fade`; undo and redo list the same ids as the apply.
+    A **no-op** is an edit whose every given value is byte-for-byte equal to the old one (no
+    normalising: NFC/NFD forms are never folded, and NFD is rejected anyway). It is still an entry
+    (a new version, the same hash), and an exact retry of it returns that entry without adding one.
+  - **House rule (Ada):** an op that needs one of several optional args and gets none is
+    `missing_arg` at `/ops/k`. `set_fade` (still `bad_arg` at `/ops/k/id`) and `add_text`'s
+    arg-value paths (still the doc path) move to the house rule in a later cleanup, not in S2b.
 - **Media:** `insert_clip`'s `media` must be the id of an entry in the doc's `media`. Anything
   else (an unknown or empty string, a number, `null`, a list, an object or a bool) is
   `invalid_op` / `unknown_media` at the op's own arg, `/ops/k/media`, with no `id`, checked
