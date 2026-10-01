@@ -113,7 +113,11 @@ assert conf == listed('ffmpeg-buildconf-linux64.txt'), f"ffmpeg -buildconf chang
 libs_dir = os.path.join(os.path.dirname(os.path.dirname(av.__file__)), "av.libs")
 libs = {re.sub(r"-[0-9a-f]{32}(?=\.dll$)", "", re.sub(r"-[0-9a-f]{8}(?=\.so)", "", n)) for n in os.listdir(libs_dir)}
 assert libs == listed('pyav-wheel-libs-linux.txt'), f"PyAV av.libs changed: {sorted(libs ^ listed('pyav-wheel-libs-linux.txt'))}"
-print("libraries ok:", len(conf), "ffmpeg flags,", len(libs), "PyAV libraries")
+# The native libraries the other wheels (OpenCV, numpy, ...) bundle, verbatim with their hashes.
+sp = os.path.dirname(os.path.dirname(av.__file__))
+others = {f"{d}/{n}" for d in os.listdir(sp) if d.endswith(".libs") and d != "av.libs" for n in os.listdir(os.path.join(sp, d))}
+assert others == listed('wheel-libs-linux.txt'), f"bundled wheel libraries changed: {sorted(others ^ listed('wheel-libs-linux.txt'))}"
+print("libraries ok:", len(conf), "ffmpeg flags,", len(libs), "PyAV libraries,", len(others), "other wheel libraries")
 print("notices ok: ffmpeg", build, "| PyAV", av.__version__, "FFmpeg", av.ffmpeg_version_info)
 print("engine ok:", sys.version.split()[0])
 PY

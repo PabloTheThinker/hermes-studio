@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-"""Fetch every third-party source archive in packaging/third-party-sources.txt and verify it.
+"""Fetch every third-party source archive in packaging/third-party-sources.txt, verify it, and
+pack the archives into the source bundles the release attaches.
 
-The release job runs this and attaches every archive to the release, so the corresponding
-source of the bundled FFmpeg and PyAV builds ships next to the binaries (see NOTICE).
+The `sources` CI job runs this and uploads the bundles; the release job attaches those
+exact bundles, so the corresponding source of the bundled FFmpeg, PyAV and OpenCV builds
+ships next to the binaries (see NOTICE).
+
+Bundles: each archive goes into one bundle, chosen by the binaries that use it (BUNDLE_GROUPS):
+sources-<group>.tar when only one group uses it, sources-ffmpeg.tar when both BtbN FFmpeg builds
+(and nothing else) use it, sources-common.tar when other groups share it. A group
+over BUNDLE_LIMIT is split into sources-<group>-1.tar, -2, ... (archives in filename order).
+Bundles are plain tars with fixed metadata and order, so they rebuild byte for byte; their
+sha256s are committed in packaging/SOURCES-SHA256SUMS.
 
 Kinds:
   url           download SOURCE as is.
@@ -36,7 +45,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "packaging" / "third-party-sources.txt"
-COLUMNS = ["component", "version", "used_by", "filename", "sha256", "kind", "source", "rev"]
+SUMS = ROOT / "packaging" / "SOURCES-SHA256SUMS"
+COLUMNS = ["component", "version", "used_by", "filename", "sha256", "size", "kind", "source", "rev"]
+# Which bundle group each used_by tag belongs to.
+BUNDLE_GROUPS = {
+    "ffmpeg-linux64": "ffmpeg-linux64",
+    "ffmpeg-win64": "ffmpeg-win64",
+    "pyav-linux": "pyav",
+    "pyav-win": "pyav",
+    "opencv-linux": "opencv",
+    "opencv-win": "opencv",
+    "numpy-linux": "numpy",
+}
+# GitHub refuses release assets of 2 GiB or more; stay well under it.
+BUNDLE_LIMIT = 2_000_000_000
 
 
 def read_manifest(path: Path = MANIFEST) -> list[dict[str, str]]:
@@ -48,13 +70,16 @@ def read_manifest(path: Path = MANIFEST) -> list[dict[str, str]]:
 
 
 def run(*args: str, cwd: str | Path | None = None, env: dict | None = None, clean: str | None = None) -> None:
-    for attempt in range(4):
+    # Forges (gitlab.freedesktop.org in particular) answer 502/504 for minutes at a time:
+    # retry for about 7 minutes before giving up.
+    for attempt in range(8):
         if clean:
             shutil.rmtree(clean, ignore_errors=True)
         r = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
         if r.returncode == 0:
             return
-        time.sleep(5 * (attempt + 1))
+        if attempt < 7:
+            time.sleep(min(90, 10 * 2**attempt))
     raise RuntimeError(f"{' '.join(args)} failed:\n{r.stderr[-2000:]}")
 
 
@@ -106,7 +131,7 @@ def produce(row: dict[str, str], out: Path) -> Path:
     kind, source, rev = row["kind"], row["source"], row["rev"]
     with tempfile.TemporaryDirectory(prefix="mirror-") as tmp:
         if kind == "url":
-            run("curl", "-fsSL", "--retry", "5", "--retry-all-errors", "-o", str(dest), source)
+            run("curl", "-fsSL", "--retry", "5", "--retry-all-errors", "--retry-delay", "10", "-o", str(dest), source)
         elif kind == "git":
             run("git", "init", "-q", tmp)
             run("git", "fetch", "-q", "--depth=1", "--no-tags", source, rev, cwd=tmp)
@@ -130,6 +155,47 @@ def produce(row: dict[str, str], out: Path) -> Path:
     return dest
 
 
+def bundle_plan(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    """Bundle file name -> its rows (in filename order), deterministic from the manifest."""
+    groups: dict[str, list[dict[str, str]]] = {}
+    for r in rows:
+        g = {BUNDLE_GROUPS[u] for u in r["used_by"].split(",")}
+        name = g.pop() if len(g) == 1 else "ffmpeg" if all(x.startswith("ffmpeg-") for x in g) else "common"
+        groups.setdefault(name, []).append(r)
+    plan: dict[str, list[dict[str, str]]] = {}
+    for g in sorted(groups):
+        parts: list[list[dict[str, str]]] = [[]]
+        total = 0
+        for r in sorted(groups[g], key=lambda r: r["filename"]):
+            need = int(r["size"]) + 4096  # header (+ pax header) and padding
+            if parts[-1] and total + need > BUNDLE_LIMIT:
+                parts.append([])
+                total = 0
+            parts[-1].append(r)
+            total += need
+        for i, part in enumerate(parts, 1):
+            plan[f"sources-{g}.tar" if len(parts) == 1 else f"sources-{g}-{i}.tar"] = part
+    return plan
+
+
+def bundle_of(rows: list[dict[str, str]]) -> dict[str, str]:
+    return {r["filename"]: name for name, part in bundle_plan(rows).items() for r in part}
+
+
+def write_bundle(name: str, rows: list[dict[str, str]], src: Path, dest: Path) -> None:
+    """Plain tar of the archives under <bundle stem>/, fixed order and metadata."""
+    stem = name.removesuffix(".tar")
+    with tarfile.open(dest / name, "w", format=tarfile.PAX_FORMAT) as tar:
+        for r in rows:
+            path = src / r["filename"]
+            ti = tarfile.TarInfo(f"{stem}/{r['filename']}")
+            ti.size, ti.mode, ti.mtime, ti.uid, ti.gid, ti.uname, ti.gname = path.stat().st_size, 0o644, 0, 0, 0, "", ""
+            with path.open("rb") as f:
+                tar.addfile(ti, f)
+    if (dest / name).stat().st_size >= 2**31:
+        raise RuntimeError(f"{name} is 2 GiB or more")
+
+
 NOTICE_BEGIN = "--- begin mirrored source archives (generated by scripts/mirror-sources.py --notice) ---"
 NOTICE_END = "--- end mirrored source archives ---"
 
@@ -142,12 +208,14 @@ def notice_block(rows: list[dict[str, str]]) -> str:
         "cargo-crates": "every crates.io crate in the Cargo.lock of {source} at commit {rev} (normalized tar)",
     }
     out = [NOTICE_BEGIN]
+    where = bundle_of(rows)
     for r in rows:
         out += [
             f"{r['component']} {r['version']}  [{r['used_by'].replace(',', ', ')}]",
             f"  file:   {r['filename']}",
             f"  source: {how[r['kind']].format(**r)}",
             f"  sha256: {r['sha256']}",
+            f"  bundle: {where[r['filename']]}",
         ]
     out.append(NOTICE_END)
     return "\n".join(out) + "\n"
@@ -166,6 +234,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path)
     ap.add_argument("--notice", action="store_true")
     ap.add_argument("--update", action="store_true")
+    ap.add_argument("--bundles", type=Path)
     ap.add_argument("--only")
     ap.add_argument("--jobs", type=int, default=6)
     args = ap.parse_args()
@@ -180,9 +249,14 @@ def main() -> int:
 
     def one(row):
         try:
-            got = sha256(produce(row, args.out))
+            path = produce(row, args.out)
+            got = sha256(path)
         except Exception as e:  # noqa: BLE001
             return row, None, str(e)
+        if args.update:
+            row["size"] = str(path.stat().st_size)
+        elif str(path.stat().st_size) != row["size"]:
+            return row, None, f"size {path.stat().st_size}, manifest says {row['size']}"
         return row, got, None
 
     bad = 0
@@ -203,7 +277,24 @@ def main() -> int:
         head = [line for line in MANIFEST.read_text().splitlines() if line.startswith("#")]
         MANIFEST.write_text("\n".join(head + ["\t".join(r[c] for c in COLUMNS) for r in rows]) + "\n")
     print(f"{len(todo) - bad}/{len(todo)} archives verified", file=sys.stderr)
-    return 1 if bad else 0
+    if bad or not args.bundles:
+        return 1 if bad else 0
+    if args.only:
+        ap.error("--bundles needs every archive (no --only)")
+    args.bundles.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for name, part in bundle_plan(rows).items():
+        write_bundle(name, part, args.out, args.bundles)
+        lines.append(f"{sha256(args.bundles / name)}  {name}")
+        print(f"bundle {lines[-1]}  ({(args.bundles / name).stat().st_size} bytes, {len(part)} archives)")
+    sums = "\n".join(lines) + "\n"
+    (args.bundles / "SOURCES-SHA256SUMS").write_text(sums)
+    if args.update:
+        SUMS.write_text(sums)
+    elif sums != SUMS.read_text():
+        print(f"bundles do not match {SUMS.relative_to(ROOT)}:\n{sums}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

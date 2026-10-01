@@ -56,13 +56,15 @@ jobs:
           fi
 
   # The third-party source archives every release attaches (NOTICE, packaging/third-party-sources.txt):
-  # the list must match the pins at the BtbN and pyav-ffmpeg tags, and every archive must rebuild
-  # to its recorded sha256.
+  # the list must match the pins at the BtbN, pyav-ffmpeg and opencv-python tags, every archive must
+  # rebuild to its recorded sha256, and the bundles must rebuild to packaging/SOURCES-SHA256SUMS.
+  # The bundles are uploaded as run artifacts (one per bundle, plus SOURCES-SHA256SUMS) so they can be
+  # checked before a tag; on a tag the release job attaches these exact files.
   sources:
     needs: changes
     if: needs.changes.outputs.sources == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -77,14 +79,73 @@ jobs:
           curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/archive/refs/tags/$btbn.tar.gz" | tar -xz -C /tmp/pins
           curl -fsSL "https://github.com/PyAV-Org/pyav-ffmpeg/archive/refs/tags/$pyav_tag.tar.gz" | tar -xz -C /tmp/pins
           python3 packaging/resolve-third-party-sources.py "/tmp/pins/FFmpeg-Builds-$btbn" "$btbn" "$(pin ffmpeg-commit)" \
-            "/tmp/pins/pyav-ffmpeg-$pyav_tag" "$pyav_tag" "$(pin av)" | cut -f1-4,6- > /tmp/pins/want.txt
-          grep -v '^#' "$m" | cut -f1-4,6- > /tmp/pins/have.txt
+            "/tmp/pins/pyav-ffmpeg-$pyav_tag" "$pyav_tag" "$(pin av)" "$(pin opencv-python-headless)" \
+            | cut -f1-4,7- > /tmp/pins/want.txt
+          grep -v '^#' "$m" | cut -f1-4,7- > /tmp/pins/have.txt
           diff /tmp/pins/want.txt /tmp/pins/have.txt
-      - name: Every archive rebuilds to its sha256
+      - name: Every archive rebuilds to its sha256, and the bundles to SOURCES-SHA256SUMS
         run: |
+          set -euo pipefail
           sudo apt-get install -y -q subversion >/dev/null
-          python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources"
-          du -sh "$RUNNER_TEMP/sources"
+          python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources" --bundles "$RUNNER_TEMP/bundles"
+          rm -rf "$RUNNER_TEMP/sources"
+          ls -l "$RUNNER_TEMP/bundles"
+          cat "$RUNNER_TEMP/bundles/SOURCES-SHA256SUMS"
+      - name: Bundle sources-common.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-common
+          path: ${{ runner.temp }}/bundles/sources-common.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg-linux64.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg-linux64
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg-linux64.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg-win64.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg-win64
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg-win64.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-opencv.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-opencv
+          path: ${{ runner.temp }}/bundles/sources-opencv.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-pyav.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-pyav
+          path: ${{ runner.temp }}/bundles/sources-pyav.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: SOURCES-SHA256SUMS
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SOURCES-SHA256SUMS
+          path: ${{ runner.temp }}/bundles/SOURCES-SHA256SUMS
+          retention-days: 3
+          if-no-files-found: error
 
   linux:
     needs: changes
@@ -275,6 +336,17 @@ jobs:
         with:
           name: windows-installer
           path: rel
+      - name: Verified third-party source bundles
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: sources-*
+          merge-multiple: true
+          path: rel
+      - name: Their checksums
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: SOURCES-SHA256SUMS
+          path: rel
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -286,14 +358,14 @@ jobs:
           cd rel
           ls -la
           [ -f "Hermes-Studio-$want.AppImage" ] && [ -f "Hermes-Studio-Setup-$want.exe" ] || { echo "missing an installer"; exit 1; }
-          # Source for this release, and the corresponding source of the bundled FFmpeg and
-          # PyAV builds: every archive in packaging/third-party-sources.txt, sha256-verified (NOTICE).
+          # Source for this release, and the corresponding source of the bundled FFmpeg, PyAV and
+          # OpenCV builds: the bundles the sources job rebuilt and verified (NOTICE, SOURCES-SHA256SUMS).
           git -C .. archive --format=tar.gz --prefix="hermes-studio-$want/" -o "$PWD/hermes-studio-$want-source.tar.gz" HEAD
-          sudo apt-get install -y -q subversion >/dev/null
-          python3 ../scripts/mirror-sources.py --out third-party
-          mv third-party/* .
-          mapfile -t third < <(grep -v '^#' ../packaging/third-party-sources.txt | cut -f4)
-          src=("hermes-studio-$want-source.tar.gz" "${third[@]}")
+          cmp SOURCES-SHA256SUMS ../packaging/SOURCES-SHA256SUMS
+          sha256sum -c SOURCES-SHA256SUMS
+          mapfile -t bundles < <(awk '{print $2}' SOURCES-SHA256SUMS)
+          [ "$(ls sources-*.tar | sort)" = "$(printf '%s\n' "${bundles[@]}" | sort)" ] || { echo "unexpected bundle set"; exit 1; }
+          src=("hermes-studio-$want-source.tar.gz" "${bundles[@]}" SOURCES-SHA256SUMS)
           sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" > SHA256SUMS.txt
           cat SHA256SUMS.txt
           notes="../docs/releases/$TAG.md"

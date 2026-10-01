@@ -5,10 +5,14 @@ Reads the exact pins from
   * BtbN FFmpeg-Builds at the tag in FFMPEG_*_URL (.github/workflows/desktop.yml),
     for the targets we ship (linux64, win64; variant gpl; addin 9.0), and
   * pyav-ffmpeg at the tag PyAV's wheels were built from (scripts/pkg.py),
+  * opencv-python at the tag of the pinned opencv-python-headless wheel (the Linux wheel's
+    docker/manylinux_2_28 recipe) and the opencv_3rdparty commit its OpenCV pins for the
+    Windows opencv_videoio_ffmpeg DLL (3rdparty/ffmpeg/ffmpeg.cmake, ffmpeg/download_src.sh),
 and prints manifest rows (without sha256) for packaging/third-party-sources.txt.
 `scripts/mirror-sources.py --update` then fills in the sha256 column.
 
-Usage: resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION
+Usage: resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION \\
+         OPENCV_VERSION
 
 Submodules that are only tests, fuzz corpora or demos are left out (TEST_ONLY below):
 they are fetched by the build scripts but never compiled into the shipped binaries.
@@ -33,6 +37,7 @@ TEST_ONLY = {
 }
 BOTH = {"ffmpeg-linux64", "ffmpeg-win64"}
 PYAV = {"pyav-linux", "pyav-win"}
+OPENCV = {"opencv-linux", "opencv-win"}
 
 ENUM = r"""
 set +e
@@ -179,7 +184,9 @@ def btbn(btbn_dir: str) -> dict[tuple[str, str], dict]:
 
 
 def row(component, version, used, filename, kind, source, rev, sha="-"):
-    return f"{component}\t{version}\t{','.join(sorted(used))}\t{filename}\t{sha}\t{kind}\t{source}\t{rev}"
+    """A manifest row; sha256 (unless the upstream publishes it) and size are filled in by
+    scripts/mirror-sources.py --update."""
+    return f"{component}\t{version}\t{','.join(sorted(used))}\t{filename}\t{sha}\t-\t{kind}\t{source}\t{rev}"
 
 
 def extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version):
@@ -207,7 +214,7 @@ def extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version):
          f"{alma}/libxcb-1.13.1-1.el8.src.rpm", "-", "-"),
         ("pyav-libXau", "1.0.9-3.el8", {"pyav-linux"}, "libXau-1.0.9-3.el8.src.rpm",
          f"{alma}/libXau-1.0.9-3.el8.src.rpm", "-", "-"),
-        ("pyav-libdrm", "2.4.115-2.el8", {"pyav-linux"}, "libdrm-2.4.115-2.el8.src.rpm",
+        ("pyav-libdrm", "2.4.115-2.el8", {"pyav-linux", "opencv-linux"}, "libdrm-2.4.115-2.el8.src.rpm",
          f"{alma}/libdrm-2.4.115-2.el8.src.rpm", "-", "-"),
         ("pyav-msys2-gcc", "16.1.0-5", {"pyav-win"}, "mingw-w64-gcc-16.1.0-5.src.tar.zst",
          f"{msys}/mingw-w64-gcc-16.1.0-5.src.tar.zst", "-", "-"),
@@ -218,8 +225,66 @@ def extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version):
     ]
 
 
+def opencv(version: str, pyav_vpx: str) -> list[str]:
+    """The OpenCV wheels' LGPL/GPL parts.
+
+    Linux (manylinux_2_28): FFmpeg built by docker/manylinux_2_28/Dockerfile_x86_64 at the
+    opencv-python tag, and libgfortran/libquadmath from AlmaLinux 8 gcc (also in numpy.libs:
+    same files, same auditwheel hash). libdrm is the SRPM already listed for PyAV.
+    Windows: opencv_videoio_ffmpeg*_64.dll from opencv_3rdparty at the commit OpenCV pins,
+    built from the tags in its ffmpeg/download_src.sh (libvpx is the tarball listed for PyAV).
+    The permissive libraries the wheels also bundle (libaom, libavif, libpng, libvpx, OpenSSL,
+    OpenBLAS) are not mirrored.
+    """
+    import json
+    import urllib.request
+    tag = version.rsplit(".", 1)[1]
+    op_repo = "https://github.com/opencv/opencv-python.git"
+    op_rev = resolve_rev(op_repo, tag)
+    op = fetch(op_repo, op_rev)
+    docker = Path(op, "docker/manylinux_2_28/Dockerfile_x86_64").read_text()
+    ffver = re.search(r"^ARG FFMPEG_VERSION=(\S+)$", docker, re.M).group(1)
+    ffurl = re.search(r"curl -O -L (https://ffmpeg\.org/releases/ffmpeg-\$\{FFMPEG_VERSION\}\.tar\.\w+)", docker).group(1)
+    ffurl = ffurl.replace("${FFMPEG_VERSION}", ffver)
+    cv_rev = sh("git", "ls-tree", "HEAD", "opencv", cwd=op).split()[2]
+    cmake = urllib.request.urlopen(
+        f"https://raw.githubusercontent.com/opencv/opencv/{cv_rev}/3rdparty/ffmpeg/ffmpeg.cmake").read().decode()
+    tp_rev = re.search(r'FFMPEG_BINARIES_COMMIT "([0-9a-f]{40})"', cmake).group(1)
+    tp = fetch("https://github.com/opencv/opencv_3rdparty.git", tp_rev)
+    built_for = sh("git", "ls-tree", "HEAD", "opencv", cwd=tp).split()[2]
+    pins = dict(re.findall(r"^update (\S+) \S+ (\S+)$", Path(tp, "ffmpeg/download_src.sh").read_text(), re.M))
+    pypi = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/opencv-python-headless/{version}/json"))
+    sdist = next(f for f in pypi["urls"] if f["packagetype"] == "sdist")
+    win_ff = resolve_rev("https://github.com/FFmpeg/FFmpeg.git", pins["ffmpeg"])
+    aom = resolve_rev("https://aomedia.googlesource.com/aom", pins["aom"])
+    h264 = pins["openh264"]
+    if pins["libvpx"].lstrip("v") != pyav_vpx:
+        raise SystemExit(f"opencv_3rdparty libvpx {pins['libvpx']} is no longer the PyAV one ({pyav_vpx}): add a row")
+    gh = "https://github.com"
+    almabase = "https://vault.almalinux.org/8.10/BaseOS/Source/Packages"
+    gcc = "gcc-8.5.0-28.el8_10.alma.1"
+    return [
+        row("opencv-python-headless", version, OPENCV, sdist["filename"], "url", sdist["url"], "-", sdist["digests"]["sha256"]),
+        row("opencv-python-build", tag, OPENCV, f"opencv-python-{op_rev}.tar.gz", "url",
+            f"{gh}/opencv/opencv-python/archive/{op_rev}.tar.gz", op_rev),
+        row("opencv-ffmpeg", ffver, {"opencv-linux"}, f"opencv-{Path(ffurl).name}", "url", ffurl, "-"),
+        row("opencv-gcc-runtime", gcc.removeprefix("gcc-"), {"opencv-linux", "numpy-linux"}, f"{gcc}.src.rpm", "url",
+            f"{almabase}/{gcc}.src.rpm", "-"),
+        row("opencv-3rdparty-ffmpeg", tp_rev, {"opencv-win"}, f"opencv-3rdparty-{tp_rev}.tar.gz", "url",
+            f"{gh}/opencv/opencv_3rdparty/archive/{tp_rev}.tar.gz", tp_rev),
+        row("opencv-videoio-ffmpeg", built_for, {"opencv-win"}, f"opencv-{built_for}.tar.gz", "url",
+            f"{gh}/opencv/opencv/archive/{built_for}.tar.gz", built_for),
+        row("opencv-win-ffmpeg", pins["ffmpeg"], {"opencv-win"}, f"opencv-win-ffmpeg-{win_ff}.tar.gz", "url",
+            f"{gh}/FFmpeg/FFmpeg/archive/{win_ff}.tar.gz", win_ff),
+        row("opencv-win-aom", pins["aom"], {"opencv-win"}, f"opencv-win-aom-{aom}.tar", "git",
+            "https://aomedia.googlesource.com/aom", aom),
+        row("opencv-win-openh264", h264.lstrip("v"), {"opencv-win"}, f"opencv-win-openh264-{h264}.tar.gz", "url",
+            f"{gh}/cisco/openh264/archive/refs/tags/{h264}.tar.gz", "-"),
+    ]
+
+
 def main() -> None:
-    btbn_dir, btbn_tag, ffmpeg_commit, pyav_dir, pyav_tag, av_version = sys.argv[1:7]
+    btbn_dir, btbn_tag, ffmpeg_commit, pyav_dir, pyav_tag, av_version, opencv_version = sys.argv[1:8]
     rows = [row(c, v, u, f, "url", s, r, sha) for c, v, u, f, s, r, sha in
             extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version)]
     for e in sorted(btbn(btbn_dir).values(), key=lambda e: e["name"]):
@@ -243,12 +308,16 @@ def main() -> None:
         if name == "nasm":
             continue  # assembler, build tool only
         used = {"pyav-linux"} if name in {"alsa-lib", "gmp", "unistring", "nettle", "gnutls"} else {"pyav-linux", "pyav-win"}
+        if name == "vpx":
+            used.add("opencv-win")  # the same libvpx tag is in OpenCV's Windows FFmpeg DLL (opencv() below)
         fname = re.search(r'source_filename="([^"]+)"', block)
         fname = fname.group(1) if fname else Path(url).name
         if not fname.lower().startswith(name.split("-")[0][:3].lower()):
             fname = f"{name}-{fname}"
         version = re.search(r"(\d+(?:\.\d+)+|[0-9a-f]{40})", Path(url).name.replace("x265_", "x265-")).group(1)
         rows.append(row(f"pyav-{name}", version, used, f"pyav-{fname}", "url", url, "-", sha))
+    vpx = next(r.split("\t")[1] for r in rows if r.startswith("pyav-vpx\t"))
+    rows += opencv(opencv_version, vpx)
     print("\n".join(rows))
 
 
