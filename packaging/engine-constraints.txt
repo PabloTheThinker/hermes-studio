@@ -1,0 +1,5 @@
+# Exact versions for the Python engine bundled in the desktop app.
+# NOTICE names these versions and the FFmpeg libraries their wheels bundle;
+# tests/test_notices.py fails if they drift apart. Update both together.
+av==18.1.0
+opencv-python-headless==5.0.0.93

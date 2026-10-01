@@ -8,6 +8,7 @@
     "desktop/**",
     "resources/icon.png"
   ],
+  "beforePack": "./scripts/electron-builder-before-pack.js",
   "linux": {
     "target": [
       "AppImage"
@@ -19,6 +20,18 @@
       {
         "from": "build/engine",
         "to": "engine"
+      },
+      {
+        "from": "NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
       }
     ]
   },
@@ -31,6 +44,18 @@
       {
         "from": "build/engine",
         "to": "engine"
+      },
+      {
+        "from": "NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
       }
     ]
   },
@@ -48,6 +73,20 @@
       "dmg"
     ],
     "icon": "resources/icon.png",
-    "category": "public.app-category.video"
+    "category": "public.app-category.video",
+    "extraResources": [
+      {
+        "from": "NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
+      }
+    ]
   }
 }

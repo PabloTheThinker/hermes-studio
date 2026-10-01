@@ -1,0 +1,11 @@
+# Native libraries the engine's other wheels bundle on Windows (site-packages/*.libs/ except av.libs,
+# which packaging/pyav-wheel-libs-win.txt covers, plus cv2/*.dll and ctranslate2/*.dll), verbatim.
+# The engine build fails if the shipped set differs; tests/test_notices.py says where each one's
+# source or license is (NOTICE).
+
+ctranslate2/ctranslate2.dll
+ctranslate2/cudnn64_9.dll
+ctranslate2/libiomp5md.dll
+cv2/opencv_videoio_ffmpeg500_64.dll
+numpy.libs/libscipy_openblas64_-ed4f167a5330424524f45258e7ca2c8d.dll
+numpy.libs/msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll
