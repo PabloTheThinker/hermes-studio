@@ -75,6 +75,7 @@ jobs:
         if: steps.ffmpeg.outputs.fallback == 'true'
         timeout-minutes: 4
         run: |
+          set -euo pipefail
           echo "start: $(date -u +%FT%TZ)"
           o="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Dpkg::Use-Pty=0"
           for i in 1 2 3; do
@@ -82,7 +83,9 @@ jobs:
             timeout 90 sudo apt-get $o update -q && timeout 150 sudo apt-get $o install -y --no-install-recommends ffmpeg && break
             echo "apt attempt $i failed or stalled; retrying"; sleep 10
           done
-          ffmpeg -hide_banner -version | head -1
+          command -v ffmpeg >/dev/null || { echo "::error::ffmpeg not installed after 3 apt attempts"; exit 1; }
+          v="$(ffmpeg -hide_banner -version)"
+          echo "${v%%$'\n'*}"
           echo "end: $(date -u +%FT%TZ)"
       - name: Python deps
         timeout-minutes: 6
