@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -97,7 +98,26 @@ class Job:
     def save(self) -> None:
         dest = self.path()
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / "job.json").write_text(json.dumps(asdict(self), indent=2))
+        _write_atomic(dest / "job.json", json.dumps(asdict(self), indent=2))
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file + rename, so a reader never sees a half-written job.json.
+
+    A plain write_text truncates the file first: list_jobs() polling at that instant
+    reads "" or partial JSON, drops the job, and the newest job vanishes from the list.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(text)
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:  # Windows: a reader has job.json open for a moment
+            if attempt == 19:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.01)
 
 
 def job_from_dict(data: dict) -> Job:
