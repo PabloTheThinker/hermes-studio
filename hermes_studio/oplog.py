@@ -732,9 +732,9 @@ def _apply_one(ctx: _Ctx, op: Any, internal: bool) -> tuple[dict, list[dict]]:
         raise _OpError("unknown_op", f"unknown op {op['op']!r}", "op")
     fn, req, opt = table[op["op"]]
     a = copy.deepcopy(op)
-    for k in sorted(set(a) - req - opt - {"op"}):
-        raise _OpError("unknown_arg", f"{op['op']} takes no '{k}'", k)
-    for k in sorted(req - set(a)):
+    for k in sorted(set(a) - req - opt - {"op"}, key=repr):  # keys may not be strings
+        raise _OpError("unknown_arg", f"{op['op']} takes no {k!r}", (k,))
+    for k in sorted(req - set(a), key=repr):
         raise _OpError("missing_arg", f"{op['op']} needs '{k}'", k)
     if op["op"] in PUBLIC_OPS:
         _check_refs(a)
@@ -819,7 +819,7 @@ class Oplog:
     def _check_args(self, args: dict, required: set[str], optional: set[str]) -> None:
         for k in sorted(set(args) - required - optional, key=repr):
             raise OplogError("invalid_op", f"unknown argument '{k}'", rule="unknown_arg", path=T._j("", k))
-        for k in sorted(required - set(args)):
+        for k in sorted(required - set(args), key=repr):
             raise OplogError("invalid_op", f"'{k}' is required", rule="missing_arg", path=T._j("", k))
         cid = args["client_op_id"]
         if not (isinstance(cid, str) and CLIENT_ID_RE.fullmatch(cid)):

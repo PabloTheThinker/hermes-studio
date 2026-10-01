@@ -1540,3 +1540,35 @@ def test_random_ripple_trims_with_crossfades_cover_changed_ids_and_round_trip_ov
     # crossfade-free join is the usual overlap
     assert set(rules) <= {"transition_too_long", "overlap"}, rules
     assert done > 300 and rules.get("transition_too_long", 0) >= 5
+
+
+# --------------------------------------------------------------------------- follow-ups after S2
+
+
+@pytest.mark.parametrize("junk", [7, None, 1.5, (1, 2), True, frozenset({1})], ids=repr)
+def test_a_non_string_arg_name_is_unknown_arg_not_a_crash(junk):
+    log = new_log()
+    op = {"op": "set_fade", "id": "c1", "fade_in": 0, junk: 1}
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, op)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "unknown_arg", f"/ops/0/{junk}")
+    mixed = {"op": "set_fade", "id": "c1", "fade_in": 0, junk: 1, "zz": 2}  # mixed key types sort without TypeError
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, mixed)
+    assert e.value.extra["rule"] == "unknown_arg"
+    for tool in ("timeline_apply", "history_undo", "history_redo"):
+        with pytest.raises(O.OplogError) as e:
+            log.call(
+                HUMAN,
+                tool,
+                {
+                    "client_op_id": "k1",
+                    junk: 1,
+                    "zz": 2,
+                    "base_version": 0,
+                    "summary": "s",
+                    "ops": [{"op": "add_marker", "at": 0, "label": "x"}],
+                },
+            )
+        assert (e.value.code, e.value.extra["rule"]) == ("invalid_op", "unknown_arg")
+    assert log.history_list() == [] and log.version == 0
