@@ -7,6 +7,7 @@ import copy
 import json
 import random
 import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -1743,3 +1744,46 @@ def test_timeline_apply_with_a_null_group_id_is_bad_arg_and_omitting_it_is_no_gr
     _bad_arg(log, "timeline_apply", {**ungrouped, "group_id": None}, "/group_id")  # a cached key: shape first
     assert log.call(HUMAN, "timeline_apply", ungrouped)["op_id"] == r["op_id"]
     _bad_arg(log, "timeline_apply", {**ungrouped, "client_op_id": "n2", "base_version": 1, "group_id": None}, "/group_id")
+
+
+# --------------------------------------------------------------------------- Ada's doc-only rulings, pinned
+
+
+@pytest.mark.parametrize("op", [{"src_out": 0}, {"src_in": 4 * S}], ids=["src_out-0", "src_in-at-end"])
+def test_transition_too_long_is_checked_before_empty_range(op):
+    op = {"op": "trim_clip", "id": "c1", "ripple": True, **op}
+    log = xfade_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, op)
+    assert (e.value.extra["rule"], e.value.extra["path"], e.value.extra["id"]) == ("transition_too_long", "/ops/0", "t12")
+    plain = new_log()  # no crossfade: the validator's empty_range, as before
+    with pytest.raises(O.OplogError) as e:
+        apply(plain, HUMAN, op)
+    assert (e.value.extra["rule"], e.value.extra["id"]) == ("empty_range", "c1")
+
+
+def test_a_ripple_trim_never_moves_a_neighbour_that_only_overlaps_the_clip():
+    d = base()
+    music = next(t for t in d["tracks"] if t["role"] == "music")
+    music["items"] += [
+        {"id": "ma", "type": "clip", "media": "m2", "src": [0, 8 * S], "at": 40 * S, "fade_in": 0, "fade_out": 0},
+        {"id": "m0", "type": "clip", "media": "m2", "src": [0, S], "at": 40 * S, "fade_in": 0, "fade_out": 0},  # only overlaps ma
+        {"id": "mb", "type": "clip", "media": "m2", "src": [10 * S, 16 * S], "at": 47 * S, "fade_in": 0, "fade_out": 0},
+        {"id": "tab", "type": "transition", "kind": "xfade", "between": ["ma", "mb"], "dur": S},
+    ]
+    assert T.validate(d) == []
+    log = O.Oplog(d)
+    h0 = h(log)
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2, "ripple": True})
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["id"]) == ("invalid_op", "transition_overlap_mismatch", "tab")  # the existing rule
+    assert h(log) == h0 and log.history_list() == []
+    apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2})  # without ripple it's fine
+
+
+def test_rule_counts_stay_17_op_level_and_36_validator():
+    text = (Path(__file__).resolve().parent.parent / "docs" / "oplog.md").read_text(encoding="utf-8")
+    listed = text.split("Op-level `rule`s (17):")[1].split("plus every timeline rule")[0]
+    assert len(listed.split("`")[1::2]) == 17
+    assert len(T.RULES) == 36 and "transition_too_long" not in T.RULES

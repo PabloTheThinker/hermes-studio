@@ -133,6 +133,19 @@ Decisions:
     fails validation with `transition_overlap_mismatch`, as before.
   - `changed_ids` comes from the resolved diff, so it lists the trimmed clip, the shifted items,
     the moved crossfade and anything anchored to a shifted clip. Markers don't move.
+  - **Check order** (Ada's ruling): `transition_too_long` is checked before `empty_range`. A ripple
+    trim of a clip with a crossfade down to an empty or zero-length source range (`src_out` at or
+    before `src_in`) is `transition_too_long` at `/ops/k` naming the crossfade, not the
+    validator's `empty_range` on the clip's `src`. The same trim of a clip without crossfades is
+    `empty_range` as before.
+  - **Known limit: a neighbour that only overlaps** (Ada's ruling). On a track where clips may
+    overlap (music), a ripple trim never moves a neighbour that only overlaps the trimmed clip
+    without a crossfade of its own; it shifts only the items starting at or after the ripple
+    point. If that pulls one clip of a crossfade pair away from the other (e.g. `m0` overlaps
+    `ma`, and `ma`→`mb` has a crossfade: trimming `m0` shifts `mb` but not `ma`), the result is
+    rejected with the **existing** `transition_overlap_mismatch` (at the crossfade's `dur`, `id` =
+    the crossfade), and nothing changes. A non-ripple trim of the same clip is fine. Changing this
+    would be an S4 behaviour decision; no rule id is added for it (17 op-level, 36 validator).
 
 ### Errors
 
