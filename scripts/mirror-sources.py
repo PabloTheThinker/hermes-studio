@@ -9,8 +9,9 @@ Kinds:
   git           `git archive --format=tar` of commit REV fetched from SOURCE (for forges
                 without a stable commit tarball). Deterministic for a given commit.
   svn           `svn export` of SOURCE at revision REV, packed as a normalized tar.
-  cargo-vendor  `cargo vendor --locked --versioned-dirs` for the Cargo.lock of SOURCE at
-                REV (the Rust crates compiled into the library), packed as a normalized tar.
+  cargo-crates  every crates.io .crate file locked by the Cargo.lock of SOURCE at REV (the
+                Rust crates compiled into the library), each checked against the lock's
+                checksum, plus that Cargo.lock, packed as a normalized tar.
 
   mirror-sources.py --out DIR            fetch all, fail on any sha256 mismatch
   mirror-sources.py --out DIR --update   fetch all, write the sha256 column back
@@ -22,13 +23,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import time
+import tomllib
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -71,6 +73,33 @@ def normalized_tar(src: Path, dest: Path, prefix: str) -> None:
             tar.add(path, arcname=f"{prefix}/{rel}", recursive=False, filter=norm)
 
 
+CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
+
+
+def fetch_crates(lock: Path, dest_dir: Path) -> None:
+    pkgs = [p for p in tomllib.loads(lock.read_text())["package"] if p.get("source")]
+    if any(p["source"] != CRATES_IO for p in pkgs):
+        raise RuntimeError(f"{lock}: non-crates.io sources are not supported")
+
+    def get(p):
+        name = f"{p['name']}-{p['version']}.crate"
+        url = f"https://static.crates.io/crates/{p['name']}/{name}"
+        for attempt in range(4):
+            try:
+                data = urllib.request.urlopen(url, timeout=60).read()
+                break
+            except OSError:
+                if attempt == 3:
+                    raise
+                time.sleep(5 * (attempt + 1))
+        if hashlib.sha256(data).hexdigest() != p["checksum"]:
+            raise RuntimeError(f"{name}: checksum does not match Cargo.lock")
+        (dest_dir / name).write_bytes(data)
+
+    with ThreadPoolExecutor(16) as pool:
+        list(pool.map(get, pkgs))
+
+
 def produce(row: dict[str, str], out: Path) -> Path:
     dest = out / row["filename"]
     stem = row["filename"].removesuffix(".tar")
@@ -87,14 +116,15 @@ def produce(row: dict[str, str], out: Path) -> Path:
             # Same anonymous login the BtbN script uses (svn.xvid.org asks for one).
             run("svn", "export", "-q", "--non-interactive", "--username", "anonymous", "--password", "", "-r", rev, f"{source}@{rev}", f"{tmp}/src", clean=f"{tmp}/src")
             normalized_tar(Path(tmp, "src"), dest, stem)
-        elif kind == "cargo-vendor":
+        elif kind == "cargo-crates":
             run("git", "init", "-q", f"{tmp}/src")
             run("git", "fetch", "-q", "--depth=1", "--no-tags", source, rev, cwd=f"{tmp}/src")
             run("git", "checkout", "-q", "FETCH_HEAD", cwd=f"{tmp}/src")
-            env = {**os.environ, "CARGO_HOME": f"{tmp}/cargo"}
-            run("cargo", "vendor", "--locked", "--versioned-dirs", f"{tmp}/vendor", cwd=f"{tmp}/src", env=env,
-                clean=f"{tmp}/vendor")
-            normalized_tar(Path(tmp, "vendor"), dest, stem)
+            crates = Path(tmp, "crates")
+            crates.mkdir()
+            shutil.copy(Path(tmp, "src", "Cargo.lock"), crates / "Cargo.lock")
+            fetch_crates(crates / "Cargo.lock", crates)
+            normalized_tar(crates, dest, stem)
         else:
             raise ValueError(f"unknown kind {kind}")
     return dest
@@ -109,7 +139,7 @@ def notice_block(rows: list[dict[str, str]]) -> str:
         "url": "{source}",
         "git": "git archive of commit {rev} from {source}",
         "svn": "svn export of {source} at revision {rev} (normalized tar)",
-        "cargo-vendor": "cargo vendor of the Cargo.lock in {source} at commit {rev} (normalized tar)",
+        "cargo-crates": "every crates.io crate in the Cargo.lock of {source} at commit {rev} (normalized tar)",
     }
     out = [NOTICE_BEGIN]
     for r in rows:

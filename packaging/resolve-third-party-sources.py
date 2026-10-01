@@ -164,7 +164,7 @@ def btbn(btbn_dir: str) -> dict[tuple[str, str], dict]:
                                                   "used": set(), "via": "glib meson subproject proxy-libintl"})
                 e["used"].add(TARGETS[target])
             if "cargo vendor" in dl or stage == "rav1e":
-                key = ("cargo-vendor:" + pairs[0][0], pairs[0][1])
+                key = ("cargo-crates:" + pairs[0][0], pairs[0][1])
                 e = found.setdefault(key, {"name": f"{stage}--crates", "repo": pairs[0][0], "rev": resolve_rev(*pairs[0]),
                                            "used": set(), "cargo": True, "via": f"{stage} Cargo.lock crates"})
                 e["used"].add(TARGETS[target])
@@ -228,7 +228,7 @@ def main() -> None:
         elif e.get("svn"):
             rows.append(row(e["name"], f"r{e['rev']}", e["used"], f"{e['name']}-svn-r{e['rev']}.tar", "svn", e["repo"], e["rev"]))
         elif e.get("cargo"):
-            rows.append(row(e["name"], e["rev"], e["used"], f"{e['name']}-{e['rev']}.tar", "cargo-vendor", e["repo"], e["rev"]))
+            rows.append(row(e["name"], e["rev"], e["used"], f"{e['name']}-{e['rev']}.tar", "cargo-crates", e["repo"], e["rev"]))
         else:
             gh = re.fullmatch(r"https://github\.com/([^/]+)/([^/]+?)(\.git)?", e["repo"])
             if gh:

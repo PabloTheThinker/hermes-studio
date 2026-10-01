@@ -186,8 +186,10 @@ programs and the PyAV libraries bundled in the app, at the exact versions used:
 
 The list is in packaging/third-party-sources.txt. scripts/mirror-sources.py
 rebuilds and verifies every archive. "git archive" entries come from forges
-that have no stable commit tarball. "svn export" and "cargo vendor" entries are
-packed as normalized tar files, so anyone can rebuild them byte for byte.
+that have no stable commit tarball. "svn export" entries and the Rust crate
+bundles (the crates.io .crate files a Cargo.lock pins, each checked against
+that lock) are packed as normalized tar files, so anyone can rebuild them byte
+for byte.
 
 Not mirrored:
   * Submodules that the build scripts fetch but never compile in: OpenSSL's
@@ -463,8 +465,8 @@ librsvg 7612431eb02dc009319094f8513d63c1faaecfb4  [ffmpeg-linux64, ffmpeg-win64]
   sha256: 3787f63f63d8725da97065a8809910d4c05189c8b22fd838deffa5f3579a65be
 librsvg--crates 7612431eb02dc009319094f8513d63c1faaecfb4  [ffmpeg-linux64, ffmpeg-win64]
   file:   librsvg--crates-7612431eb02dc009319094f8513d63c1faaecfb4.tar
-  source: cargo vendor of the Cargo.lock in https://github.com/GNOME/librsvg.git at commit 7612431eb02dc009319094f8513d63c1faaecfb4 (normalized tar)
-  sha256: e1d3a29f1b7bba581ed4cf382dd37341460031542d6337ca056da719880fd0fd
+  source: every crates.io crate in the Cargo.lock of https://github.com/GNOME/librsvg.git at commit 7612431eb02dc009319094f8513d63c1faaecfb4 (normalized tar)
+  sha256: 1a66726c0bba1792ac3536be7a691a26e50925f444d21a16e06683ed51669ef9
 libsamplerate 0844c208f683527c08ea8a80acc13b398aa9c8bf  [ffmpeg-linux64, ffmpeg-win64]
   file:   libsamplerate-0844c208f683527c08ea8a80acc13b398aa9c8bf.tar.gz
   source: https://github.com/libsndfile/libsamplerate/archive/0844c208f683527c08ea8a80acc13b398aa9c8bf.tar.gz
@@ -679,8 +681,8 @@ rav1e 31435de9d76fddd38f6dcc31d4014574cebb2092  [ffmpeg-linux64, ffmpeg-win64]
   sha256: ac56fef82e5f41b53d2c6088f4b0693380c389a55665a698ba768908ee17f073
 rav1e--crates 31435de9d76fddd38f6dcc31d4014574cebb2092  [ffmpeg-linux64, ffmpeg-win64]
   file:   rav1e--crates-31435de9d76fddd38f6dcc31d4014574cebb2092.tar
-  source: cargo vendor of the Cargo.lock in https://github.com/xiph/rav1e.git at commit 31435de9d76fddd38f6dcc31d4014574cebb2092 (normalized tar)
-  sha256: b0e5cc8864200dc6a3f1833eb1d28907bea54446be271b9e6384d3cb4aadec5d
+  source: every crates.io crate in the Cargo.lock of https://github.com/xiph/rav1e.git at commit 31435de9d76fddd38f6dcc31d4014574cebb2092 (normalized tar)
+  sha256: c5efc76921f011d684a7a725097d268f4633e4913cadb3731a9c660894ae02bd
 rubberband e4296ac80b1170018a110bc326fd0d45a0eb27d6  [ffmpeg-linux64, ffmpeg-win64]
   file:   rubberband-e4296ac80b1170018a110bc326fd0d45a0eb27d6.tar.gz
   source: https://github.com/breakfastquay/rubberband/archive/e4296ac80b1170018a110bc326fd0d45a0eb27d6.tar.gz

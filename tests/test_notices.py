@@ -215,10 +215,10 @@ def test_manifest_rows_are_well_formed():
     assert len(names) == len(set(names)), "release asset names must be unique"
     for r in SOURCES:
         assert re.fullmatch(r"[0-9a-f]{64}", r["sha256"]), r["filename"]
-        assert r["kind"] in {"url", "git", "svn", "cargo-vendor"}, r["filename"]
+        assert r["kind"] in {"url", "git", "svn", "cargo-crates"}, r["filename"]
         assert set(r["used_by"].split(",")) <= {"ffmpeg-linux64", "ffmpeg-win64", "pyav-linux", "pyav-win"}
         assert re.fullmatch(r"[\w.+~-]+", r["filename"]) and r["source"].startswith(("https://", "http://", "git://"))
-        if r["kind"] in {"git", "cargo-vendor"}:
+        if r["kind"] in {"git", "cargo-crates"}:
             assert re.fullmatch(r"[0-9a-f]{40}", r["rev"]), r["filename"]
 
 
