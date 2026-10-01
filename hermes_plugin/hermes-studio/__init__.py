@@ -343,7 +343,104 @@ def hermes_studio_desk(host: str = "127.0.0.1", port: int = 3870) -> str:
     return json.dumps({"ok": False, "error": f"studio did not bind {url}", "log": str(log)})
 
 
+def hermes_studio_design(action: str = "list", id: str = "", title: str = "", size: str = "", template: str = "",
+                         ops: list | None = None, pages: list | None = None, format: str = "png") -> str:
+    """Canva-style designs through the CLI contract: new, list, show, edit, render, resize, options."""
+    action = (action or "list").strip()
+    if action == "new":
+        argv = ["design", "new", "--size", size or "tiktok-carousel", "--template", template or "blank"]
+        if title:
+            argv += ["--title", title]
+    elif action in ("list", "options"):
+        argv = ["design", action]
+    elif action in ("show", "edit", "render", "resize"):
+        if not id:
+            return json.dumps({"ok": False, "error": "id is required"})
+        if action == "show":
+            argv = ["design", "show", id]
+        elif action == "edit":
+            argv = ["design", "edit", id, json.dumps(ops or [])]
+        elif action == "resize":
+            argv = ["design", "resize", id, "--size", size or "story"]
+        else:
+            argv = ["design", "render", id, "--format", "jpg" if format == "jpg" else "png"]
+            if pages:
+                argv += ["--pages", ",".join(str(int(p)) for p in pages)]
+    else:
+        return json.dumps({"ok": False, "error": "action must be new, list, show, edit, render, resize or options"})
+    return json.dumps(_run_mod(argv, timeout=600))
+
+
+def hermes_studio_photo(op: str, src: str, out: str = "", look: str = "", strength: float = 1.0) -> str:
+    if op not in ("cutout", "enhance", "look") or not src:
+        return json.dumps({"ok": False, "error": "op (cutout|enhance|look) and src are required"})
+    argv = ["photo", op, src]
+    if out:
+        argv += ["--out", out]
+    if look:
+        argv += ["--look", look]
+    if strength != 1.0:
+        argv += ["--strength", str(float(strength))]
+    return json.dumps(_run_mod(argv, timeout=600))
+
+
 def register(ctx) -> None:
+    ctx.register_tool(
+        name="hermes_studio_design",
+        toolset="hermes-studio",
+        schema={
+            "name": "hermes_studio_design",
+            "description": (
+                "Hermes Studio Design: Canva-style carousels, story covers, square posts, YouTube thumbnails and X posts. "
+                "action=new (size: tiktok-carousel|story|square|youtube-thumb|x-post; template: blank|carousel|quote|thumbnail|announcement) "
+                "returns an id and the design JSON (pages -> layers in pixels). action=show reads it. action=edit applies ops in order: "
+                "{op:add_page, bg?, after?} {op:delete_page, page} {op:add, page, layer:{type:text|rect|ellipse|line,...}} "
+                "{op:add_image, page, path, x?, y?, w?, h?, fit?, radius?} {op:update, page, index, set:{...}} {op:remove, page, index} "
+                "{op:background, page, color} {op:title, title}. Pages 1-based, layer index 0-based bottom to top. Text keys: text, x, y, "
+                "w (wraps), size, font archivo|playfair|caveat|mono|opensans, weight, italic, color #rrggbb, align, line, spacing, upper, bg. "
+                "action=render exports PNG/JPG paths (look at them before you hand them over); action=resize copies into another size. "
+                "The person sees and edits the same design live in the desk's Design page. Never posts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["new", "list", "show", "edit", "render", "resize", "options"]},
+                    "id": {"type": "string", "description": "design id (d-...)"},
+                    "title": {"type": "string"},
+                    "size": {"type": "string", "enum": ["tiktok-carousel", "story", "square", "youtube-thumb", "x-post"]},
+                    "template": {"type": "string", "enum": ["blank", "carousel", "quote", "thumbnail", "announcement"]},
+                    "ops": {"type": "array", "items": {"type": "object"}},
+                    "pages": {"type": "array", "items": {"type": "integer"}},
+                    "format": {"type": "string", "enum": ["png", "jpg"]},
+                },
+                "required": ["action"],
+            },
+        },
+        handler=lambda args, **kw: hermes_studio_design(**{k: v for k, v in (args or {}).items() if k in (
+            "action", "id", "title", "size", "template", "ops", "pages", "format")}),
+        description="Hermes Studio: Canva-style designs. Local. Does not post.",
+    )
+    ctx.register_tool(
+        name="hermes_studio_photo",
+        toolset="hermes-studio",
+        schema={
+            "name": "hermes_studio_photo",
+            "description": "Hermes Studio: edit an image file locally. cutout = remove background (transparent PNG); enhance = light, contrast and sharpening with skin texture kept; look = bw|warm|cool|punch|fade|noir. Writes a new file next to the original.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "op": {"type": "string", "enum": ["cutout", "enhance", "look"]},
+                    "src": {"type": "string", "description": "PNG, JPEG or WebP path"},
+                    "out": {"type": "string"},
+                    "look": {"type": "string", "enum": ["bw", "warm", "cool", "punch", "fade", "noir"]},
+                    "strength": {"type": "number", "default": 1.0},
+                },
+                "required": ["op", "src"],
+            },
+        },
+        handler=lambda args, **kw: hermes_studio_photo(**{k: v for k, v in (args or {}).items() if k in ("op", "src", "out", "look", "strength")}),
+        description="Hermes Studio: background removal, enhance, looks. Local.",
+    )
     ctx.register_tool(
         name="hermes_studio_run",
         toolset="hermes-studio",

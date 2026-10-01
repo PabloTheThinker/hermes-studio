@@ -36,10 +36,17 @@ PORT_DEFAULT = 3870
 # - Clickjacking / sniffing / injection: CSP, frame-ancestors none, nosniff, no referrer.
 # - Oversized bodies: 1 MB cap.
 MAX_BODY = 1024 * 1024
+MAX_IMAGE_BODY = 32 * 1024 * 1024  # design uploads + exported pages (base64 in JSON)
+DESIGN_STATIC = {  # fixed names only; nothing derived from the request path is opened
+    "fabric.min.js": ("vendor/fabric.min.js", "text/javascript; charset=utf-8"),
+    "design.js": ("design.js", "text/javascript; charset=utf-8"),
+}
+FONT_FILES = {"Archivo.ttf", "PlayfairDisplay-Italic.ttf", "Caveat.ttf", "JetBrainsMono.ttf", "OpenSans.ttf"}
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg"}
 LOOPBACK_NAMES = {"127.0.0.1", "localhost", "::1", "[::1]"}
 CSP = (
     "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
     "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 )
@@ -137,12 +144,12 @@ def _seconds(value):
     return float(text)
 
 
-def _read_json(handler: BaseHTTPRequestHandler) -> dict:
+def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
     try:
         length = int(handler.headers.get("Content-Length") or 0)
     except ValueError:
         length = 0
-    if length < 0 or length > MAX_BODY:
+    if length < 0 or length > limit:
         raise ValueError("request body too large")
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
@@ -393,6 +400,31 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio.mcp import client_config
 
             return _json(self, 200, {**doctor(), "mcp": client_config()})
+        if path.startswith("/design/"):
+            return self._design_get(path)
+        if path == "/api/designs":
+            from hermes_studio import design
+
+            return _json(self, 200, {"ok": True, "designs": design.list_designs(), "sizes": {
+                k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
+                "templates": design.templates(), "fonts": {k: [v[1], v[2]] for k, v in design.FONTS.items()}})
+        if path.startswith("/api/design-template/"):
+            from hermes_studio import design
+
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                pages = design.template_pages(path.split("/")[3], int(q.get("w", ["1080"])[0]), int(q.get("h", ["1350"])[0]))
+            except (design.DesignError, ValueError) as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "pages": pages})
+        if path.startswith("/api/design/"):
+            from hermes_studio import design
+
+            did = path.split("/")[3] if len(path.split("/")) > 3 else ""
+            try:
+                return _json(self, 200, {"ok": True, "design": design.load(did)})
+            except design.DesignError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
         if path.startswith("/media/"):
             parts = path.strip("/").split("/")
             if len(parts) != 3:
@@ -417,6 +449,8 @@ class StudioHandler(BaseHTTPRequestHandler):
     def _post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == "/api/design" or path.startswith("/api/design/"):
+            return self._design_post(path)
         if path == "/api/jobs":
             body = _read_json(self)
             src = str(body.get("src") or "").strip()
@@ -601,7 +635,100 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 200, {"ok": True, "job": asdict(job)})
         self.send_error(404)
 
-    def _file(self, path: Path, content_type: str) -> None:
+    # ------------------------------------------------------------------ design
+
+    def _design_get(self, path: str) -> None:
+        """/design/fabric.min.js · /design/fonts/<file> · /design/<id>/(assets|export)/<file>."""
+        from hermes_studio import design
+
+        parts = path.strip("/").split("/")
+        if len(parts) == 2 and parts[1] in DESIGN_STATIC:
+            rel, ctype = DESIGN_STATIC[parts[1]]
+            return self._file(UI_DIR / rel, ctype, cache=parts[1] != "design.js")
+        if len(parts) == 3 and parts[1] == "fonts" and parts[2] in FONT_FILES:
+            return self._file(design.FONT_DIR / parts[2], "font/ttf", cache=True)
+        if len(parts) == 4 and parts[2] in ("assets", "export") and design.safe_id(parts[1]):
+            ext = os.path.splitext(parts[3])[1].lower()
+            if ext in IMAGE_TYPES and design.ASSET_RE.match("assets/" + parts[3]):
+                try:
+                    base = design.design_dir(parts[1]) / parts[2]
+                except design.DesignError:
+                    base = None
+                real = _inside(base, parts[3]) if base else None
+                if real and os.path.isfile(real):
+                    return self._file(Path(real), IMAGE_TYPES[ext])
+        self.send_error(404)
+
+    def _design_post(self, path: str) -> None:
+        import base64
+
+        from hermes_studio import design, photo
+
+        parts = path.strip("/").split("/")  # api, design, <id>, <action>
+        big = len(parts) == 4 and parts[3] in ("asset", "export")
+        body = _read_json(self, MAX_IMAGE_BODY if big else MAX_BODY)
+
+        def b64(field: str = "data") -> bytes:
+            raw = str(body.get(field) or "")
+            if "," in raw[:80]:
+                raw = raw.split(",", 1)[1]
+            try:
+                return base64.b64decode(raw, validate=True)
+            except ValueError:
+                raise design.DesignError("data must be base64") from None
+
+        try:
+            if len(parts) == 2:  # create
+                doc = design.create(str(body.get("title") or ""), str(body.get("size") or "tiktok-carousel"),
+                                    str(body.get("template") or "blank"), body.get("w"), body.get("h"))
+                return _json(self, 200, {"ok": True, "design": doc})
+            if len(parts) != 4:
+                return _json(self, 404, {"ok": False, "error": "unknown design route"})
+            did, act = parts[2], parts[3]
+            if act == "save":
+                return _json(self, 200, {"ok": True, "design": design.save(did, body.get("design") or {})})
+            if act == "asset":
+                rel = design.add_asset(did, b64(), name_hint=str(body.get("name") or "img"))
+                return _json(self, 200, {"ok": True, "src": rel})
+            if act == "photo":  # cutout / enhance / look on an asset -> a new asset
+                src = design.asset_path(did, str(body.get("src") or ""))
+                img = photo.decode(src.read_bytes())
+                op = str(body.get("op") or "")
+                if op == "cutout":
+                    res = photo.cutout(img)
+                elif op == "enhance":
+                    res = photo.enhance(img, float(body.get("strength") or 1))
+                elif op == "look":
+                    res = photo.look(img, str(body.get("look") or "none"))
+                else:
+                    raise design.DesignError("op must be cutout, enhance or look")
+                ext = ".png" if res.shape[2] == 4 else ".jpg"
+                rel = design.add_asset(did, photo.encode(res, ext), name_hint=op)
+                return _json(self, 200, {"ok": True, "src": rel})
+            if act == "export":
+                rel = design.save_export(did, int(body.get("page") or 1), b64())
+                return _json(self, 200, {"ok": True, "file": rel})
+            if act == "render":
+                res = design.render(did, fmt="jpg" if body.get("format") == "jpg" else "png")
+                return _json(self, 200, {"ok": True, "files": [f"export/{Path(f).name}" for f in res["files"]]})
+            if act == "from-clip":  # a clip thumbnail from the library becomes a design image
+                media = _safe_media(str(body.get("job") or ""), str(body.get("file") or ""))
+                if not media or media.suffix.lower() != ".jpg":
+                    raise design.DesignError("no such clip image")
+                rel = design.add_asset(did, media.read_bytes(), name_hint="clip")
+                return _json(self, 200, {"ok": True, "src": rel})
+            if act == "resize":
+                doc = design.resize(did, str(body.get("size") or ""), body.get("w"), body.get("h"))
+                return _json(self, 200, {"ok": True, "design": doc})
+            if act == "duplicate":
+                return _json(self, 200, {"ok": True, "design": design.duplicate(did)})
+            if act == "delete":
+                return _json(self, 200, design.delete(did))
+            return _json(self, 404, {"ok": False, "error": "unknown design action"})
+        except (design.DesignError, photo.PhotoError) as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)[:300]})
+
+    def _file(self, path: Path, content_type: str, cache: bool = False) -> None:
         size = path.stat().st_size
         if content_type.startswith("video/"):
             start, end = 0, size - 1
@@ -645,6 +772,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=86400" if cache else "no-cache")
         self.end_headers()
         self.wfile.write(data)
 

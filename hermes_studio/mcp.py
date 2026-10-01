@@ -161,6 +161,86 @@ TOOLS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": {"title": "Check setup", **_RO},
     },
+    {
+        "name": "design_new",
+        "title": "Start a design",
+        "description": "Start a Canva-style design (TikTok/IG carousel, story, square post, YouTube thumbnail, X post) from a "
+                       "template: blank, carousel (hook, two points, follow), quote, thumbnail, announcement. Returns the "
+                       "design id and its full JSON (pages -> layers of text, image, rect, ellipse, line in pixels). "
+                       "Edit with design_edit, export with design_render. Sir sees and edits the same design in the desk.",
+        "inputSchema": {"type": "object", "properties": {
+            "title": {"type": "string"},
+            "size": {"type": "string", "enum": ["tiktok-carousel", "story", "square", "youtube-thumb", "x-post"], "default": "tiktok-carousel"},
+            "template": {"type": "string", "enum": ["blank", "carousel", "quote", "thumbnail", "announcement"], "default": "blank"},
+            "w": {"type": "integer", "description": "custom width (with h)"}, "h": {"type": "integer"},
+        }, "additionalProperties": False},
+        "annotations": {"title": "Start a design", **_WRITE, "openWorldHint": False},
+    },
+    {
+        "name": "design_list",
+        "title": "List designs",
+        "description": "Designs in the local studio, newest first: id, title, size, page count.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"title": "List designs", **_RO},
+    },
+    {
+        "name": "design_show",
+        "title": "Show a design",
+        "description": "Full design JSON: w, h, pages[].bg and pages[].layers[] (bottom to top). Read it before design_edit.",
+        "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": False},
+        "annotations": {"title": "Show a design", **_RO},
+    },
+    {
+        "name": "design_edit",
+        "title": "Edit a design",
+        "description": "Apply edit ops in order. Pages are 1-based, layer index 0-based (bottom to top). Ops: "
+                       "{op:add_page, bg?, after?} · {op:delete_page, page} · {op:add, page, layer:{type:text|rect|ellipse|line, ...}} · "
+                       "{op:add_image, page, path, x?, y?, w?, h?, fit?:cover|contain, radius?} · {op:update, page, index, set:{...}} · "
+                       "{op:remove, page, index} · {op:background, page, color} · {op:title, title}. "
+                       "Text layer keys: text, x, y, w (wraps), size, font (archivo|playfair|caveat|mono|opensans), weight 100-900, "
+                       "italic, color #rrggbb, align, line, spacing (1/1000 em), upper, bg (box fill), opacity, angle. Shapes: x, y, w, h, fill, stroke, stroke_w, radius.",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "ops": {"type": "array", "items": {"type": "object"}},
+        }, "required": ["id", "ops"], "additionalProperties": False},
+        "annotations": {"title": "Edit a design", **_WRITE, "openWorldHint": False},
+    },
+    {
+        "name": "design_render",
+        "title": "Export a design",
+        "description": "Render pages to PNG or JPG files on this computer and return their paths. Look at them before you hand them over.",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "description": "default: all"},
+            "format": {"type": "string", "enum": ["png", "jpg"], "default": "png"},
+        }, "required": ["id"], "additionalProperties": False},
+        "annotations": {"title": "Export a design", **_WRITE, "openWorldHint": False},
+    },
+    {
+        "name": "design_resize",
+        "title": "Resize a design",
+        "description": "Copy a design into another size (like Canva Resize): tiktok-carousel, story, square, youtube-thumb, x-post, "
+                       "or custom w/h. Text scales to fit; full-bleed images stay full-bleed. The original is kept. Check the result with design_render.",
+        "inputSchema": {"type": "object", "properties": {
+            "id": {"type": "string"}, "size": {"type": "string", "enum": ["tiktok-carousel", "story", "square", "youtube-thumb", "x-post"]},
+            "w": {"type": "integer"}, "h": {"type": "integer"},
+        }, "required": ["id"], "additionalProperties": False},
+        "annotations": {"title": "Resize a design", **_WRITE, "openWorldHint": False},
+    },
+    {
+        "name": "photo",
+        "title": "Edit a photo",
+        "description": "Edit an image file on this computer: cutout removes the background (transparent PNG), enhance "
+                       "fixes light and contrast and sharpens while keeping skin texture, look applies a colour look "
+                       "(bw, warm, cool, punch, fade, noir). Writes a new file next to the original; never overwrites it.",
+        "inputSchema": {"type": "object", "properties": {
+            "op": {"type": "string", "enum": ["cutout", "enhance", "look"]},
+            "src": {"type": "string", "description": "PNG, JPEG or WebP path"},
+            "out": {"type": "string"}, "look": {"type": "string", "enum": ["bw", "warm", "cool", "punch", "fade", "noir"]},
+            "strength": {"type": "number", "minimum": 0, "maximum": 1.5, "default": 1},
+        }, "required": ["op", "src"], "additionalProperties": False},
+        "annotations": {"title": "Edit a photo", **_WRITE, "openWorldHint": False},
+    },
 ]
 _BY_NAME = {t["name"]: t for t in TOOLS}
 # Older names still work so existing agent configs keep running.
@@ -300,6 +380,22 @@ def call_tool(name: str, args: dict, progress=None) -> dict:
         return api.tools()
     if name == "doctor":
         return api.doctor()
+    if name == "design_new":
+        return api.design_new(str(a.get("title") or ""), str(a.get("size") or "tiktok-carousel"),
+                              str(a.get("template") or "blank"), a.get("w"), a.get("h"))
+    if name == "design_list":
+        return api.design_list()
+    if name == "design_show":
+        return api.design_show(str(a.get("id") or ""))
+    if name == "design_edit":
+        return api.design_edit(str(a.get("id") or ""), a.get("ops") or [])
+    if name == "design_render":
+        return api.design_render(str(a.get("id") or ""), a.get("pages") or None, str(a.get("format") or "png"))
+    if name == "design_resize":
+        return api.design_resize(str(a.get("id") or ""), str(a.get("size") or ""), a.get("w"), a.get("h"))
+    if name == "photo":
+        return api.photo_edit(str(a.get("op") or ""), str(a.get("src") or ""), str(a.get("out") or ""),
+                              str(a.get("look") or ""), float(a.get("strength") or 1))
     raise HermesStudioError(f"Unknown tool: {name}", code="not_found", hint="Call tools/list for the tool names.")
 
 
@@ -316,6 +412,13 @@ def _summary(name: str, res: dict) -> str:
         return "\n".join(lines)
     if name == "show":
         return f"Run {res.get('id')} · {res.get('status')} · {res.get('clips')} clip(s) · {res.get('message') or ''}".strip()
+    if name == "design_render" and res.get("ok"):
+        return f"Exported {len(res.get('files') or [])} page(s) at {res.get('w')}x{res.get('h')}:\n" + "\n".join(f"- {f}" for f in res.get("files") or [])
+    if name in ("design_new", "design_edit", "design_resize") and res.get("ok"):
+        d = res.get("design") or {}
+        return f"Design {res.get('id')} · {d.get('title')} · {d.get('w')}x{d.get('h')} · {len(d.get('pages') or [])} page(s). Saved."
+    if name == "photo" and res.get("ok"):
+        return f"{res.get('op')} done: {res.get('file')} ({res.get('w')}x{res.get('h')})"
     if name == "doctor":
         bad = [c["name"] for c in res.get("checks", []) if not c["ok"] and c["required"]]
         return "Ready." if res.get("ok") else "Not ready: " + ", ".join(bad)

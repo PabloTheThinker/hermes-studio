@@ -57,3 +57,24 @@ NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPO
 NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES
 OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+Fabric.js (hermes_studio/ui/vendor/fabric.min.js), bundled unmodified.
+https://github.com/fabricjs/fabric.js
+
+Copyright (c) 2008-2015 Printio (Juriy Zaytsev, Maxim Chernyak)
+
+MIT License. Same terms as above: permission is granted free of charge to use, copy, modify,
+merge, publish, distribute, sublicense and/or sell copies, provided this notice is included.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+--------------------------------------------------------------------------------
+U^2-Net small ("u2netp") background-removal model, bundled unmodified as
+hermes_studio/data/u2netp.onnx (ONNX export distributed by rembg). https://github.com/xuebinqin/U-2-Net
+Copyright (c) Xuebin Qin. Apache License 2.0.
+
+--------------------------------------------------------------------------------
+Fonts in hermes_studio/data/fonts/, bundled unmodified, SIL Open Font License 1.1
+(https://openfontlicense.org): Archivo (Omnibus-Type), Playfair Display (Claus Eggers
+Sørensen), Caveat (Impallari Type), JetBrains Mono (JetBrains), Open Sans (Steve Matteson /
+Google). Each font's OFL text is in hermes_studio/data/fonts/OFL-<Family>.txt.

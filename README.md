@@ -1,10 +1,10 @@
 # Hermes Studio
 
-Video tools for people and AI agents, built for [Hermes Agent](https://hermes-agent.nousresearch.com/). One name everywhere: the app, the `hermes-studio` command, the MCP server and the Hermes plugin.
+Video and design tools for people and AI agents, built for [Hermes Agent](https://hermes-agent.nousresearch.com/). One name everywhere: the app, the `hermes-studio` command, the MCP server and the Hermes plugin.
 
 Repo: https://github.com/PabloTheThinker/hermes-studio
 
-Long video, YouTube, X, Twitch, or a livestream slice in. Captioned 9:16 shorts out. Nothing is posted for you.
+Long video, YouTube, X, Twitch, or a livestream slice in. Captioned 9:16 shorts out. A Canva-style **Design** page for carousels, story covers, thumbnails and posts, which your AI agent can build and edit too. Nothing is posted for you.
 
 ## Install
 
@@ -45,6 +45,29 @@ It runs on your computer only. The speech model (about 75 MB) downloads the firs
 ### Or download the installer yourself
 
 From [Releases](https://github.com/PabloTheThinker/hermes-studio/releases/latest): `Hermes-Studio-Setup-<version>.exe` (Windows) or `Hermes-Studio-<version>.AppImage` (Linux: `chmod +x`, then open it). `SHA256SUMS.txt` lists the checksums.
+
+## Design (carousels, covers, thumbnails)
+
+Open the desk (`hermes-studio studio`) and pick **Design**. Choose a size (carousel 4:5, story 9:16, square, YouTube thumbnail, X/LinkedIn), start blank or from a template, then:
+
+- drag, resize, rotate and snap to the centre and edges; multi-page with a page strip
+- text in five bundled fonts (Archivo, Playfair Display, Caveat, JetBrains Mono, Open Sans; all OFL), colours, alignment, spacing, banners
+- shapes, lines, cards, pills and a bottom shade for text over photos
+- photos from your computer or your clips: remove background, enhance, looks (black and white, warm, cool, punch, fade, noir), all on your machine
+- brand colours, layers, undo/redo, keyboard nudges, autosave
+- resize a design into another format; export every page as PNG or JPG
+
+Designs live in `clips/designs` in your Hermes folder as plain JSON plus images, so an AI agent and you edit the same file. From the command line:
+
+```bash
+hermes-studio design new --template carousel --size tiktok-carousel   # returns an id
+hermes-studio design edit <id> '[{"op":"update","page":1,"index":0,"set":{"text":"MY HOOK"}}]'
+hermes-studio design render <id> --format jpg                         # PNG/JPG per page
+hermes-studio design resize <id> --size story
+hermes-studio photo cutout me.jpg                                     # transparent PNG
+```
+
+Background removal uses U²-Net small (Apache-2.0, 4.5 MB, bundled; runs offline). The editor uses [Fabric.js](https://fabricjs.com) (MIT), bundled.
 
 ## Command line only (Python developers)
 
@@ -92,7 +115,7 @@ hermes-studio mcp install hermes     # Hermes Agent (config.yaml)
 hermes-studio mcp config             # the JSON block for anything else
 ```
 
-Then ask it: *"make 3 shorts from ~/Videos/talk.mp4"*. Tools: `run`, `show`, `list`, `restyle`, `edit`, `probe`, `recommend`, `copy`, `name`, `tools`, `doctor`. Standard MCP stdio; long runs report progress, or pass `detach: true` and poll `show`. The desktop app's **Settings → Use with your AI** shows the same lines with a copy button.
+Then ask it: *"make 3 shorts from ~/Videos/talk.mp4"*. Tools: `run`, `show`, `list`, `restyle`, `edit`, `probe`, `recommend`, `copy`, `name`, `tools`, `doctor`, plus `design_new`, `design_list`, `design_show`, `design_edit`, `design_render`, `design_resize` and `photo`. Ask: *"make me a 5-slide carousel about my launch"*. Standard MCP stdio; long runs report progress, or pass `detach: true` and poll `show`. The desktop app's **Settings → Use with your AI** shows the same lines with a copy button.
 
 ## Run from source
 
