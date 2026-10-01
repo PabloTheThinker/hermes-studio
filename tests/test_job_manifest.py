@@ -280,12 +280,18 @@ def test_two_threads_saving_the_same_job(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 def test_save_keeps_an_existing_job_json_mode(tmp_path):
-    job, folder = _saved(tmp_path)
-    os.chmod(folder / "job.json", 0o640)
-    job.message = "new"
-    job.save()
-    assert stat.S_IMODE((folder / "job.json").stat().st_mode) == 0o640
-    assert json.loads((folder / "job.json").read_text())["message"] == "new"
+    # Under umask 022 a fresh file would be 0644, so 0600 surviving proves the mode is kept.
+    old = os.umask(0o022)
+    try:
+        job, folder = _saved(tmp_path)
+        os.chmod(folder / "job.json", stat.S_IRUSR | stat.S_IWUSR)
+        for _ in range(3):
+            job.message = "new"
+            job.save()
+            assert stat.S_IMODE((folder / "job.json").stat().st_mode) == 0o600
+        assert json.loads((folder / "job.json").read_text())["message"] == "new"
+    finally:
+        os.umask(old)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
