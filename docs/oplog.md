@@ -118,7 +118,7 @@ Decisions:
 | `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
 | `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, `op_index` / `id` |
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
-| `undo_blocked` | see below | `reason`, `op_ids`; with `reason: "dependents"` also `blocking_op_ids` (by `seq`) |
+| `undo_blocked` | see below | `reason`, `op_ids`, `path` (`/op_id` or `/group_id`) and `id` (the op_id or group_id asked for); with `reason: "dependents"` also `blocking_op_ids` (by `seq`); with `reason: "inverse_invalid"` also `rule` and `problems` |
 
 Op-level `rule`s: `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
 `not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `bad_track_role`,
@@ -141,8 +141,8 @@ entry). `history_redo{op_id}` takes an undo entry and undoes it. History is neve
   `reason: "dependents"` and `blocking_op_ids` = those entries' `op_id`s, ordered by `seq`
   (Glyph's "Restore to before this step"; `op_ids` carries the same list).
 - **Fallback only:** if the actor and dependents checks pass but the inverse still fails to
-  validate, the result is `undo_blocked`, `reason: "inverse_invalid"`, with the validator's
-  `problems`.
+  validate, the result is `undo_blocked`, `reason: "inverse_invalid"`. `op_ids` holds the target
+  entries (by `seq`), with the failing `rule` and the validator's `problems`.
 
 ## Replay
 

@@ -836,11 +836,14 @@ class Oplog:
         if not group:
             raise OplogError("invalid_op", "already undone", rule="already_undone",
                              path="/op_id" if "op_id" in args else "/group_id")
+        # every undo_blocked result points at the target the caller named
+        where = {"path": "/op_id", "id": args["op_id"]} if "op_id" in args else {"path": "/group_id", "id": args["group_id"]}
+        target_ids = [e["op_id"] for e in sorted(group, key=lambda e: e["seq"])]
         if session.actor.kind == "agent":
             others = [e["op_id"] for e in group if e["actor"] != session.actor.as_dict()]
             if others:
                 raise OplogError("undo_blocked", "an agent can only undo its own entries", reason="actor",
-                                 op_ids=others, hint="Ask the person to undo it.")
+                                 op_ids=others, **where, hint="Ask the person to undo it.")
         ids = {e["op_id"] for e in group}
         first = min(e["seq"] for e in group)
         seq_of = {e["op_id"]: e["seq"] for e in self._entries}
@@ -855,13 +858,14 @@ class Oplog:
                 dependents.append(e["op_id"])
         if dependents:
             raise OplogError("undo_blocked", "later entries changed the same items", reason="dependents",
-                             blocking_op_ids=dependents, op_ids=dependents, hint="Undo those first, or restore to before this step.")
+                             blocking_op_ids=dependents, op_ids=dependents, **where, hint="Undo those first, or restore to before this step.")
         ops = [op for e in sorted(group, key=lambda e: -e["seq"]) for op in e["inverse"]]
         try:
             new, logged, inverse = self._run(ops, internal=True)
         except OplogError as e:
-            raise OplogError("undo_blocked", "the inverse no longer applies", reason="inverse_invalid", op_ids=[],
-                             problems=e.extra.get("problems", []), rule=e.extra.get("rule")) from None
+            raise OplogError("undo_blocked", "the inverse no longer applies", reason="inverse_invalid",
+                             op_ids=target_ids, **where, problems=e.extra.get("problems", []),
+                             rule=e.extra.get("rule")) from None
         last = max(group, key=lambda e: e["seq"])
         summary = args.get("summary") or (("Redo: " if redo else "Undo: ") + last["summary"])[:SUMMARY_MAX]
         undoes = [e["op_id"] for e in sorted(group, key=lambda e: -e["seq"])]

@@ -737,3 +737,43 @@ def test_add_track_with_a_non_string_role_is_bad_track_role(role):
     x = e.value.extra
     assert e.value.code == "invalid_op" and x["rule"] == "bad_track_role" and x["path"] == "/ops/0/role"
     assert log.version == 0 and log.history_list() == []
+
+
+# --------------------------------------------------------------------------- undo_blocked shapes
+
+
+def test_inverse_invalid_carries_the_target_op_ids_path_and_id():
+    log = new_log()
+    mv = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 20 * S})
+    apply(log, HUMAN, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, 4 * S], "at": 10 * S})  # not a dependent
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, op_id=mv["op_id"])  # c3 back to 10 s would overlap the new clip
+    x = e.value.extra
+    assert e.value.code == "undo_blocked" and x["reason"] == "inverse_invalid"
+    assert x["op_ids"] == [mv["op_id"]] and x["path"] == "/op_id" and x["id"] == mv["op_id"]
+    assert x["rule"] == "overlap" and x["problems"] and "blocking_op_ids" not in x
+    assert len(log.history_list()) == 2
+
+
+def test_inverse_invalid_on_a_group_lists_its_entries_by_seq():
+    log = new_log()
+    a = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 20 * S}, group_id="g")
+    b = apply(log, HUMAN, {"op": "add_marker", "at": S, "label": "x"}, group_id="g")
+    apply(log, HUMAN, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, 4 * S], "at": 10 * S})
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, group_id="g")
+    x = e.value.extra
+    assert x["reason"] == "inverse_invalid" and x["op_ids"] == [a["op_id"], b["op_id"]]
+    assert x["path"] == "/group_id" and x["id"] == "g"
+
+
+def test_actor_and_dependents_blocks_carry_path_and_id_too():
+    log = new_log()
+    r = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 11 * S})
+    with pytest.raises(O.OplogError) as e:
+        undo(log, hermes(), op_id=r["op_id"])
+    assert e.value.extra["reason"] == "actor" and e.value.extra["path"] == "/op_id" and e.value.extra["id"] == r["op_id"]
+    apply(log, HUMAN, {"op": "set_fade", "id": "c3", "fade_in": S // 4})
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, op_id=r["op_id"])
+    assert e.value.extra["reason"] == "dependents" and e.value.extra["path"] == "/op_id" and e.value.extra["id"] == r["op_id"]
