@@ -5,7 +5,12 @@ name: desktop
 # The tested installers are uploaded as artifacts; releases are cut from them.
 # Actions are pinned to commit SHAs so a hijacked tag can't run code here.
 on:
-  workflow_dispatch:
+  workflow_dispatch:      # manual: build and test; the release job runs as a dry run (never publishes)
+    inputs:
+      dry_run:
+        description: "Assemble every release asset but do not publish (a manual run can never publish)"
+        type: boolean
+        default: true
   push:
     tags: ["v*"]          # a version tag builds, tests, then publishes the release
   pull_request:          # every PR; the `changes` job decides whether the app is rebuilt
@@ -313,16 +318,35 @@ jobs:
           name: windows-installer
           path: dist/Hermes-Studio-Setup-*.exe
           retention-days: 14
-  # On a version tag only: publish the exact installers the two clean-machine
-  # jobs above just tested, with their checksums. Nothing is rebuilt here.
+  # Assembles every release asset: the tested installers, the source tarball, the third-party
+  # source bundles (rebuilt here from packaging/third-party-sources.txt and verified against the
+  # committed packaging/SOURCES-SHA256SUMS, so it works on whatever commit a tag lands on and never
+  # depends on artifacts of other runs), SHA256SUMS.txt and the asset list. Runs on a version tag
+  # (then `publish` attaches the assets) and on workflow_dispatch as a dry run. This job only has a
+  # read-only token: it cannot publish anything.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [linux, windows, sources]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
     steps:
+      - name: Publish only from a version tag push; manual runs are dry runs
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]]; then
+            echo "Tag push: assets will be published by the publish job."
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY_RUN" = true ]; then
+            echo "Dry run: assembling every release asset; nothing will be published."
+          else
+            echo "::error::Only a version tag push publishes. Run workflow_dispatch with dry_run=true."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -336,40 +360,87 @@ jobs:
         with:
           name: windows-installer
           path: rel
-      - name: Verified third-party source bundles
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: sources-*
-          merge-multiple: true
-          path: rel
-      - name: Their checksums
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: SOURCES-SHA256SUMS
-          path: rel
-      - name: Publish the release
+      - name: Rebuild the third-party source bundles and verify them against the committed sums
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q subversion >/dev/null
+          # Fails on any archive sha256/size mismatch, or if a bundle differs from packaging/SOURCES-SHA256SUMS.
+          python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources" --bundles rel
+          rm -rf "$RUNNER_TEMP/sources"
+          cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS
+          (cd rel && sha256sum -c SOURCES-SHA256SUMS)
+      - name: Assemble the release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
-          [ "v$want" = "$TAG" ] || { echo "tag $TAG does not match pyproject version $want"; exit 1; }
+          if [ "$EVENT" = push ]; then
+            [ "v$want" = "$TAG" ] || { echo "tag $TAG does not match pyproject version $want"; exit 1; }
+          fi
+          tag="v$want"
           cd rel
-          ls -la
           [ -f "Hermes-Studio-$want.AppImage" ] && [ -f "Hermes-Studio-Setup-$want.exe" ] || { echo "missing an installer"; exit 1; }
           # Source for this release, and the corresponding source of the bundled FFmpeg, PyAV and
-          # OpenCV builds: the bundles the sources job rebuilt and verified (NOTICE, SOURCES-SHA256SUMS).
+          # OpenCV builds: the bundles rebuilt and verified above (NOTICE, SOURCES-SHA256SUMS).
           git -C .. archive --format=tar.gz --prefix="hermes-studio-$want/" -o "$PWD/hermes-studio-$want-source.tar.gz" HEAD
-          cmp SOURCES-SHA256SUMS ../packaging/SOURCES-SHA256SUMS
-          sha256sum -c SOURCES-SHA256SUMS
           mapfile -t bundles < <(awk '{print $2}' SOURCES-SHA256SUMS)
           [ "$(ls sources-*.tar | sort)" = "$(printf '%s\n' "${bundles[@]}" | sort)" ] || { echo "unexpected bundle set"; exit 1; }
           src=("hermes-studio-$want-source.tar.gz" "${bundles[@]}" SOURCES-SHA256SUMS)
           sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" > SHA256SUMS.txt
+          assets=("Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" SHA256SUMS.txt)
+          printf '%s\n' "${assets[@]}" > release-assets.txt
+          notes="docs/releases/$tag.md"
+          [ -f "../$notes" ] && echo "$notes" > release-notes.txt || : > release-notes.txt
+          echo "Release $tag ($EVENT) assets:"
+          ls -l "${assets[@]}"
           cat SHA256SUMS.txt
-          notes="../docs/releases/$TAG.md"
-          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
+          echo "Release notes: $(cat release-notes.txt) (empty: generated by GitHub)"
+          extra=$(ls | grep -vxF -f release-assets.txt | grep -vxE 'release-(assets|notes)\.txt' || true)
+          [ -z "$extra" ] || { echo "unexpected files in rel/: $extra"; exit 1; }
+      - name: Release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: rel/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+  # The only job that can publish: a version tag push, never workflow_dispatch (dry runs stop at
+  # the release job above). Attaches exactly the assets the release job assembled and verified.
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assembled release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: rel
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]] || { echo "::error::publish runs only on a version tag push"; exit 1; }
+          cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS
+          cd rel
+          sha256sum -c SOURCES-SHA256SUMS
+          sha256sum -c SHA256SUMS.txt
+          mapfile -t assets < release-assets.txt
+          notes="$(cat release-notes.txt)"
+          if [ -n "$notes" ]; then set -- --notes-file "../$notes"; else set -- --generate-notes; fi
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
-            --title "Hermes Studio $TAG" "$@" \
-            "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" SHA256SUMS.txt
+            --title "Hermes Studio $TAG" "$@" "${assets[@]}"

@@ -298,16 +298,42 @@ def test_sources_job_uploads_every_bundle():
         assert "retention-days: 3" in opts and "if-no-files-found: error" in opts
 
 
-def test_release_job_attaches_the_verified_bundles():
-    release = DESKTOP_YML.split("\n  release:\n", 1)[1]
+def _job(name: str) -> str:
+    return DESKTOP_YML.split(f"\n  {name}:\n", 1)[1].split("\n\n  ", 1)[0].split("\n  # ", 1)[0]
+
+
+def test_release_job_rebuilds_and_verifies_the_bundles():
+    release = _job("release")
+    assert "if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'" in release
     assert "needs: [linux, windows, sources]" in release
-    assert "pattern: sources-*" in release and "merge-multiple: true" in release
-    assert "name: SOURCES-SHA256SUMS" in release
-    assert "cmp SOURCES-SHA256SUMS ../packaging/SOURCES-SHA256SUMS" in release
+    # Rebuilt from the manifest on whatever commit the tag lands on, never taken from other runs.
+    assert 'python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources" --bundles rel' in release
+    assert "cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS" in release
     assert "sha256sum -c SOURCES-SHA256SUMS" in release
+    assert "pattern: sources-*" not in release and "name: SOURCES-SHA256SUMS" not in release
     assert 'src=("hermes-studio-$want-source.tar.gz" "${bundles[@]}" SOURCES-SHA256SUMS)' in release
-    assert '"${src[@]}" > SHA256SUMS.txt' in release and '"${src[@]}" SHA256SUMS.txt' in release
-    assert "mirror-sources.py" not in release  # publish what the sources job verified, nothing rebuilt
+    assert '"${src[@]}" > SHA256SUMS.txt' in release
+    assert 'assets=("Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" SHA256SUMS.txt)' in release
+    assert "release-assets.txt" in release and 'ls -l "${assets[@]}"' in release
+    assert "name: release-assets" in release and "retention-days: 3" in release
+
+
+def test_dry_run_can_never_publish():
+    dispatch = DESKTOP_YML.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert re.search(r"workflow_dispatch:.*\n\s+inputs:\n\s+dry_run:\n(\s+\w+: .*\n)*?\s+type: boolean\n\s+default: true", dispatch)
+    release, publish = _job("release"), _job("publish")
+    # The assembling job holds a read-only token and refuses anything but a tag push or a dry run.
+    assert "permissions:\n      contents: read" in release and "contents: write" not in release
+    assert '[ "$EVENT" = workflow_dispatch ] && [ "$DRY_RUN" = true ]' in release and "exit 1" in release
+    assert "gh release" not in release and "GH_TOKEN" not in release
+    # Only publish creates the release, only on a tag push, with exactly the assembled assets.
+    assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" in publish
+    assert '[ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]]' in publish
+    assert "needs: release" in publish and "name: release-assets" in publish
+    assert "sha256sum -c SHA256SUMS.txt" in publish and "cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS" in publish
+    assert 'mapfile -t assets < release-assets.txt' in publish and '"${assets[@]}"' in publish
+    assert DESKTOP_YML.count("gh release create") == 1 and "gh release create" in publish
+    assert DESKTOP_YML.count("contents: write") == 1
 
 
 @pytest.mark.parametrize("target", ["linux64", "win64"])
