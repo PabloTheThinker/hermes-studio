@@ -10,9 +10,11 @@ One document format, used by both:
            "opacity": 1, "radius": 0, "angle": 0, "flip": false},
           {"type": "text", "text": "Hello", "x": 80, "y": 120, "w": 920, "size": 96, "font": "archivo",
            "weight": 800, "italic": false, "color": "#f2efe8", "align": "left", "line": 1.05,
-           "spacing": 0, "upper": false, "bg": "", "opacity": 1, "angle": 0},
+           "spacing": 0, "upper": false, "bg": "", "opacity": 1, "angle": 0,
+           "effect": {"kind": "shadow", "color": "#000000", "offset": 12, "blur": 16, "dir": 135, "opacity": 0.55}},
           {"type": "rect", "x": 80, "y": 900, "w": 920, "h": 220, "fill": "#ffc83d", "radius": 24,
-           "stroke": "", "stroke_w": 0, "opacity": 1, "angle": 0},
+           "stroke": "", "stroke_w": 0, "opacity": 1, "angle": 0,
+           "shadow": {"color": "#000000", "offset": 14, "blur": 22, "dir": 135, "opacity": 0.5}},
           {"type": "ellipse", ...same as rect...},
           {"type": "line", "x": 80, "y": 600, "w": 920, "h": 0, "stroke": "#ffc83d", "stroke_w": 6}
         ]}
@@ -121,6 +123,37 @@ def _color(v, default: str) -> str:
     return v if COLOR_RE.match(v) else default
 
 
+EFFECTS = ("none", "shadow", "lift", "hollow", "splice", "echo", "glitch", "neon", "outline")
+
+
+def clean_effect(effect) -> dict | None:
+    """A text effect with sane values, or None. One effect at a time, as in Canva."""
+    if not isinstance(effect, dict) or effect.get("kind") not in EFFECTS[1:]:
+        return None
+    return {
+        "kind": effect["kind"],
+        "color": _color(effect.get("color"), "#000000") or "#000000",
+        "offset": _num(effect.get("offset"), 0, 400, 14),
+        "blur": _num(effect.get("blur"), 0, 200, 0),
+        "dir": _num(effect.get("dir"), 0, 360, 135),
+        "opacity": _num(effect.get("opacity"), 0, 1, 0.6),
+        "thickness": _num(effect.get("thickness"), 1, 60, 6),
+    }
+
+
+def clean_shadow(shadow) -> dict | None:
+    """A drop shadow for shapes and photos."""
+    if not isinstance(shadow, dict):
+        return None
+    return {
+        "color": _color(shadow.get("color"), "#000000") or "#000000",
+        "offset": _num(shadow.get("offset"), 0, 400, 14),
+        "blur": _num(shadow.get("blur"), 0, 200, 20),
+        "dir": _num(shadow.get("dir"), 0, 360, 135),
+        "opacity": _num(shadow.get("opacity"), 0, 1, 0.5),
+    }
+
+
 def clean_layer(layer: dict, w: int, h: int) -> dict | None:
     """A layer with only known keys and sane values, or None to drop it."""
     if not isinstance(layer, dict):
@@ -171,6 +204,16 @@ def clean_layer(layer: dict, w: int, h: int) -> dict | None:
         if t == "line":
             out["stroke"] = out["stroke"] or AMBER
             out["stroke_w"] = out["stroke_w"] or 6
+    if t == "text":
+        eff = clean_effect(layer.get("effect"))
+        if eff:
+            out["effect"] = eff
+    elif t in ("rect", "ellipse", "image"):
+        sh = clean_shadow(layer.get("shadow"))
+        if sh:
+            out["shadow"] = sh
+    if layer.get("locked"):
+        out["locked"] = True
     return out
 
 
@@ -502,6 +545,103 @@ def text_height(layer: dict) -> float:
     return n * layer["size"] * layer["line"]
 
 
+def _shadowed(tile, lay: dict):
+    """A layer's drop shadow, with the layer centred on the grown tile."""
+    if not lay.get("shadow"):
+        return tile
+    shadow, pad = _shadow_tile(tile, lay["shadow"])
+    shadow.alpha_composite(tile, (pad, pad))
+    return shadow
+
+
+def _shadow_tile(tile, shadow: dict):
+    """A blurred shadow of the tile's alpha, padded so it can be pasted at the tile's top-left."""
+    from PIL import Image, ImageFilter
+
+    ang = math.radians(shadow["dir"])
+    dx, dy = shadow["offset"] * math.cos(ang), shadow["offset"] * math.sin(ang)
+    blur = shadow["blur"]
+    pad = math.ceil(blur * 2 + abs(dx) + abs(dy)) + 2
+    canvas = Image.new("RGBA", (tile.width + 2 * pad, tile.height + 2 * pad), (0, 0, 0, 0))
+    alpha = tile.getchannel("A").point(lambda v: round(v * shadow["opacity"]))
+    if blur:
+        alpha = alpha.filter(ImageFilter.GaussianBlur(blur))
+    shade = Image.new("RGBA", tile.size, _rgba(shadow["color"]))
+    shade.putalpha(alpha)
+    canvas.alpha_composite(shade, (round(pad + dx), round(pad + dy)))
+    return canvas, pad
+
+
+def _outline(tile, thick: int, color: tuple, *, fill: bool):
+    """Stroke around the tile's alpha, with the original fill kept (outline) or removed (hollow)."""
+    from PIL import Image, ImageFilter
+
+    grown = tile.getchannel("A").filter(ImageFilter.MaxFilter(thick * 2 + 1))
+    out = Image.new("RGBA", tile.size, color)
+    out.putalpha(grown)
+    if fill:
+        out.alpha_composite(tile)
+    return out
+
+
+def _stamped(tile, copies: list[tuple]):
+    """Copies of the tile behind it at (dx, dy, opacity), for echo and splice."""
+    from PIL import Image
+
+    pad = math.ceil(max(abs(dx) for dx, _, _ in copies) + max(abs(dy) for _, dy, _ in copies)) + 2
+    canvas = Image.new("RGBA", (tile.width + 2 * pad, tile.height + 2 * pad), (0, 0, 0, 0))
+    for dx, dy, op in copies:
+        canvas.alpha_composite(_with_opacity(tile.copy(), op), (round(pad + dx), round(pad + dy)))
+    canvas.alpha_composite(tile, (pad, pad))
+    return canvas
+
+
+def _apply_text_effect(tile, lay: dict):
+    """Canva's text effects: shadow, lift, hollow, outline, splice, echo, glitch, neon."""
+    from PIL import Image, ImageFilter
+
+    eff = lay.get("effect")
+    if not eff:
+        return tile
+    kind = eff["kind"]
+    ang = math.radians(eff["dir"])
+    dx, dy = eff["offset"] * math.cos(ang), eff["offset"] * math.sin(ang)
+    if kind in ("shadow", "lift"):
+        spec = eff
+        if kind == "lift":  # Canva's one-click soft lift: blur only, no offset
+            spec = {**eff, "offset": 0, "blur": max(eff["blur"], lay["size"] * 0.18),
+                    "opacity": 0.35 + eff["opacity"] * 0.45}
+        shadow, pad = _shadow_tile(tile, spec)
+        shadow.alpha_composite(tile, (pad, pad))
+        return shadow
+    if kind == "neon":
+        glow = tile.getchannel("A").filter(ImageFilter.GaussianBlur(max(2, eff["blur"] or lay["size"] * 0.14)))
+        glow = glow.point(lambda v: min(255, round(v * (0.6 + eff["opacity"]))))
+        canvas = Image.new("RGBA", tile.size, (0, 0, 0, 0))
+        g = Image.new("RGBA", tile.size, _rgba(lay["color"]))  # neon glows in the text's own colour
+        g.putalpha(glow)
+        canvas.alpha_composite(g)
+        canvas.alpha_composite(tile)
+        return canvas
+    if kind in ("hollow", "outline"):
+        return _outline(tile, max(1, round(eff["thickness"])), _rgba(eff["color"]), fill=kind == "outline")
+    if kind == "echo":
+        return _stamped(tile, [(2 * dx, 2 * dy, 0.25), (dx, dy, 0.5)])
+    if kind == "splice":
+        return _stamped(_outline(tile, max(1, round(eff["thickness"])), _rgba(lay["color"]), fill=False),
+                        [(dx, dy, eff["opacity"])])
+    if kind == "glitch":
+        _r, _g, _b, a = tile.split()
+        canvas = Image.new("RGBA", tile.size, (0, 0, 0, 0))
+        for col, ox in ((_rgba("#00f0ff"), -dx), (_rgba("#ff2d6a"), dx)):
+            layer = Image.new("RGBA", tile.size, col)
+            layer.putalpha(a)
+            canvas.alpha_composite(layer.crop((max(0, round(-ox)), 0, tile.width, tile.height)), (max(0, round(ox)), 0))
+        canvas.alpha_composite(tile)
+        return canvas
+    return tile
+
+
 def _paste_rotated(base, tile, x: float, y: float, angle: float) -> None:
     """Paste RGBA tile with its top-left at (x, y), rotated about its centre."""
     from PIL import Image
@@ -553,7 +693,9 @@ def _draw_image(base, d: Path, lay: dict) -> None:
         tile = ImageOps.fit(src, (w, h), Image.Resampling.LANCZOS)
     if lay.get("radius"):
         tile.putalpha(ImageChops.multiply(tile.getchannel("A"), _rounded_mask(w, h, lay["radius"])))
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]), lay["x"], lay["y"], lay["angle"])
+    tile = _shadowed(tile, lay)
+    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
 
 
 def _draw_shape(base, lay: dict) -> None:
@@ -576,7 +718,9 @@ def _draw_shape(base, lay: dict) -> None:
     else:
         dr.rounded_rectangle(box, radius=min(lay.get("radius", 0), min(w, h) / 2), fill=fill, outline=outline,
                              width=round(sw))
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]), lay["x"], lay["y"], lay["angle"])
+    tile = _shadowed(tile, lay)
+    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
 
 
 def _draw_text(base, lay: dict) -> None:
@@ -607,7 +751,10 @@ def _draw_text(base, lay: dict) -> None:
             dr.text((x, y), line, font=font, fill=color)
     if lay.get("italic") and lay["font"] not in ("playfair", "caveat"):
         tile = tile.transform(tile.size, Image.Transform.AFFINE, (1, 0.2, -0.2 * h / 2, 0, 1, 0), Image.Resampling.BICUBIC)
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]), lay["x"] - pad, lay["y"] - pad, lay["angle"])
+    tile = _apply_text_effect(tile, lay)
+    # Effects grow the tile; keep the original text box centred inside the grown tile.
+    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
 
 
 def render_page(doc: dict, d: Path, index: int):

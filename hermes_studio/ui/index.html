@@ -322,6 +322,14 @@
     .ed-sw.sm button { width: 20px; height: 20px; } .ed-sw button.none { background: transparent; color: var(--dim); font-size: .7rem; line-height: 1; }
     .ed-sw-add { display: grid; place-items: center; color: var(--mute); position: relative; overflow: hidden; } .ed-sw-add input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .ed-crow { display: flex; align-items: center; gap: .5rem; } .ed-crow input[type=color] { width: 34px; height: 28px; padding: 0; border: 1px solid var(--line-2); border-radius: 6px; background: none; flex: none; }
+    .ed-selbar { position: absolute; top: .7rem; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: .35rem; background: rgba(11,11,12,.94); border: 1px solid var(--line-2); border-radius: 10px; padding: .35rem .5rem; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+    .ed-selbar[hidden] { display: none; }
+    .ed-selbar select { width: auto; padding: .25rem .4rem; font-size: .8rem; }
+    .ed-layer { display: flex; align-items: center; gap: .4rem; padding: .4rem .5rem; border-radius: 6px; cursor: pointer; }
+    .ed-layer:hover, .ed-layer.on { background: rgba(255,200,61,.08); }
+    .ed-layer span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; }
+    .ed-layer button { background: none; border: 0; color: var(--mute); cursor: pointer; font-size: .85rem; padding: .1rem .25rem; }
+    .ed-tabs button { font-size: .68rem; }
     .ed-stage { grid-row: 2; position: relative; display: grid; place-items: center; overflow: auto; background: #050505 radial-gradient(rgba(242,239,232,.05) 1px, transparent 1px) 0 0 / 22px 22px; }
     .ed-stage.drop { outline: 2px dashed var(--amber); outline-offset: -10px; }
     .ed-canvas-wrap { box-shadow: 0 0 0 1px var(--line), 0 18px 60px rgba(0,0,0,.6); }

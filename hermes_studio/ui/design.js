@@ -96,10 +96,10 @@
         <button class="btn primary sm" id="ed-export">Export</button>
       </header>
       <nav class="ed-tabs" id="ed-tabs">
-        ${[["templates", "Templates"], ["text", "Text"], ["photos", "Photos"], ["shapes", "Shapes"], ["brand", "Brand"]].map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join("")}
+        ${[["templates", "Templates"], ["text", "Text"], ["photos", "Photos"], ["shapes", "Shapes"], ["layers", "Layers"], ["brand", "Brand"]].map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join("")}
       </nav>
       <section class="ed-panel" id="ed-panel"></section>
-      <div class="ed-stage" id="ed-stage"><div class="ed-canvas-wrap" id="ed-wrap"><canvas id="ed-canvas"></canvas></div>
+      <div class="ed-selbar" id="ed-selbar" hidden></div><div class="ed-stage" id="ed-stage"><div class="ed-canvas-wrap" id="ed-wrap"><canvas id="ed-canvas"></canvas></div>
         <div class="ed-busy" id="ed-busy" hidden></div>
         <div class="ed-zoom mono"><button class="btn sm" id="ed-zout">−</button><span id="ed-zv"></span><button class="btn sm" id="ed-zin">+</button><button class="btn sm" id="ed-zfit">Fit</button></div></div>
       <aside class="ed-props" id="ed-props"></aside>
@@ -167,13 +167,13 @@
         left: L.x, top: L.y, width: L.w, fontSize: L.size, fontFamily: fam(L.font), fontWeight: L.weight, fontStyle: L.italic ? "italic" : "normal",
         fill: L.color, textAlign: L.align, lineHeight: L.line, charSpacing: L.spacing, backgroundColor: L.bg || "", splitByGrapheme: false,
       }));
-      o.hs = { type: "text", font: L.font, upper: !!L.upper };
+      o.hs = { type: "text", font: L.font, upper: !!L.upper, effect: L.effect || null };
     } else if (L.type === "rect") {
       o = new f.Rect(Object.assign({}, base, { left: L.x, top: L.y, width: L.w, height: L.h, fill: L.fill || "transparent", stroke: L.stroke || null, strokeWidth: L.stroke_w || 0, rx: L.radius || 0, ry: L.radius || 0, strokeUniform: true }));
-      o.hs = { type: "rect" };
+      o.hs = { type: "rect", shadow: L.shadow || null };
     } else if (L.type === "ellipse") {
       o = new f.Ellipse(Object.assign({}, base, { left: L.x, top: L.y, rx: L.w / 2, ry: L.h / 2, fill: L.fill || "transparent", stroke: L.stroke || null, strokeWidth: L.stroke_w || 0, strokeUniform: true }));
-      o.hs = { type: "ellipse" };
+      o.hs = { type: "ellipse", shadow: L.shadow || null };
     } else if (L.type === "line") {
       const t = L.stroke_w || 6;
       o = new f.Rect(Object.assign({}, base, { left: L.x, top: L.y - t / 2, width: L.w, height: t, fill: L.stroke || "#ffc83d" }));
@@ -181,7 +181,7 @@
       o.setControlsVisibility({ mt: false, mb: false });
     } else if (L.type === "image") {
       o = await f.FabricImage.fromURL(assetUrl(L.src));
-      o.hs = { type: "image", src: L.src, radius: L.radius || 0, fit: L.fit || "cover" };
+      o.hs = { type: "image", src: L.src, radius: L.radius || 0, fit: L.fit || "cover", shadow: L.shadow || null };
       o.set(Object.assign({}, base, { left: L.x, top: L.y, flipX: !!L.flip }));
       if (L.fit === "contain") {
         const el = o.getElement(), s = Math.min(L.w / (el.naturalWidth || el.width), L.h / (el.naturalHeight || el.height));
@@ -189,9 +189,29 @@
       } else cover(o, L.w, L.h);
     } else return null;
     if (L.name) o.hs.name = L.name;
+    if (L.locked) o.set({ lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true, hasControls: false });
+    if (L.group) o.hs.group = L.group;
     if (L.angle) o.rotate(L.angle);
+    paintEffect(o);
     return o;
   }
+
+  function paintEffect(o) {
+    if (!o || !o.hs || o.hs.type !== "text") return;
+    const e = o.hs.effect;
+    o.set("shadow", null); o.set("stroke", null); o.set("strokeWidth", 0);
+    o.filters = [];
+    if (!e) { o.dirty = true; return; }
+    const ang = e.dir * Math.PI / 180, dx = Math.cos(ang) * e.offset, dy = Math.sin(ang) * e.offset;
+    if (e.kind === "shadow") o.set("shadow", new (F()).Shadow({ color: hexA(e.color, e.opacity), blur: e.blur, offsetX: dx, offsetY: dy }));
+    else if (e.kind === "lift") o.set("shadow", new (F()).Shadow({ color: "rgba(0,0,0,.55)", blur: Math.max(e.blur, o.fontSize * .2), offsetX: 0, offsetY: 0 }));
+    else if (e.kind === "hollow") o.set({ fill: "transparent", stroke: e.color, strokeWidth: e.thickness });
+    else if (e.kind === "outline") o.set({ stroke: e.color, strokeWidth: e.thickness });
+    else if (e.kind === "neon") o.set("shadow", new (F()).Shadow({ color: hexA(o.fill || "#ffffff", .95), blur: Math.max(14, o.fontSize * .2), offsetX: 0, offsetY: 0 }));
+    else if (e.kind === "echo" || e.kind === "splice" || e.kind === "glitch") o.set("shadow", new (F()).Shadow({ color: e.kind === "glitch" ? "rgba(255,45,106,.8)" : hexA(e.color, .5), blur: e.kind === "glitch" ? 0 : 2, offsetX: dx || 8, offsetY: e.kind === "glitch" ? 0 : dy }));
+    o.dirty = true;
+  }
+  const hexA = (c, a) => { const h = String(c || "#000").replace("#", ""); const n = parseInt(h.length === 3 ? h.replace(/./g, x => x + x) : h, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`; };
 
   function layerFrom(o) {
     const c = o.getCenterPoint(), w = o.width * o.scaleX, h = o.height * o.scaleY;
@@ -201,14 +221,19 @@
     if (t === "text") {
       Object.assign(L, { type: "text", text: o.text, size: +(o.fontSize * o.scaleY).toFixed(2), font: o.hs.font, weight: +o.fontWeight || 400, italic: o.fontStyle === "italic",
         color: o.fill, align: o.textAlign, line: o.lineHeight, spacing: o.charSpacing || 0, upper: !!o.hs.upper, bg: o.backgroundColor || "" });
+      if (o.hs.effect) L.effect = o.hs.effect;
     } else if (t === "rect" || t === "ellipse") {
       Object.assign(L, { type: t, h, fill: o.fill === "transparent" ? "" : o.fill, stroke: o.stroke || "", stroke_w: o.strokeWidth || 0, radius: t === "rect" ? (o.rx || 0) : 0 });
+      if (o.hs.shadow) L.shadow = o.hs.shadow;
     } else if (t === "line") {
       Object.assign(L, { type: "line", y: c.y, h: 0, stroke: o.fill, stroke_w: h });
     } else if (t === "image") {
       Object.assign(L, { type: "image", src: o.hs.src, h, fit: o.hs.fit === "contain" ? "contain" : "cover", radius: o.hs.radius || 0, flip: !!o.flipX });
+      if (o.hs.shadow) L.shadow = o.hs.shadow;
       if (L.fit === "contain") L.fit = "cover"; // contain is baked into the box on first edit
     } else return null;
+    if (o.lockMovementX) L.locked = true;
+    if (o.hs.group) L.group = o.hs.group;
     for (const k of ["x", "y", "w", "h"]) if (typeof L[k] === "number") L[k] = +L[k].toFixed(2);
     return L;
   }
@@ -322,7 +347,7 @@
     c.on("object:modified", (e) => { if (e.target) { (e.target.type === "activeselection" ? e.target.getObjects() : [e.target]).forEach(bake); } c.requestRenderAll(); commit(); drawProps(); });
     c.on("text:editing:exited", () => commit());
     c.on("text:changed", () => { S.dirty = true; });
-    ["selection:created", "selection:updated", "selection:cleared"].forEach(ev => c.on(ev, () => drawProps()));
+    ["selection:created", "selection:updated", "selection:cleared"].forEach(ev => c.on(ev, () => { drawProps(); selectionBar(); }));
     c.on("object:moving", (e) => {
       const o = e.target, ctr = o.getCenterPoint(), W = S.doc.w, H = S.doc.h, thr = 8 / S.zoom;
       let x = ctr.x, y = ctr.y;
@@ -538,6 +563,18 @@
           busy();
         });
       } catch { const box = S && $("#ed-clipimgs"); if (box) box.innerHTML = `<p class="hint">Library not available.</p>`; }
+    } else if (tab === "layers") {
+      const objs = S.canvas.getObjects().slice().reverse();
+      P.innerHTML = `<p class="ed-h">Layers</p><p class="hint">Top of the list is in front. Click to select, eye to hide, lock to freeze.</p><div class="ed-layers">${objs.map((o, i) => {
+        const name = esc((o.hs && o.hs.name) || { text: (o.text || "Text").slice(0, 22), rect: "Shape", ellipse: "Shape", line: "Line", image: "Photo" }[o.hs && o.hs.type] || "Layer");
+        return `<div class="ed-layer ${o === S.canvas.getActiveObject() ? "on" : ""}" data-li="${i}"><span>${name}</span><button data-leye="${i}" title="Hide">${o.visible === false ? "◌" : "◉"}</button><button data-llock="${i}" title="Lock">${o.lockMovementX ? "🔒" : "🔓"}</button></div>`;
+      }).join("") || `<p class="hint">Nothing on this page yet.</p>`}</div>`;
+      P.querySelectorAll("[data-li]").forEach(el => el.onclick = (e) => {
+        if (e.target.dataset.leye != null || e.target.dataset.llock != null) return;
+        const o = objs[+el.dataset.li]; S.canvas.setActiveObject(o); S.canvas.requestRenderAll();
+      });
+      P.querySelectorAll("[data-leye]").forEach(b => b.onclick = () => { const o = objs[+b.dataset.leye]; o.visible = o.visible === false; S.canvas.requestRenderAll(); commit(); drawTab("layers"); });
+      P.querySelectorAll("[data-llock]").forEach(b => b.onclick = () => { const o = objs[+b.dataset.llock]; const on = !o.lockMovementX; o.set({ lockMovementX: on, lockMovementY: on, hasControls: !on }); commit(); drawTab("layers"); });
     } else if (tab === "brand") {
       const kit = brandKit();
       P.innerHTML = `<p class="ed-h">Brand kit</p><p class="hint">Saved on this computer. Click a colour to apply it to the selection, or to the page if nothing is selected.</p>
@@ -583,6 +620,106 @@
   }
   const num = (label, key, val, min, max, step) => `<label class="f">${esc(label)} <span class="mono" data-show="${esc(key)}">${n0(val)}</span></label><input type="range" data-k="${esc(key)}" data-num="1" min="${n0(min)}" max="${n0(max)}" step="${n0(step)}" value="${n0(val)}">`;
 
+  const EFFECTS = ["none", "shadow", "lift", "hollow", "outline", "splice", "echo", "glitch", "neon"];
+  function effectSpec(kind, prev) {
+    const base = Object.assign({ kind, color: "#000000", offset: 14, blur: 10, dir: 135, opacity: 0.6, thickness: 5 }, prev || {});
+    base.kind = kind;
+    if (kind === "neon" || kind === "glitch") base.color = "#ffffff";
+    return base;
+  }
+  function selectionBar() {
+    const sel = selected();
+    const bar = $("#ed-selbar");
+    if (!bar) return;
+    if (!sel.length) { bar.hidden = true; return; }
+    const o = sel.length === 1 ? sel[0] : null, t = o && o.hs.type;
+    const btn = (act, label) => `<button class="btn sm" data-bar="${act}">${label}</button>`;
+    let h = btn("dup", "Duplicate") + btn("del", "Delete");
+    h += btn("lock", sel.every(x => x.lockMovementX) ? "Unlock" : "Lock");
+    if (sel.length > 1) h += btn("group", "Group");
+    if (sel.length === 1 && o.hs.group) h += btn("ungroup", "Ungroup");
+    h += `<span class="ed-sep"></span>` + btn("front", "Front") + btn("back", "Back");
+    if (t === "text") {
+      const eff = (o.hs.effect && o.hs.effect.kind) || "none";
+      h += `<span class="ed-sep"></span><select data-bar="effect">${EFFECTS.map(k => `<option value="${esc(k)}" ${k === eff ? "selected" : ""}>${esc(k[0].toUpperCase()+k.slice(1))}</option>`).join("")}</select>`;
+    }
+    if (t === "image") h += `<span class="ed-sep"></span>` + btn("flip", "Flip") + btn("crop", "Crop");
+    bar.innerHTML = h;
+    bar.hidden = false;
+    bar.querySelectorAll("[data-bar]").forEach(b => { if (b.tagName === "SELECT") b.onchange = () => barAct(b); else b.onclick = () => barAct(b); });
+  }
+  function alignSel(how) {
+    const sel = selected(); if (!sel.length) return;
+    const W = S.doc.w, H = S.doc.h;
+    const box = (o) => ({ x: o.left, y: o.top, w: o.getScaledWidth(), h: o.getScaledHeight() });
+    if (how === "dist-h" || how === "dist-v") {
+      const sorted = sel.slice().sort((a, b) => how === "dist-h" ? a.left - b.left : a.top - b.top);
+      const first = box(sorted[0]), last = box(sorted[sorted.length - 1]);
+      const span = how === "dist-h" ? (last.x + last.w) - first.x : (last.y + last.h) - first.y;
+      const used = sorted.reduce((n, o) => n + (how === "dist-h" ? box(o).w : box(o).h), 0);
+      const gap = (span - used) / (sorted.length - 1);
+      let cursor = how === "dist-h" ? first.x : first.y;
+      sorted.forEach(o => { const b = box(o); if (how === "dist-h") { o.set("left", cursor); cursor += b.w + gap; } else { o.set("top", cursor); cursor += b.h + gap; } o.setCoords(); });
+    } else sel.forEach(o => {
+      const b = box(o);
+      const set = { left: o.left - b.w / 2, "center-h": (W - b.w) / 2, right: W - b.w, top: o.top - b.h / 2, "center-v": (H - b.h) / 2, bottom: H - b.h };
+      if (how in { left: 1, "center-h": 1, right: 1 }) o.set("left", set[how]);
+      else o.set("top", set[how]);
+      o.setCoords();
+    });
+    S.canvas.requestRenderAll(); commit();
+  }
+  function barAct(b) {
+    const act = b.dataset.bar, sel = selected();
+    if (act === "effect") {
+      const o = sel[0];
+      o.hs.effect = b.value === "none" ? null : effectSpec(b.value, o.hs.effect);
+      paintEffect(o); S.canvas.requestRenderAll(); commit(); drawProps(); return;
+    }
+    if (act === "lock") { sel.forEach(o => { const on = !o.lockMovementX; o.set({ lockMovementX: on, lockMovementY: on, lockScalingX: on, lockScalingY: on, lockRotation: on, hasControls: !on }); }); commit(); selectionBar(); return; }
+    if (act === "group") { const id = "g" + Math.random().toString(36).slice(2, 8); sel.forEach(o => { o.hs.group = id; }); commit(); selectionBar(); return; }
+    if (act === "ungroup") { const id = sel[0].hs.group; S.canvas.getObjects().filter(o => o.hs && o.hs.group === id).forEach(o => { delete o.hs.group; }); commit(); selectionBar(); return; }
+    if (act === "flip") { sel[0].set("flipX", !sel[0].flipX); S.canvas.requestRenderAll(); commit(); return; }
+    if (act === "crop") { cropStart(sel[0]); return; }
+    if (act === "front") sel.forEach(o => S.canvas.bringObjectToFront(o));
+    else if (act === "back") sel.forEach(o => S.canvas.sendObjectToBack(o));
+    else if (act === "dup") { duplicateSel(); return; }
+    else if (act === "del") { sel.forEach(o => S.canvas.remove(o)); S.canvas.discardActiveObject(); }
+    S.canvas.requestRenderAll(); commit(); selectionBar(); drawProps();
+  }
+  function duplicateSel() {
+    const sel = selected();
+    sel.forEach(o => o.clone().then(c => { c.hs = JSON.parse(JSON.stringify(o.hs)); c.set({ left: o.left + 24, top: o.top + 24 }); S.canvas.add(c); }));
+    setTimeout(() => { S.canvas.requestRenderAll(); commit(); }, 60);
+  }
+  let _crop = null;
+  function cropStart(o) {
+    if (_crop) return;
+    const r = o.getBoundingRect();
+    _crop = new (F()).Rect({ left: r.left + 20, top: r.top + 20, width: r.width - 40, height: r.height - 40, fill: "rgba(255,200,61,.15)", stroke: "#ffc83d", strokeWidth: 2, strokeDashArray: [6, 4] });
+    _crop.hs = { type: "crop", target: o };
+    S.canvas.add(_crop); S.canvas.setActiveObject(_crop);
+    $("#ed-selbar").innerHTML = `<span class="hint">Drag the frame, then</span> <button class="btn sm" id="ed-crop-apply">Apply crop</button> <button class="btn sm" id="ed-crop-cancel">Cancel</button>`;
+    $("#ed-crop-apply").onclick = () => cropApply();
+    $("#ed-crop-cancel").onclick = () => { S.canvas.remove(_crop); _crop = null; S.canvas.requestRenderAll(); selectionBar(); };
+  }
+  async function cropApply() {
+    const frame = _crop, o = frame.hs.target; _crop = null;
+    const el = o.getElement();
+    const sx = (frame.left - o.left) / o.scaleX, sy = (frame.top - o.top) / o.scaleY;
+    const sw = frame.getScaledWidth() / o.scaleX, sh = frame.getScaledHeight() / o.scaleY;
+    const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(sw)); c.height = Math.max(1, Math.round(sh));
+    c.getContext("2d").drawImage(el, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    S.canvas.remove(frame);
+    const blob = await new Promise(r => c.toBlob(r, "image/png"));
+    const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result.split(",")[1]); fr.readAsDataURL(blob); });
+    const res = await call(`/api/design/${S.id}/asset`, { data, name: "crop" });
+    o.hs.src = res.src; o.setElement(await imgEl(assetUrl(res.src)));
+    o.set({ left: frame.left, top: frame.top, scaleX: 1, scaleY: 1 });
+    S.canvas.requestRenderAll(); commit(); selectionBar();
+  }
+  function imgEl(url) { return new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = url; }); }
+
   function drawProps() {
     if (!S) return;
     const P = $("#ed-props"), sel = selected(), o = sel.length === 1 ? sel[0] : null;
@@ -592,7 +729,7 @@
         <p class="ed-h">Shortcuts</p><p class="hint mono">T text · Del delete · ⌘/Ctrl D duplicate · ⌘/Ctrl Z undo · arrows nudge (Shift ×10) · double-click to type</p>`;
     } else if (!o) {
       P.innerHTML = `<p class="ed-h">${n0(sel.length)} selected</p><div class="ed-btns"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm" data-act="del">Delete</button></div>
-        ${colorRow("Colour", "fill", "")}<p class="ed-h">Align to page</p>${alignBtns()}`;
+        ${colorRow("Colour", "fill", "")}<p class="ed-h">Align to page</p>${alignBtns()}<p class="ed-h">Distribute</p><div class="ed-btns"><button class="btn sm" data-align="dist-h">Horizontal</button><button class="btn sm" data-align="dist-v">Vertical</button></div>`;
     } else {
       const t = o.hs.type;
       let h = `<p class="ed-h">${{ text: "Text", rect: "Shape", ellipse: "Shape", line: "Line", image: "Photo" }[t]}</p>`;
@@ -620,7 +757,7 @@
       }
       h += num("Opacity", "opacity", (+o.opacity).toFixed(2), 0, 1, .02);
       h += `<p class="ed-h">Arrange</p><div class="ed-btns"><button class="btn sm" data-arr="front">Front</button><button class="btn sm" data-arr="up">Forward</button><button class="btn sm" data-arr="down">Backward</button><button class="btn sm" data-arr="back">Back</button></div>
-        <p class="ed-h">Align to page</p>${alignBtns()}
+        <p class="ed-h">Align to page</p>${alignBtns()}<p class="ed-h">Distribute</p><div class="ed-btns"><button class="btn sm" data-align="dist-h">Horizontal</button><button class="btn sm" data-align="dist-v">Vertical</button></div>
         <div class="ed-btns" style="margin-top:.8rem"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm" data-act="del">Delete</button></div>`;
       P.innerHTML = h;
     }
@@ -632,6 +769,7 @@
     P.querySelectorAll("[data-act]").forEach(b => b.onclick = () => ({ dup: duplicateSel, del: removeSel, fill: fillPage })[b.dataset.act]());
     P.querySelectorAll("[data-arr]").forEach(b => b.onclick = () => arrange(b.dataset.arr));
     P.querySelectorAll("[data-al]").forEach(b => b.onclick = () => align(b.dataset.al));
+    P.querySelectorAll("[data-align]").forEach(b => b.onclick = () => alignSel(b.dataset.align));
     P.querySelectorAll("[data-photo]").forEach(b => b.onclick = () => photoOp(b.dataset.photo, b.dataset.look));
     const apply = (key, raw, live) => {
       if (key === "bg") { S.canvas.backgroundColor = raw || "#0b0b0c"; S.canvas.requestRenderAll(); if (!live) { commit(); drawProps(); } return; }
@@ -727,5 +865,5 @@
 
   function busy(msg) { const b = S && $("#ed-busy"); if (!b) return; b.hidden = !msg; b.textContent = msg || ""; }
 
-  window.HSDesign = { home, open, leave };
+  window.HSDesign = { home, open, leave, canvas: () => (typeof S !== "undefined" && S ? S.canvas : null) };
 })();
