@@ -5,7 +5,12 @@ name: desktop
 # The tested installers are uploaded as artifacts; releases are cut from them.
 # Actions are pinned to commit SHAs so a hijacked tag can't run code here.
 on:
-  workflow_dispatch:
+  workflow_dispatch:      # manual: build and test; the release job runs as a dry run (never publishes)
+    inputs:
+      dry_run:
+        description: "Assemble every release asset but do not publish (a manual run can never publish)"
+        type: boolean
+        default: true
   push:
     tags: ["v*"]          # a version tag builds, tests, then publishes the release
   pull_request:          # every PR; the `changes` job decides whether the app is rebuilt
@@ -16,6 +21,7 @@ concurrency:
   cancel-in-progress: true
 env:
   # BtbN static FFmpeg (GPL, includes libass). Pinned by release and sha256.
+  # NOTICE names this exact build; tests/test_notices.py fails if these change without it.
   FFMPEG_WIN_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
   FFMPEG_WIN_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
   FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
@@ -28,6 +34,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       app: ${{ steps.diff.outputs.app }}
+      sources: ${{ steps.diff.outputs.sources }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,14 +46,111 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [ "$EVENT" != "pull_request" ]; then echo "app=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "$EVENT" != "pull_request" ]; then printf 'app=true\nsources=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           files=$(git diff --name-only "$BASE" "$HEAD")
           echo "$files"
-          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|\.github/workflows/desktop\.yml$)'; then
+          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|check-appimage-|electron-builder-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|\.github/workflows/desktop\.yml$)'; then
             echo "app=true" >> "$GITHUB_OUTPUT"
           else
             echo "app=false" >> "$GITHUB_OUTPUT"
           fi
+          if echo "$files" | grep -qE '^(packaging/|scripts/mirror-sources\.py$|NOTICE$|\.github/workflows/desktop\.yml$)'; then
+            echo "sources=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sources=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The third-party source archives every release attaches (NOTICE, packaging/third-party-sources.txt):
+  # the list must match the pins at the BtbN, pyav-ffmpeg and opencv-python tags and in Electron's DEPS,
+  # every archive must rebuild to its recorded sha256, and the bundles must rebuild to packaging/SOURCES-SHA256SUMS.
+  # The bundles are uploaded as run artifacts (one per bundle, plus SOURCES-SHA256SUMS) so they can be
+  # checked before a tag; on a tag the release job attaches these exact files.
+  sources:
+    needs: changes
+    if: needs.changes.outputs.sources == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The list matches the pinned build scripts
+        run: |
+          set -euo pipefail
+          m=packaging/third-party-sources.txt
+          pin() { grep -m1 "^# $1: " "$m" | cut -d' ' -f3; }
+          btbn="$(pin btbn-tag)"; pyav_tag="$(pin pyav-ffmpeg-tag)"
+          mkdir -p /tmp/pins
+          curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/archive/refs/tags/$btbn.tar.gz" | tar -xz -C /tmp/pins
+          curl -fsSL "https://github.com/PyAV-Org/pyav-ffmpeg/archive/refs/tags/$pyav_tag.tar.gz" | tar -xz -C /tmp/pins
+          python3 packaging/resolve-third-party-sources.py "/tmp/pins/FFmpeg-Builds-$btbn" "$btbn" "$(pin ffmpeg-commit)" \
+            "/tmp/pins/pyav-ffmpeg-$pyav_tag" "$pyav_tag" "$(pin av)" "$(pin opencv-python-headless)" "$(pin electron)" \
+            | cut -f1-4,7- > /tmp/pins/want.txt
+          grep -v '^#' "$m" | cut -f1-4,7- > /tmp/pins/have.txt
+          diff /tmp/pins/want.txt /tmp/pins/have.txt
+      - name: Every archive rebuilds to its sha256, and the bundles to SOURCES-SHA256SUMS
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q subversion >/dev/null
+          python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources" --bundles "$RUNNER_TEMP/bundles"
+          rm -rf "$RUNNER_TEMP/sources"
+          ls -l "$RUNNER_TEMP/bundles"
+          cat "$RUNNER_TEMP/bundles/SOURCES-SHA256SUMS"
+      - name: Bundle sources-common.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-common
+          path: ${{ runner.temp }}/bundles/sources-common.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg-linux64.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg-linux64
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg-linux64.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-ffmpeg-win64.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-ffmpeg-win64
+          path: ${{ runner.temp }}/bundles/sources-ffmpeg-win64.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-opencv.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-opencv
+          path: ${{ runner.temp }}/bundles/sources-opencv.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: Bundle sources-pyav.tar
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sources-pyav
+          path: ${{ runner.temp }}/bundles/sources-pyav.tar
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+      - name: SOURCES-SHA256SUMS
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: SOURCES-SHA256SUMS
+          path: ${{ runner.temp }}/bundles/SOURCES-SHA256SUMS
+          retention-days: 3
+          if-no-files-found: error
 
   linux:
     needs: changes
@@ -74,12 +178,24 @@ jobs:
           npm ci --no-fund --no-audit
           npx electron-builder --linux AppImage --publish never
           ls -lh dist/*.AppImage
+      - name: Notices inside the AppImage (byte-identical to the repo)
+        run: |
+          set -euo pipefail
+          app="$(ls dist/Hermes-Studio-*.AppImage)"
+          (mkdir -p x && cd x && "../$app" --appimage-extract >/dev/null)
+          for f in NOTICE LICENSE licenses/*; do
+            for dir in resources resources/engine; do
+              cmp "$f" "x/squashfs-root/$dir/$f"
+            done
+          done
+          x/squashfs-root/resources/engine/bin/ffmpeg -hide_banner -version | head -1
+          rm -rf x
       - name: Clean-machine test (fresh ubuntu:24.04, open, captions + clip job, quit)
         run: |
           mkdir -p work/out
           cp dist/Hermes-Studio-*.AppImage work/HermesStudio.AppImage
           cp site/assets/demo-src.mp4 work/sample.mp4
-          cp scripts/clean-test-linux.sh work/
+          cp scripts/clean-test-linux.sh scripts/check-appimage-libs.sh work/
           docker run --rm -v "$PWD/work:/work" ubuntu:24.04 bash /work/clean-test-linux.sh 2>&1 \
             | grep -vE "^(debconf|dpkg)" | tee work/out/test.log
           grep -q "LINUX CLEAN TEST PASSED" work/out/test.log
@@ -133,6 +249,24 @@ jobs:
           npm ci --no-fund --no-audit
           npx electron-builder --win nsis --publish never
           Get-ChildItem dist -Filter *.exe | Format-Table Name, Length
+      - name: Notices inside the installer (7z, byte-identical to the repo)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist -Filter "Hermes-Studio-Setup-*.exe" | Select-Object -First 1).FullName
+          7z x -y "-ox\setup" $setup | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z could not open the installer" }
+          7z x -y "-ox\app" 'x\setup\$PLUGINSDIR\app-64.7z' | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "7z could not open app-64.7z" }
+          $files = @("NOTICE", "LICENSE") + (Get-ChildItem licenses -File | ForEach-Object { "licenses\$($_.Name)" })
+          foreach ($f in $files) {
+            foreach ($dir in "resources", "resources\engine") {
+              $want = (Get-FileHash $f).Hash
+              $got = (Get-FileHash "x\app\$dir\$f").Hash
+              if ($want -ne $got) { throw "$dir\$f differs from the repo copy" }
+            }
+          }
+          & x\app\resources\engine\bin\ffmpeg.exe -hide_banner -version | Select-Object -First 1
+          Remove-Item -Recurse -Force x
       - name: Clean-machine test (install, open, clip, screenshots, quit)
         shell: pwsh
         run: |
@@ -184,16 +318,35 @@ jobs:
           name: windows-installer
           path: dist/Hermes-Studio-Setup-*.exe
           retention-days: 14
-  # On a version tag only: publish the exact installers the two clean-machine
-  # jobs above just tested, with their checksums. Nothing is rebuilt here.
+  # Assembles every release asset: the tested installers, the source tarball, the third-party
+  # source bundles (rebuilt here from packaging/third-party-sources.txt and verified against the
+  # committed packaging/SOURCES-SHA256SUMS, so it works on whatever commit a tag lands on and never
+  # depends on artifacts of other runs), SHA256SUMS.txt and the asset list. Runs on a version tag
+  # (then `publish` attaches the assets) and on workflow_dispatch as a dry run. This job only has a
+  # read-only token: it cannot publish anything.
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [linux, windows, sources]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
     steps:
+      - name: Publish only from a version tag push; manual runs are dry runs
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]]; then
+            echo "Tag push: assets will be published by the publish job."
+          elif [ "$EVENT" = workflow_dispatch ] && [ "$DRY_RUN" = true ]; then
+            echo "Dry run: assembling every release asset; nothing will be published."
+          else
+            echo "::error::Only a version tag push publishes. Run workflow_dispatch with dry_run=true."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -207,21 +360,113 @@ jobs:
         with:
           name: windows-installer
           path: rel
-      - name: Publish the release
+      - name: Rebuild the third-party source bundles and verify them against the committed sums
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q subversion >/dev/null
+          # Fails on any archive sha256/size mismatch, or if a bundle differs from packaging/SOURCES-SHA256SUMS.
+          python3 scripts/mirror-sources.py --out "$RUNNER_TEMP/sources" --bundles rel
+          rm -rf "$RUNNER_TEMP/sources"
+          cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS
+          (cd rel && sha256sum -c SOURCES-SHA256SUMS)
+      - name: Assemble the release assets
         env:
-          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           want="$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)"
-          [ "v$want" = "$TAG" ] || { echo "tag $TAG does not match pyproject version $want"; exit 1; }
+          if [ "$EVENT" = push ]; then
+            [ "v$want" = "$TAG" ] || { echo "tag $TAG does not match pyproject version $want"; exit 1; }
+          fi
+          tag="v$want"
           cd rel
-          ls -la
           [ -f "Hermes-Studio-$want.AppImage" ] && [ -f "Hermes-Studio-Setup-$want.exe" ] || { echo "missing an installer"; exit 1; }
-          sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" > SHA256SUMS.txt
+          # Source for this release, and the corresponding source of the bundled FFmpeg, PyAV and
+          # OpenCV builds: the bundles rebuilt and verified above (NOTICE, SOURCES-SHA256SUMS).
+          git -C .. archive --format=tar.gz --prefix="hermes-studio-$want/" -o "$PWD/hermes-studio-$want-source.tar.gz" HEAD
+          mapfile -t bundles < <(awk '{print $2}' SOURCES-SHA256SUMS)
+          [ "$(ls sources-*.tar | sort)" = "$(printf '%s\n' "${bundles[@]}" | sort)" ] || { echo "unexpected bundle set"; exit 1; }
+          src=("hermes-studio-$want-source.tar.gz" "${bundles[@]}" SOURCES-SHA256SUMS)
+          sha256sum "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" > SHA256SUMS.txt
+          assets=("Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" "${src[@]}" SHA256SUMS.txt)
+          printf '%s\n' "${assets[@]}" > release-assets.txt
+          notes="docs/releases/$tag.md"
+          [ -f "../$notes" ] && echo "$notes" > release-notes.txt || : > release-notes.txt
+          echo "Release $tag ($EVENT) assets:"
+          ls -l "${assets[@]}"
           cat SHA256SUMS.txt
-          notes="../docs/releases/$TAG.md"
-          if [ -f "$notes" ]; then set -- --notes-file "$notes"; else set -- --generate-notes; fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
-            --title "Hermes Studio $TAG" "$@" \
-            "Hermes-Studio-$want.AppImage" "Hermes-Studio-Setup-$want.exe" SHA256SUMS.txt
+          if [ -s release-notes.txt ]; then echo "Release notes: $notes"; else echo "Release notes: no $notes, GitHub would generate them"; fi
+          extra=$(ls | grep -vxF -f release-assets.txt | grep -vxE 'release-(assets|notes)\.txt' || true)
+          [ -z "$extra" ] || { echo "unexpected files in rel/: $extra"; exit 1; }
+      - name: Release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: rel/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
+  # The only job that can publish: a version tag push, never workflow_dispatch (dry runs stop at
+  # the release job above). Draft first: create the release as a draft with exactly the assets the
+  # release job assembled, download them back and verify every one, and only then publish it. On any
+  # failure the draft stays for inspection (nothing here deletes a release), and an existing release
+  # for the tag is never overwritten. Only the release for this tag is ever touched.
+  publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Assembled release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: rel
+      - name: Publish the release (draft, verify, then publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [ "$EVENT" = push ] && [[ "$REF" == refs/tags/v* ]] || { echo "::error::publish runs only on a version tag push"; exit 1; }
+          notes="docs/releases/$TAG.md"
+          [ -f "$notes" ] || { echo "::error::missing release notes $notes"; exit 1; }
+          cmp rel/SOURCES-SHA256SUMS packaging/SOURCES-SHA256SUMS
+          (cd rel && sha256sum -c SOURCES-SHA256SUMS && sha256sum -c SHA256SUMS.txt)
+          mapfile -t assets < rel/release-assets.txt
+          [ "${#assets[@]}" -eq 11 ] || { echo "::error::expected 11 release assets, got ${#assets[@]}"; exit 1; }
+          want_list="$(printf '%s\n' "${assets[@]}" | sort)"
+
+          # Never overwrite: stop if any release (published or draft) already uses this tag.
+          existing="$(gh api "repos/$GH_REPO/releases" --paginate --jq '.[] | select(.tag_name == env.TAG) | .id')"
+          [ -z "$existing" ] || { echo "::error::a release for $TAG already exists (id $existing); not touching it"; exit 1; }
+
+          # 1. Draft with every asset.
+          (cd rel && gh release create "$TAG" --draft --verify-tag --title "Hermes Studio $TAG" \
+            --notes-file "../$notes" "${assets[@]}")
+
+          # 2. Download every asset back from the draft and verify it.
+          got="$RUNNER_TEMP/draft-check"
+          rm -rf "$got" && mkdir "$got"
+          [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" = true ] || { echo "::error::$TAG is not a draft"; exit 1; }
+          uploaded="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          [ "$uploaded" = "$want_list" ] || { echo "::error::draft assets differ:"; diff <(echo "$want_list") <(echo "$uploaded") || true; exit 1; }
+          gh release download "$TAG" --dir "$got"
+          [ "$(ls -A "$got" | sort)" = "$want_list" ] || { echo "::error::downloaded files differ from the asset list"; exit 1; }
+          (cd "$got" && sha256sum -c SHA256SUMS.txt && sha256sum -c SOURCES-SHA256SUMS)
+          cmp "$got/SHA256SUMS.txt" rel/SHA256SUMS.txt
+          cmp "$got/SOURCES-SHA256SUMS" packaging/SOURCES-SHA256SUMS
+
+          # 3. Only now publish it and mark it latest.
+          gh release edit "$TAG" --draft=false --latest
+          gh release view "$TAG" --json isDraft,url --jq '"published: \(.url) (draft: \(.isDraft))"'

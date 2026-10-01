@@ -1,0 +1,28 @@
+# Shared libraries in av.libs/ of the PyAV 18.1.0 win_amd64 wheel (hash suffix removed).
+# The engine build fails if the shipped wheel differs; tests/test_notices.py maps each one to packaging/third-party-sources.txt.
+
+avcodec-62.dll
+avdevice-62.dll
+avfilter-11.dll
+avformat-62.dll
+avutil-60.dll
+libSvtAv1Enc.dll
+libdav1d.dll
+libgcc_s_seh-1.dll
+libiconv-2.dll
+libmp3lame-0.dll
+libopencore-amrnb-0.dll
+libopencore-amrwb-0.dll
+libopus-0.dll
+libsharpyuv.dll
+libstdc++-6.dll
+libvpl.dll
+libvpx-1.dll
+libwebp.dll
+libwebpmux.dll
+libwinpthread-1.dll
+libx264-165.dll
+libx265.dll
+swresample-6.dll
+swscale-9.dll
+zlib1.dll

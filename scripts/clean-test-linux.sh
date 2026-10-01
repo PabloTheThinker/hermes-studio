@@ -83,5 +83,7 @@ if [ -f /work/pw/shots.js ] && [ -x /work/node/bin/node ]; then
   echo "== screenshots of the real window (fresh launch) =="
   /work/node/bin/node /work/pw/shots.js
 fi
+echo "== libraries: nothing missing on a clean machine =="
+bash /work/check-appimage-libs.sh "$HOME/squashfs-root"
 echo "LINUX CLEAN TEST PASSED"
 '
