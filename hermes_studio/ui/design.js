@@ -10,6 +10,8 @@
   const LOOKS = [["bw", "B&W"], ["noir", "Noir"], ["warm", "Warm"], ["cool", "Cool"], ["punch", "Punch"], ["fade", "Fade"]];
   const SIZE_ORDER = ["tiktok-carousel", "story", "square", "youtube-thumb", "x-post"];
   const SIZE_NAME = { "tiktok-carousel": "Carousel", story: "Story", square: "Square post", "youtube-thumb": "Thumbnail", "x-post": "X / LinkedIn" };
+  const hex = (c) => (/^#[0-9a-f]{6}$/i.test(String(c || "")) ? String(c).toLowerCase() : "#000000");
+  const n0 = (v) => (Number.isFinite(+v) ? +v : 0);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
@@ -538,7 +540,7 @@
     } else if (tab === "brand") {
       const kit = brandKit();
       P.innerHTML = `<p class="ed-h">Brand kit</p><p class="hint">Saved on this computer. Click a colour to apply it to the selection, or to the page if nothing is selected.</p>
-        <div class="ed-sw">${kit.colors.map(c => `<button data-color="${c}" style="background:${c}" title="${c}"></button>`).join("")}<label class="ed-sw-add" title="Add colour"><input type="color" id="ed-addc" value="#ffc83d">+</label></div>
+        <div class="ed-sw">${kit.colors.map(c => hex(c)).map(c => `<button data-color="${c}" style="background:${c}" title="${c}"></button>`).join("")}<label class="ed-sw-add" title="Add colour"><input type="color" id="ed-addc" value="#ffc83d">+</label></div>
         <label class="f">Your handle</label><input id="ed-handle" value="${esc(kit.handle)}" placeholder="@yourhandle" />
         <button class="btn" id="ed-addhandle" style="margin-top:.5rem">Add handle to page</button>
         <label class="f" style="margin-top:1rem">Fonts</label><p class="hint">Headline Archivo · Accent Playfair Italic · Notes Caveat · Labels JetBrains Mono</p>
@@ -564,7 +566,7 @@
       } catch (e) { const box = S && $("#ed-tpls"); if (box) box.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
     }
   }
-  function brandKit() { try { const k = JSON.parse(localStorage.getItem("hs.kit") || "null"); if (k && Array.isArray(k.colors)) return k; } catch { /* reset */ } return { colors: SWATCH.slice(), handle: localStorage.getItem("hs.handle") || "" }; }
+  function brandKit() { try { const k = JSON.parse(localStorage.getItem("hs.kit") || "null"); if (k && Array.isArray(k.colors)) { k.colors = k.colors.filter(c => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 24); k.handle = String(k.handle || "").slice(0, 60); return k; } } catch { /* reset */ } return { colors: SWATCH.slice(), handle: localStorage.getItem("hs.handle") || "" }; }
   function saveKit(k) { localStorage.setItem("hs.kit", JSON.stringify(k)); localStorage.setItem("hs.handle", k.handle || ""); }
   function applyColor(c) {
     const sel = selected();
@@ -575,27 +577,27 @@
 
   /* ---------------------------------------------------------------- right panel */
   function colorRow(label, key, val, allowNone) {
-    return `<label class="f">${label}</label><div class="ed-crow"><input type="color" data-k="${key}" value="${/^#[0-9a-f]{6}/i.test(val || "") ? val.slice(0, 7) : "#000000"}">
-      <div class="ed-sw sm">${brandKit().colors.slice(0, 8).map(c => `<button data-k="${key}" data-v="${c}" style="background:${c}" title="${c}"></button>`).join("")}${allowNone ? `<button data-k="${key}" data-v="" class="none" title="None">∅</button>` : ""}</div></div>`;
+    return `<label class="f">${esc(label)}</label><div class="ed-crow"><input type="color" data-k="${esc(key)}" value="${hex(String(val || "").slice(0, 7))}">
+      <div class="ed-sw sm">${brandKit().colors.slice(0, 8).map(c => hex(c)).map(c => `<button data-k="${esc(key)}" data-v="${c}" style="background:${c}" title="${c}"></button>`).join("")}${allowNone ? `<button data-k="${esc(key)}" data-v="" class="none" title="None">∅</button>` : ""}</div></div>`;
   }
-  const num = (label, key, val, min, max, step) => `<label class="f">${label} <span class="mono" data-show="${key}">${val}</span></label><input type="range" data-k="${key}" data-num="1" min="${min}" max="${max}" step="${step}" value="${val}">`;
+  const num = (label, key, val, min, max, step) => `<label class="f">${esc(label)} <span class="mono" data-show="${esc(key)}">${n0(val)}</span></label><input type="range" data-k="${esc(key)}" data-num="1" min="${n0(min)}" max="${n0(max)}" step="${n0(step)}" value="${n0(val)}">`;
 
   function drawProps() {
     if (!S) return;
     const P = $("#ed-props"), sel = selected(), o = sel.length === 1 ? sel[0] : null;
     if (!sel.length) {
-      P.innerHTML = `<p class="ed-h">Page ${S.page + 1} of ${S.doc.pages.length}</p>${colorRow("Background", "bg", S.canvas.backgroundColor)}
-        <p class="hint" style="margin-top:1rem">${S.doc.w}×${S.doc.h}. Use Resize at the top to copy this design into another size.</p>
+      P.innerHTML = `<p class="ed-h">Page ${n0(S.page + 1)} of ${n0(S.doc.pages.length)}</p>${colorRow("Background", "bg", S.canvas.backgroundColor)}
+        <p class="hint" style="margin-top:1rem">${n0(S.doc.w)}×${n0(S.doc.h)}. Use Resize at the top to copy this design into another size.</p>
         <p class="ed-h">Shortcuts</p><p class="hint mono">T text · Del delete · ⌘/Ctrl D duplicate · ⌘/Ctrl Z undo · arrows nudge (Shift ×10) · double-click to type</p>`;
     } else if (!o) {
-      P.innerHTML = `<p class="ed-h">${sel.length} selected</p><div class="ed-btns"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm" data-act="del">Delete</button></div>
+      P.innerHTML = `<p class="ed-h">${n0(sel.length)} selected</p><div class="ed-btns"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm" data-act="del">Delete</button></div>
         ${colorRow("Colour", "fill", "")}<p class="ed-h">Align to page</p>${alignBtns()}`;
     } else {
       const t = o.hs.type;
       let h = `<p class="ed-h">${{ text: "Text", rect: "Shape", ellipse: "Shape", line: "Line", image: "Photo" }[t]}</p>`;
       if (t === "text") {
-        h += `<label class="f">Font</label><select data-k="font">${Object.entries(FONTS).map(([k, l]) => `<option value="${k}" ${o.hs.font === k ? "selected" : ""}>${l}</option>`).join("")}</select>
-          <div class="ed-two"><div><label class="f">Size</label><input type="number" data-k="fontSize" data-num="1" min="6" max="600" value="${Math.round(o.fontSize)}"></div>
+        h += `<label class="f">Font</label><select data-k="font">${Object.entries(FONTS).map(([k, l]) => `<option value="${esc(k)}" ${o.hs.font === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+          <div class="ed-two"><div><label class="f">Size</label><input type="number" data-k="fontSize" data-num="1" min="6" max="600" value="${n0(Math.round(o.fontSize))}"></div>
           <div><label class="f">Weight</label><select data-k="fontWeight" data-num="1">${[300, 400, 500, 600, 700, 800, 900].map(w => `<option ${+o.fontWeight === w ? "selected" : ""}>${w}</option>`).join("")}</select></div></div>
           <div class="ed-btns" style="margin-top:.6rem">${["left", "center", "right"].map(a => `<button class="btn sm ${o.textAlign === a ? "on" : ""}" data-k="textAlign" data-v="${a}">${a[0].toUpperCase() + a.slice(1)}</button>`).join("")}
           <button class="btn sm ${o.fontStyle === "italic" ? "on" : ""}" data-k="italic" data-v="${o.fontStyle === "italic" ? "" : "1"}"><i>I</i></button>
@@ -701,8 +703,8 @@
     } catch (e) { busy(); alert(e.message); return; }
     busy();
     const P = $("#ed-props"); const slug = (S.doc.title || "design").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "design";
-    P.innerHTML = `<p class="ed-h">Exported</p><p class="hint">${files.length} PNG${files.length > 1 ? "s" : ""} at ${S.doc.w}×${S.doc.h}, saved in the design's <span class="mono">export</span> folder. Download them here too:</p>
-      <div class="ed-dl">${files.map(f => `<a class="btn sm" download="${slug}-${f.n}.png" href="${f.data}">Page ${f.n}</a>`).join("")}</div>
+    P.innerHTML = `<p class="ed-h">Exported</p><p class="hint">${n0(files.length)} PNG${files.length > 1 ? "s" : ""} at ${n0(S.doc.w)}×${n0(S.doc.h)}, saved in the design's <span class="mono">export</span> folder. Download them here too:</p>
+      <div class="ed-dl">${files.map(f => `<a class="btn sm" download="${esc(slug)}-${n0(f.n)}.png" href="${/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(f.data) ? f.data : "#"}">Page ${n0(f.n)}</a>`).join("")}</div>
       <p class="hint">Hermes Studio never posts. You do.</p><button class="btn sm" id="ed-done" style="margin-top:.6rem">Done</button>`;
     $("#ed-done").onclick = drawProps;
   }
