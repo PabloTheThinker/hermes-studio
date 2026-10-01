@@ -222,6 +222,14 @@ store and the lock are Slice 3.
     - `summary` is the same; without one, the line's summary must be that tool's default
       (`Undo: …` / `Redo: …`), which is how an undo and a redo of the same entry differ;
     - `base_version`, if given, equals the line's.
+  - "Equal" means equal as canonical JSON (sorted keys, `(',', ':')`, UTF-8 as is, no NaN), the
+    same encoding as the log line and `canonical_hash`. There's no numeric or Unicode folding, so
+    `1`, `1.0` and `true` are three different values, and an NFC string and its NFD form are
+    different strings, exactly as they'd give different hashes. A fresh call can't carry those
+    values anyway (no floats in a doc; `not_integer_ticks`, `not_nfc`, `wrong_type`, or `bad_arg`
+    for `base_version`/`summary`), so on a cached key a retry that differs only that way is
+    `client_op_id_mismatch` (or the same `bad_arg`, for the top-level fields, since shape checks
+    come first), never the cached result.
 
 ## `media.proxy` and the hash
 

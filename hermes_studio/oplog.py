@@ -132,6 +132,12 @@ class OplogError(HermesStudioError):
         return d
 
 
+def _canon(x: Any) -> str:
+    """Canonical JSON, as for the log line and ``canonical_json``: sorted keys, (',', ':'),
+    UTF-8 as is, no NaN or infinity."""
+    return json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
 class _OpError(Exception):
     def __init__(
         self,
@@ -921,8 +927,11 @@ class Oplog:
         the default one for that tool), and base_version, if given, equal to the line's."""
 
         def same(x: Any, y: Any) -> bool:
+            # Byte-for-byte canonical JSON, the encoding the hash and the log line use: no numeric
+            # or Unicode folding, so 1 != 1.0 != true and NFC != NFD. Anything canonical JSON
+            # can't encode (NaN, a non-string key, an object) is never the same as anything.
             try:
-                return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
+                return _canon(x) == _canon(y)
             except (TypeError, ValueError):
                 return False
 
@@ -1047,7 +1056,7 @@ class Oplog:
         if step is not None:
             entry["step"] = step
         if self._path is not None:
-            line = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            line = _canon(entry)
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()

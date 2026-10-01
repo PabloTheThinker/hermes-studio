@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import unicodedata
 
 import pytest
 
@@ -1572,3 +1573,50 @@ def test_a_non_string_arg_name_is_unknown_arg_not_a_crash(junk):
             )
         assert (e.value.code, e.value.extra["rule"]) == ("invalid_op", "unknown_arg")
     assert log.history_list() == [] and log.version == 0
+
+
+_NFC = "caf\u00e9"
+_NFD = "cafe\u0301"
+
+
+@pytest.mark.parametrize(
+    "first, retry",
+    [
+        (S, float(S)),
+        (S, S + 0.0),
+        (1, True),
+        (0, False),
+    ],
+    ids=["ticks-vs-float", "ticks-vs-float-sum", "1-vs-true", "0-vs-false"],
+)
+def test_same_call_does_not_fold_numbers(first, retry):
+    log = new_log()
+    ok = {**APPLY, "ops": [{"op": "add_marker", "at": first, "label": "x"}]}
+    r = log.call(HUMAN, "timeline_apply", ok)
+    assert log.call(HUMAN, "timeline_apply", ok)["op_id"] == r["op_id"]
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": retry, "label": "x"}]})
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": float("nan"), "label": "x"}]})
+
+
+def test_same_call_does_not_fold_unicode():
+    assert _NFC != _NFD and unicodedata.normalize("NFC", _NFD) == _NFC
+    log = new_log()
+    ok = {**APPLY, "ops": [{"op": "add_marker", "at": 0, "label": _NFC}], "summary": _NFC}
+    r = log.call(HUMAN, "timeline_apply", ok)
+    assert log.call(HUMAN, "timeline_apply", ok)["op_id"] == r["op_id"]
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": 0, "label": _NFD}]})
+    _bad_arg(log, "timeline_apply", {**ok, "summary": _NFD}, "/summary")  # shape check first, as for a fresh call
+    _bad_arg(log, "timeline_apply", {**ok, "base_version": 0.0}, "/base_version")
+    # a fresh call carrying the NFD form is rejected outright, so it can never be logged
+    fresh = {**ok, "client_op_id": "fresh", "base_version": log.version, "ops": [{"op": "add_marker", "at": S, "label": _NFD}]}
+    with pytest.raises(O.OplogError) as e:
+        log.call(HUMAN, "timeline_apply", fresh)
+    assert e.value.extra["rule"] == "not_nfc"
+
+
+def test_the_log_line_and_same_call_share_one_encoding(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    log.call(HUMAN, "timeline_apply", {**APPLY, "summary": _NFC})
+    line = p.read_text(encoding="utf-8").splitlines()[0]
+    assert line == O._canon(json.loads(line)) and _NFC in line
