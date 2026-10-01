@@ -64,13 +64,27 @@ def item(d: dict, iid: str) -> dict:
     return next(i for t in d["tracks"] for i in t["items"] if i["id"] == iid)
 
 
+def _resolve_pointer(d, ptr: str):
+    """Follow an RFC 6901 pointer; a final missing key (missing_field) resolves to its parent."""
+    o = d
+    parts = [x.replace("~1", "/").replace("~0", "~") for x in ptr.split("/")[1:]] if ptr else []
+    for i, k in enumerate(parts):
+        if isinstance(o, list):
+            o = o[int(k)]
+        elif isinstance(o, dict) and k in o:
+            o = o[k]
+        else:
+            assert i == len(parts) - 1, (ptr, k)
+    return o
+
+
 def rules(d) -> set[str]:
-    return {p.rule for p in T.problems(d)}
+    return {p["rule"] for p in T.validate(d)}
 
 
 def test_fixture_is_valid_and_every_rule_is_listed():
-    assert T.problems(doc()) == []
-    assert T.validate(T.new_timeline("empty"))
+    assert T.validate(doc()) == []
+    assert T.validate_or_raise(T.new_timeline("empty"))
     assert len(T.RULES) == len(set(T.RULES))
 
 
@@ -202,12 +216,15 @@ def test_validator_rejects(name):
     mutate, rule = BAD[name]
     d = doc()
     mutate(d)
-    assert rule in rules(d), (name, T.problems(d))
+    assert rule in rules(d), (name, T.validate(d))
     with pytest.raises(T.TimelineError) as e:
-        T.validate(d)
+        T.validate_or_raise(d)
     assert rule in e.value.rules
-    assert e.value.code == "bad_input" and e.value.as_dict()["problems"]
-    assert all(p.rule in T.RULES for p in e.value.problems)
+    assert e.value.code == "bad_input" and e.value.as_dict()["problems"] == T.validate(d)
+    for p in e.value.problems:
+        assert p["rule"] in T.RULES and set(p) <= {"rule", "path", "message", "id"}
+        assert p["path"] == "" or p["path"].startswith("/")  # RFC 6901 JSON Pointer
+        _resolve_pointer(d, p["path"])  # points into the doc (or at a missing key's parent object)
 
 
 def test_non_object_doc_is_rejected():
@@ -226,7 +243,7 @@ def test_v1_gaps_are_allowed_without_a_gap_object():
     track(d, "V1")["items"] = [i for i in track(d, "V1")["items"] if i["id"] != "x1"]
     item(d, "c2")["at"] = 30 * S
     item(d, "c3")["at"] = 60 * S
-    assert T.problems(d) == []
+    assert T.validate(d) == []
 
 
 def test_xfade_is_the_only_allowed_overlap_on_v1():
@@ -241,7 +258,7 @@ def test_text_and_music_tracks_may_overlap():
     track(d, "T1")["items"].append({"id": "t3", "type": "text", "at": S, "dur": S, "text": "x", "style": "pop",
                                    "fade_in": 0, "fade_out": 0})
     assert T.resolve(d)["mu2"][0] < T.resolve(d)["mu1"][1]
-    assert T.problems(d) == []
+    assert T.validate(d) == []
 
 
 def test_anchored_items_follow_their_v1_clip():
@@ -255,15 +272,15 @@ def test_anchored_items_follow_their_v1_clip():
     assert after["t1"][0] == before["t1"][0] + 5 * S
     assert after["mu1"][0] == before["mu1"][0] + 5 * S
     assert after["t2"] == before["t2"] and after["mu2"] == before["mu2"]  # absolute items stay
-    assert T.problems(d) == []
+    assert T.validate(d) == []
 
 
 def test_fades_are_plain_ticks_up_to_the_duration():
     d = doc()
     item(d, "c1")["fade_in"], item(d, "c1")["fade_out"] = 4 * S, 4 * S  # == 8 s duration: allowed
-    assert T.problems(d) == []
+    assert T.validate(d) == []
     item(d, "c3")["fade_in"], item(d, "c3")["fade_out"] = S, S  # c3 is 4 s of source at 2x = 2 s
-    assert T.problems(d) == []
+    assert T.validate(d) == []
     item(d, "c3")["fade_out"] = S + 1
     assert rules(d) == {"fade_too_long"}
     item(d, "c1")["fade_in"] = {"keyframes": []}
@@ -332,13 +349,27 @@ def test_equal_content_hashes_equal():
 def test_version_and_stored_hash_are_not_hashed():
     a = doc()
     h = T.canonical_hash(a)
-    b = T.with_hash(a)
+    b, stamped = T.stamp_hash(a)
+    assert stamped == h and b["hash"] == h and "hash" not in a  # a copy; the input is untouched
     b["version"] = 9999
-    assert b["hash"] == h and T.canonical_hash(b) == h
-    T.validate(b)  # the stored hash matches; version is free to move
-    b["hash"] = "sha256:" + "f" * 64
-    assert T.canonical_hash(b) == h  # canonical_hash ignores a stored hash...
-    assert rules(b) == {"hash_mismatch"}  # ...but validate() checks it
+    assert T.canonical_hash(b) == h and T.validate(b) == []  # version is free to move
+
+
+def test_canonical_hash_refuses_a_stale_hash_and_stamp_hash_fixes_it():
+    d = doc()
+    d["hash"] = "sha256:" + "f" * 64  # the only problem
+    assert T.validate(d) == [{"rule": "hash_mismatch", "path": "/hash", "message": "hash does not match the content"}]
+    with pytest.raises(T.TimelineError) as e:
+        T.canonical_hash(d)
+    assert e.value.rules == ["hash_mismatch"]
+    with pytest.raises(T.TimelineError):
+        T.canonical_json(d)
+    fixed, h = T.stamp_hash(d)
+    assert fixed["hash"] == h == T.canonical_hash(fixed) and T.validate(fixed) == []
+    item(d, "c1")["at"] = -1  # stamp_hash still refuses every other problem
+    with pytest.raises(T.TimelineError) as e:
+        T.stamp_hash(d)
+    assert e.value.rules == ["negative_time"]
 
 
 @pytest.mark.parametrize("mutate", [
@@ -357,7 +388,7 @@ def test_version_and_stored_hash_are_not_hashed():
 def test_different_content_hashes_differ(mutate):
     a, b = doc(), doc()
     mutate(b)
-    T.validate(b)
+    T.validate_or_raise(b)
     assert T.canonical_hash(a) != T.canonical_hash(b)
 
 
@@ -425,7 +456,7 @@ def test_to_otio_maps_clips_gaps_transitions_and_markers():
 def test_otio_round_trip_loses_nothing(tmp_path):
     import opentimelineio as otio
 
-    d = T.with_hash(doc())
+    d, _ = T.stamp_hash(doc())
     path = T.write_otio(d, str(tmp_path / "out.otio"))
     back = T.from_otio(otio.adapters.read_from_file(path))
     assert back == T.normalize(d)
@@ -450,7 +481,7 @@ def _otiotool() -> str | None:
 def test_export_opens_in_otiotool(tmp_path):
     # --stats and --list-markers print SMPTE timecode, which OTIO only formats at standard frame
     # rates, not at the 705,600,000/s tick rate; every other read, inspect and verify phase works.
-    d = T.with_hash(doc())
+    d, _ = T.stamp_hash(doc())
     out = T.write_otio(d, str(tmp_path / "out.otio"))
     again = tmp_path / "again.otio"
     r = subprocess.run([_otiotool(), "-i", out, "--list-tracks", "--list-clips", "--list-media", "--verify-ranges",
@@ -474,7 +505,7 @@ def test_the_documented_example_is_valid():
 
     text = (Path(__file__).resolve().parents[1] / "docs/timeline.md").read_text(encoding="utf-8")
     d = json.loads(re.search(r"```json\n(.*?)```", text, re.S).group(1).replace('"hash": "sha256:…",', ""))
-    assert T.problems(d) == []
+    assert T.validate(d) == []
     assert ", ".join(f"`{r}`" for r in T.RULES) in " ".join(text.split("## Rule ids")[1].split())
 
 
@@ -484,3 +515,62 @@ def test_public_api_is_importable():
     assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks))
     assert T.ROLE_ORDER == ("text", "main", "voice", "music")
     assert T.new_timeline("p")["schema_version"] == "hs.timeline/1" and "schema" not in T.new_timeline("p")
+
+
+def test_pointer_helper_escapes_tilde_and_slash():
+    assert T._j("", "media", "a~b/c", 0) == "/media/a~0b~1c/0"
+    assert T._j("/tracks/1", "items", 2, "fade_in") == "/tracks/1/items/2/fade_in"
+    assert T._j("") == ""
+
+
+def test_problem_paths_are_json_pointers_into_the_doc():
+    d = doc()
+    d["media"]["m.1"] = {"path": "x.mp4", "dur": S, "fps": 29.97}  # a valid id with a dot
+    item(d, "c2")["fade_in"] = -1
+    found = T.validate(d)
+    by_rule = {p["rule"]: p for p in found}
+    assert by_rule["bad_rational"]["path"] == "/media/m.1/fps" and "id" not in by_rule["bad_rational"]
+    assert _resolve_pointer(d, "/media/m.1/fps") == 29.97
+    neg = by_rule["negative_time"]
+    assert neg["path"] == "/tracks/2/items/1/fade_in" and neg["id"] == "c2"
+    assert _resolve_pointer(d, neg["path"]) == -1
+
+
+@pytest.mark.parametrize("key,ptr", [("m/1", "/media/m~11"), ("m~1", "/media/m~01")])
+def test_media_key_with_slash_or_tilde_is_a_bad_id_at_an_escaped_path(key, ptr):
+    d = doc()
+    d["media"][key] = {"path": "x.mp4", "dur": S, "fps": None}
+    assert {"rule": "bad_id", "path": ptr} == {k: v for k, v in T.validate(d)[0].items() if k in ("rule", "path")}
+    assert _resolve_pointer(d, ptr) == d["media"][key]
+
+
+@pytest.mark.parametrize("mutate,rule,path,iid", [
+    (lambda d: item(d, "c3").update(at=17 * S), "overlap", "/tracks/2/items/3", "c3"),
+    (lambda d: item(d, "t1")["anchor"].update(to="zz"), "anchor_target_missing", "/tracks/1/items/0/anchor/to", "t1"),
+    (lambda d: item(d, "x1").update(dur=1), "transition_overlap_mismatch", "/tracks/2/items/2/dur", "x1"),
+    (lambda d: item(d, "mu1").update(fade_in=40 * S), "fade_too_long", "/tracks/4/items/0", "mu1"),
+    (lambda d: item(d, "a1").update(colour=1), "unknown_field", "/tracks/3/items/0/colour", "a1"),
+    (lambda d: d["markers"][0].update(at=1.0), "not_integer_ticks", "/markers/0/at", "k2"),
+    (lambda d: d["markers"][1].update(id="k2"), "duplicate_id", "/markers/1", "k2"),
+    (lambda d: d["media"]["m1"].update(dur=0), "empty_range", "/media/m1/dur", None),
+    (lambda d: d["tracks"][0].update(role="b-roll"), "bad_track_role", "/tracks/0/role", None),
+    (lambda d: d.update(fps=[11, 1]), "bad_fps", "/fps", None),
+])
+def test_problems_in_an_item_or_marker_carry_its_id(mutate, rule, path, iid):
+    d = doc()
+    mutate(d)
+    p = next(p for p in T.validate(d) if p["rule"] == rule)
+    assert p["path"] == path
+    assert p.get("id") == iid and (("id" in p) == (iid is not None))
+
+
+def test_exactly_one_main_track_surfaces_as_three_rules():
+    d = doc()
+    d["tracks"].remove(track(d, "V1"))
+    assert "missing_main_track" in rules(d)
+    d = doc()
+    d["tracks"].insert(2, {"id": "V2", "role": "main", "items": []})
+    assert "bad_track_id" in rules(d)
+    d = doc()
+    d["tracks"].insert(2, {"id": "V1", "role": "main", "items": []})
+    assert "duplicate_id" in rules(d)

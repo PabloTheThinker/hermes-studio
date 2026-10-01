@@ -69,17 +69,41 @@ tracks may overlap (their items can be anchored and move with V1).
 item's absolute `(start, end)`.
 
 **Attribution.** No `actor`, `author` or similar field exists; who did what is in the op log.
+`actor`, `author`, `created_by`, `modified_by`, `user` and `owner` fail as `attribution_field`
+anywhere in the doc.
+
+**Exactly one main track.** There is no separate rule: no V1 is `missing_main_track`, a `main`
+track with another id (or V1 with another role) is `bad_track_id`, and a second V1 is
+`duplicate_id`.
+
+## API
+
+| Call | Returns |
+|---|---|
+| `validate(doc)` | list of problems `{rule, path, message, id?}`; empty when valid. A stored `hash` must match |
+| `validate_or_raise(doc)` | `doc`, or raises `TimelineError` (code `bad_input`; `.problems` as above, `.rule`, `.path`, `.id` of the first, `.rules` sorted) |
+| `canonical_json(doc)` / `canonical_hash(doc)` | bytes / `"sha256:<hex>"`; raise `TimelineError` for any invalid doc, `hash_mismatch` included |
+| `stamp_hash(doc)` | `(copy with the correct hash set, hash)`: validates everything except the stored-hash check. Use it whenever a doc is hashed for writing |
+| `resolve(doc)`, `normalize(doc)`, `new_timeline(id)` | absolute item times; canonical form; an empty T1/V1/A1/A2 doc |
+| `to_otio(doc)`, `write_otio(doc, path)`, `from_otio(tl)` | see OTIO below |
+
+`path` is an RFC 6901 JSON Pointer into the doc (`""` is the whole doc), e.g. `/media/m.1/fps` or
+`/tracks/0/items/2/fade_in`, with `~` written `~0` and `/` written `~1`. Valid ids can't contain
+`/` or `~`, so escaping only shows up in paths for invalid keys (a media key `m/1` fails as
+`bad_id` at `/media/m~11`). For a missing field the pointer names the field that should be there.
+`id` is set when the problem is in a track item or marker (or inside one) and names it; it is
+omitted otherwise.
 
 ## Canonical hash
 
 `canonical_hash(doc)` = `"sha256:" + sha256(canonical_json(doc)).hexdigest()`, where
 `canonical_json` is:
 
-1. `validate(doc)` (the stored `hash` is not checked here). An invalid doc raises `TimelineError`
-   with the rule ids; nothing invalid is ever hashed.
-2. `normalize(doc)`: clip `props` filled with defaults; each track's items sorted by
-   `(start, id)` (anchored items at their resolved start, a transition at the start of its
-   overlap); markers sorted by `(at, id)`. Item and marker list order is not meaningful; track
+1. Full validation, the stored-hash check included. An invalid doc raises `TimelineError` with the
+   rule ids; nothing invalid is ever hashed. (`stamp_hash` skips only the stored-hash check.)
+2. `normalize(doc)`: clip `props` filled with defaults; each track's items sorted by resolved
+   start, then id (anchored items have no raw `at`, so they sort at their resolved start; a
+   transition sorts at the start of its overlap); markers sorted by `(at, id)`. Item and marker list order is not meaningful; track
    order is (it is fixed by role and checked).
 3. Drop `version` and `hash`. Everything else, including `schema_version`, is hashed (any other
    `schema_version` value fails validation first).
