@@ -10,9 +10,10 @@
   const LOOKS = [["bw", "B&W"], ["noir", "Noir"], ["warm", "Warm"], ["cool", "Cool"], ["punch", "Punch"], ["fade", "Fade"]];
   const SIZE_ORDER = ["tiktok-carousel", "story", "square", "youtube-thumb", "x-post"];
   const SIZE_NAME = { "tiktok-carousel": "Carousel", story: "Story", square: "Square post", "youtube-thumb": "Thumbnail", "x-post": "X / LinkedIn" };
-  const hex = (c) => (/^#[0-9a-f]{6}$/i.test(String(c || "")) ? String(c).toLowerCase() : "#000000");
-  const n0 = (v) => (Number.isFinite(+v) ? +v : 0);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  // Colours and numbers going into HTML: validated, then escaped (belt and braces).
+  const hex = (c) => esc(/^#[0-9a-f]{6}$/i.test(String(c || "")) ? String(c).toLowerCase() : "#000000");
+  const n0 = (v) => esc(String(Number.isFinite(+v) ? +v : 0));
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   async function call(path, body) {
