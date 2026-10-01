@@ -1091,6 +1091,8 @@ class Oplog:
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
         self._check_args(args, {"base_version", "ops", "summary", "client_op_id"}, {"project_id", "group_id"})
+        if "group_id" in args and args["group_id"] is None:  # Ada: omit it for no group; null is junk
+            raise OplogError("invalid_op", "group_id must be a string; omit it for no group", rule="bad_arg", path="/group_id")
         self._base_version_type(args)  # every shape check runs before dedupe
         self._ops_shape(args["ops"])
         done = self._replayed(session, "timeline_apply", args)

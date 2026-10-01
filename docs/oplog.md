@@ -56,7 +56,7 @@ before the entry takes effect; a failed write changes nothing):
 ## timeline_apply
 
 Args: `base_version`, `ops` (1–500), `summary` (non-empty NFC, ≤ 200 chars), `client_op_id`
-(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), optional `group_id`, optional `project_id` (must be this
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), optional `group_id` (a string like `client_op_id`; leave it out for no group, `null` is `bad_arg`), optional `project_id` (must be this
 timeline's `id`). Anything else is `invalid_op` / `unknown_arg`.
 
 Order of checks: args → dedupe (a retry returns the original result, even with a now-stale
@@ -201,6 +201,9 @@ store and the lock are Slice 3.
   `summary`, `group_id`, and undo/redo's `op_id`/`group_id` (strings, exactly one of them).
   A null `op_id` or `group_id` is `bad_arg` at its path, never "missing", and a null group
   never matches the ungrouped entries.
+- `timeline_apply` with `group_id: null` is `bad_arg` at `/group_id` (Ada's ruling), fresh or
+  on a cached key. Leave the field out for an ungrouped entry; the entry and result then carry
+  `group_id: null`.
 - The **tool** is always part of "same call", even when a `summary` is given. The dedupe
   table records which tool made each entry. After `load`, the tool comes from the line: an
   apply has no `undoes`, and an undo of a group or of a normal entry is `history_undo`. The

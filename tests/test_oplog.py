@@ -697,7 +697,7 @@ def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
         for _ in range(rng.randrange(2, 7)):
             ops = [_random_op(rng, log.doc) for _ in range(rng.randrange(1, 3))]
             try:
-                apply(log, rng.choice([HUMAN, hermes()]), *ops, group_id="g" if rng.random() < 0.3 else None)
+                apply(log, rng.choice([HUMAN, hermes()]), *ops, **({"group_id": "g"} if rng.random() < 0.3 else {}))
             except O.OplogError as e:
                 assert e.code in ("invalid_op", "not_found") and h(log) == hashes[-1]
                 continue
@@ -1071,7 +1071,7 @@ APPLY = {
         {"ops": [{"op": "add_marker", "at": 0, "label": "x"}, {"op": "set_fade", "id": "c1", "fade_in": 0}]},
         {"ops": [{"op": "add_marker", "at": 0, "label": "x", "id": "z9"}]},
         {"summary": "other"},
-        {"group_id": None},
+        {"group_id": "h"},
         {"base_version": 1},
     ],
     ids=["op-arg", "extra-op", "other-explicit-id", "summary", "group", "base_version"],
@@ -1732,3 +1732,14 @@ def test_insert_clip_with_junk_media_is_unknown_media_at_the_op_arg(media):
     assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "unknown_media", "/ops/1/media", 1)
     assert "id" not in x and log.version == 0 and log.history_list() == []
     assert apply(log, HUMAN, {**ops[1], "media": "m1"})["new_version"] == 1  # a real media id still works
+
+
+def test_timeline_apply_with_a_null_group_id_is_bad_arg_and_omitting_it_is_no_group():
+    log = new_log()
+    _bad_arg(log, "timeline_apply", {**APPLY, "group_id": None}, "/group_id")  # fresh
+    ungrouped = {k: v for k, v in APPLY.items() if k != "group_id"}
+    r = log.call(HUMAN, "timeline_apply", ungrouped)
+    assert r["group_id"] is None and log.history_list()[0]["group_id"] is None
+    _bad_arg(log, "timeline_apply", {**ungrouped, "group_id": None}, "/group_id")  # a cached key: shape first
+    assert log.call(HUMAN, "timeline_apply", ungrouped)["op_id"] == r["op_id"]
+    _bad_arg(log, "timeline_apply", {**ungrouped, "client_op_id": "n2", "base_version": 1, "group_id": None}, "/group_id")
