@@ -20,7 +20,7 @@ S = T.TICK_RATE  # ticks per second
 
 def doc() -> dict:
     """A valid doc: 3 V1 clips with a gap and an xfade, text and music anchored to V1, a voice clip,
-    a marker, an overlay clip and a second text track."""
+    markers and a second text track."""
     d = T.new_timeline("p-7f3a")
     d["media"] = {
         "m1": {"path": "media/talk.mp4", "dur": 1200 * S, "fps": [30000, 1001], "proxy": "cache/proxy/m1.mp4"},
@@ -28,7 +28,8 @@ def doc() -> dict:
     }
     tracks = {t["id"]: t for t in d["tracks"]}
     tracks["V1"]["items"] = [
-        {"id": "c1", "type": "clip", "media": "m1", "src": [12 * S, 20 * S], "at": 0, "fade_in": S // 2, "fade_out": 0},
+        {"id": "c1", "type": "clip", "media": "m1", "src": [12 * S, 20 * S], "at": 0, "fade_in": S // 2, "fade_out": 0,
+         "props": {"crop": {"x": [0, 1], "y": [1, 4], "w": [1, 2], "h": [1, 2]}}},
         {"id": "c2", "type": "clip", "media": "m1", "src": [40 * S, 50 * S], "at": 8 * S - S // 4, "fade_in": 0,
          "fade_out": 0, "props": {"volume": [1, 2], "speed": [1, 1], "crop": None, "look": "warm"}},
         {"id": "x1", "type": "transition", "kind": "xfade", "between": ["c1", "c2"], "dur": S // 4},
@@ -51,10 +52,6 @@ def doc() -> dict:
         {"id": "mu2", "type": "clip", "media": "m2", "src": [30 * S, 40 * S], "at": 5 * S, "fade_in": 0, "fade_out": 0},
     ]
     d["tracks"].insert(0, {"id": "T2", "role": "text", "items": []})
-    d["tracks"].insert(2, {"id": "V2", "role": "overlay", "items": [
-        {"id": "o1", "type": "clip", "media": "m1", "src": [100 * S, 101 * S], "at": 3 * S, "fade_in": 0, "fade_out": 0,
-         "props": {"crop": {"x": [0, 1], "y": [1, 4], "w": [1, 2], "h": [1, 2]}}},
-    ]})
     d["markers"] = [{"id": "k2", "at": 9 * S, "label": "good bit"}, {"id": "k1", "at": 2 * S, "label": ""}]
     return d
 
@@ -115,8 +112,9 @@ def _add_track(tr: dict, at: int):
 
 
 BAD = {
-    "bad schema version": (_set("schema", "hs.timeline/2"), "bad_schema"),
-    "schema missing": (_set("schema", _DEL), "bad_schema"),
+    "bad schema_version": (_set("schema_version", "hs.timeline/2"), "bad_schema"),
+    "schema_version missing": (_set("schema_version", _DEL), "bad_schema"),
+    "old field name schema": (lambda d: d.update(schema=d.pop("schema_version")), "bad_schema"),
     "tick_rate 1000": (_set("tick_rate", 1000), "bad_tick_rate"),
     "tick_rate 48000": (_set("tick_rate", 48000), "bad_tick_rate"),
     "tick_rate as float": (_set("tick_rate", 705600000.0), "bad_tick_rate"),
@@ -151,15 +149,17 @@ BAD = {
     "float volume": (_set("@c2.props.volume", 0.5), "bad_rational"),
     "speed out of range": (_set("@c2.props.speed", [20, 1]), "out_of_range"),
     "speed gives fractional ticks": (_set("@c3.props.speed", [11, 10]), "non_integer_duration"),
-    "crop outside frame": (_set("@o1.props.crop", {"x": [1, 2], "y": [0, 1], "w": [3, 4], "h": [1, 2]}), "out_of_range"),
+    "crop outside frame": (_set("@c1.props.crop", {"x": [1, 2], "y": [0, 1], "w": [3, 4], "h": [1, 2]}), "out_of_range"),
     "decomposed é in text": (_set("@t1.text", "Hola, cafe\u0301"), "not_nfc"),
     "decomposed é in label": (_set("markers.0.label", "e\u0301"), "not_nfc"),
     "bad id chars": (_set("@c1.id", "c 1"), "bad_id"),
     "duplicate item id across tracks (Glyph 2)": (_add("A1", _clip(id="c1")), "duplicate_id"),
     "marker id equals item id (Glyph 5)": (_set("markers.0.id", "c2"), "duplicate_id"),
     "duplicate marker ids (Glyph 5)": (_set("markers.1.id", "k2"), "duplicate_id"),
-    "track id equals item id": (_set("@t2.id", "V2"), "duplicate_id"),
+    "track id equals item id": (_set("@t2.id", "A1"), "duplicate_id"),
     "bad track role": (_set("tracks.0.role", "b-roll"), "bad_track_role"),
+    "overlay role is not in hs.timeline/1": (_set("tracks.0.role", "overlay"), "bad_track_role"),
+    "second video track": (_add_track({"id": "V2", "role": "main", "items": []}, 2), "bad_track_id"),
     "audio role on a V id": (_set("tracks.2.role", "voice"), "bad_track_id"),
     "second main track": (_add_track({"id": "V3", "role": "main", "items": []}, 2), "bad_track_id"),
     "no main track": (lambda d: d["tracks"].remove(track(d, "V1")), "missing_main_track"),
@@ -175,12 +175,10 @@ BAD = {
     "anchor on a V1 video clip (a)": (_set("@c3.anchor", {"to": "c1", "offset": 0}), "at_and_anchor"),
     "anchor-only V1 video clip (a)": (lambda d: (item(d, "c3").pop("at"), item(d, "c3").update(
         anchor={"to": "c1", "offset": 0})), "anchor_not_allowed"),
-    "anchor on an overlay clip (a)": (lambda d: (item(d, "o1").pop("at"), item(d, "o1").update(
-        anchor={"to": "c1", "offset": 0})), "anchor_not_allowed"),
     "anchor on a voice clip (a)": (lambda d: (item(d, "a1").pop("at"), item(d, "a1").update(
         anchor={"to": "c1", "offset": 0})), "anchor_not_allowed"),
     "anchor to missing id (a)": (_set("@t1.anchor", {"to": "c9", "offset": 0}), "anchor_target_missing"),
-    "anchor to non-V1 clip (a)": (_set("@t1.anchor", {"to": "o1", "offset": 0}), "anchor_target_not_main"),
+    "anchor to non-V1 clip (a)": (_set("@t1.anchor", {"to": "a1", "offset": 0}), "anchor_target_not_main"),
     "anchor to a text item (a)": (_set("@t1.anchor", {"to": "t2", "offset": 0}), "anchor_target_not_main"),
     "anchor to a transition (a)": (_set("@t1.anchor", {"to": "x1", "offset": 0}), "anchor_target_not_main"),
     "anchor before 0": (_set("@mu1.anchor", {"to": "c1", "offset": -S}), "anchor_before_zero"),
@@ -191,7 +189,7 @@ BAD = {
     "xfade dur differs from overlap": (_set("@x1.dur", S // 5), "transition_overlap_mismatch"),
     "xfade on clips that don't touch": (_set("@x1.between", ["c2", "c3"]), "transition_overlap_mismatch"),
     "xfade backwards": (_set("@x1.between", ["c2", "c1"]), "bad_transition"),
-    "xfade to another track": (_set("@x1.between", ["c1", "o1"]), "bad_transition"),
+    "xfade to another track": (_set("@x1.between", ["c1", "a1"]), "bad_transition"),
     "xfade kind": (_set("@x1.kind", "wipe"), "bad_transition"),
     "split_from itself (Glyph 2)": (_set("@c3.split_from", "c3"), "bad_split_from"),
     "split_from not an id": (_set("@c3.split_from", ""), "wrong_type"),
@@ -316,7 +314,7 @@ def test_hash_is_sha256_of_the_documented_canonical_json():
     assert T.canonical_hash(d) == "sha256:" + hashlib.sha256(body).hexdigest()
     parsed = json.loads(body)
     assert "version" not in parsed and "hash" not in parsed
-    assert parsed["schema"] == T.SCHEMA  # the schema id is hashed (and any other value fails validation)
+    assert parsed["schema_version"] == T.SCHEMA_VERSION  # hashed (and any other value fails validation)
     assert body == json.dumps(parsed, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     assert "café".encode() in body  # UTF-8, not \u escapes
 
@@ -327,7 +325,7 @@ def test_equal_content_hashes_equal():
     for t in b["tracks"]:
         t["items"].reverse()  # item list order is not meaningful
     b["markers"].reverse()  # nor is marker order
-    item(b, "c1")["props"] = dict(T.DEFAULT_PROPS)  # explicit defaults == omitted props
+    item(b, "a1")["props"] = dict(T.DEFAULT_PROPS)  # explicit defaults == omitted props
     assert T.canonical_hash(a) == T.canonical_hash(b)
 
 
@@ -365,7 +363,7 @@ def test_different_content_hashes_differ(mutate):
 
 def test_track_order_is_meaningful_and_fixed_by_role():
     d = doc()
-    assert [t["id"] for t in d["tracks"]] == ["T2", "T1", "V2", "V1", "A1", "A2"]
+    assert [t["id"] for t in d["tracks"]] == ["T2", "T1", "V1", "A1", "A2"]
     d["tracks"][0], d["tracks"][1] = d["tracks"][1], d["tracks"][0]
     assert rules(d) == {"track_order"}
 
@@ -415,9 +413,9 @@ def test_to_otio_maps_clips_gaps_transitions_and_markers():
     gap = v1[3]
     assert gap.source_range.duration.value == item(d, "c3")["at"] - when["c2"][1]
     assert v1[1].out_offset.value == item(d, "x1")["dur"] and v1[1].in_offset.value == 0
-    assert len(list(tl.find_clips())) == 9  # 3 V1 + 1 overlay + 2 text + 1 voice + 2 music
+    assert len(list(tl.find_clips())) == 8  # 3 V1 + 2 text + 1 voice + 2 music
     assert [m.name for m in tl.tracks.markers] == ["", "good bit"]
-    assert [t.name for t in tl.tracks] == ["T2", "T1", "V2", "V1", "A1", "A2", "A2.1"]  # music overlaps -> 2 lanes
+    assert [t.name for t in tl.tracks] == ["T2", "T1", "V1", "A1", "A2", "A2.1"]  # music overlaps -> 2 lanes
     assert next(t for t in tl.tracks if t.name == "A1").kind == otio.schema.TrackKind.Audio
     t1 = next(c for c in tl.find_clips() if c.name == "t1")
     assert t1.media_reference.generator_kind == T.TEXT_GENERATOR
@@ -478,3 +476,11 @@ def test_the_documented_example_is_valid():
     d = json.loads(re.search(r"```json\n(.*?)```", text, re.S).group(1).replace('"hash": "sha256:…",', ""))
     assert T.problems(d) == []
     assert ", ".join(f"`{r}`" for r in T.RULES) in " ".join(text.split("## Rule ids")[1].split())
+
+
+def test_public_api_is_importable():
+    from hermes_studio.timeline import canonical_hash, seconds_to_ticks, to_otio, validate
+
+    assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks))
+    assert T.ROLE_ORDER == ("text", "main", "voice", "music")
+    assert T.new_timeline("p")["schema_version"] == "hs.timeline/1" and "schema" not in T.new_timeline("p")

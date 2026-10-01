@@ -25,26 +25,25 @@ from typing import Any
 
 from hermes_studio.api import HermesStudioError
 
-SCHEMA = "hs.timeline/1"
+SCHEMA_VERSION = "hs.timeline/1"
 TICK_RATE = 705_600_000  # flicks: whole ticks per frame at 24, 25, 30, 60 and x/1.001 fps, and per 48 kHz sample
 MAX_TICKS = 2**53  # OTIO keeps RationalTime values as doubles; every tick count up to this is exact (~147 days)
 
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # role -> (track id letter, item types the track holds, may its items overlap). Tracks are listed
-# in ROLE_ORDER; within a role, text and video tracks go highest number first (top of the stack
-# first, as in an NLE) and audio tracks lowest number first.
+# in ROLE_ORDER; within a role, text tracks go highest number first (top of the stack first, as in
+# an NLE) and audio tracks lowest number first. V1 is the only video track.
 ROLES: dict[str, tuple[str, frozenset[str], bool]] = {
     "text": ("T", frozenset({"text"}), True),
-    "overlay": ("V", frozenset({"clip", "transition"}), False),
     "main": ("V", frozenset({"clip", "transition"}), False),
     "voice": ("A", frozenset({"clip", "transition"}), False),
     "music": ("A", frozenset({"clip", "transition"}), True),
 }
-ROLE_ORDER = ("text", "overlay", "main", "voice", "music")
+ROLE_ORDER = ("text", "main", "voice", "music")
 MAIN_TRACK = "V1"
 ATTRIBUTION_KEYS = frozenset({"actor", "author", "created_by", "modified_by", "user", "owner"})
 
-TOP_KEYS = {"schema", "id", "version", "tick_rate", "fps", "size", "media", "tracks", "markers"}
+TOP_KEYS = {"schema_version", "id", "version", "tick_rate", "fps", "size", "media", "tracks", "markers"}
 TOP_OPTIONAL = {"hash"}
 MEDIA_KEYS = {"path", "dur", "fps"}
 MEDIA_OPTIONAL = {"proxy"}
@@ -108,9 +107,9 @@ _HINTS = {
     "bad_tick_rate": f"tick_rate must be {TICK_RATE} (flicks).",
     "bad_rational": "Write fractional values as a reduced [num, den] pair with den >= 1.",
     "not_nfc": "Normalize strings to Unicode NFC (unicodedata.normalize('NFC', s)).",
-    "overlap": "Clips on main, overlay and voice tracks may only overlap through an xfade transition.",
+    "overlap": "Clips on main and voice tracks may only overlap through an xfade transition.",
     "anchor_not_allowed": "Only text items and clips on music tracks can be anchored.",
-    "track_order": "List tracks as text, overlay, main, voice, music (text/video highest number first).",
+    "track_order": "List tracks as text, main, voice, music (text highest number first, audio lowest first).",
 }
 
 
@@ -256,8 +255,8 @@ def problems(doc: Any, *, check_hash: bool = True) -> list[Problem]:
     if not isinstance(doc, dict):
         c.bad("not_object", "$", "a timeline must be a JSON object")
         return c.problems
-    if doc.get("schema") != SCHEMA:
-        c.bad("bad_schema", "$.schema", f"schema must be {SCHEMA!r}")
+    if doc.get("schema_version") != SCHEMA_VERSION:
+        c.bad("bad_schema", "$.schema_version", f"schema_version must be {SCHEMA_VERSION!r}")
         return c.problems
     if not _is_int(doc.get("tick_rate")) or doc["tick_rate"] != TICK_RATE:
         c.bad("bad_tick_rate", "$.tick_rate", f"tick_rate must be {TICK_RATE}")
@@ -349,7 +348,7 @@ def problems(doc: Any, *, check_hash: bool = True) -> list[Problem]:
     if ("main", MAIN_TRACK) not in seen:
         c.bad("missing_main_track", "$.tracks", f"the main video track {MAIN_TRACK} is required")
     if seen != sorted(seen, key=_track_key):
-        c.bad("track_order", "$.tracks", "tracks must be listed as text, overlay, main, voice, music")
+        c.bad("track_order", "$.tracks", "tracks must be listed as text, main, voice, music")
 
     markers = doc["markers"]
     if not isinstance(markers, list):
@@ -584,7 +583,7 @@ def with_hash(doc: dict) -> dict:
 def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1080, 1920)) -> dict:
     """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music."""
     return {
-        "schema": SCHEMA, "id": project_id, "version": 0, "tick_rate": TICK_RATE,
+        "schema_version": SCHEMA_VERSION, "id": project_id, "version": 0, "tick_rate": TICK_RATE,
         "fps": list(fps), "size": list(size), "media": {},
         "tracks": [{"id": "T1", "role": "text", "items": []}, {"id": "V1", "role": "main", "items": []},
                    {"id": "A1", "role": "voice", "items": []}, {"id": "A2", "role": "music", "items": []}],
@@ -621,7 +620,7 @@ def to_otio(doc: dict):
 
     when = resolve(doc)
     tl = otio.schema.Timeline(name=doc["id"], global_start_time=rt(0))
-    tl.metadata[_META] = {k: copy.deepcopy(doc[k]) for k in ("schema", "id", "version", "tick_rate", "fps", "size", "media")}
+    tl.metadata[_META] = {k: copy.deepcopy(doc[k]) for k in ("schema_version", "id", "version", "tick_rate", "fps", "size", "media")}
     if "hash" in doc:
         tl.metadata[_META]["hash"] = doc["hash"]
     for track in doc["tracks"]:
@@ -701,7 +700,7 @@ def from_otio(tl) -> dict:
     import opentimelineio as otio
 
     head = _plain(tl.metadata[_META])
-    doc: dict[str, Any] = {k: head[k] for k in ("schema", "id", "version", "tick_rate", "fps", "size", "media")}
+    doc: dict[str, Any] = {k: head[k] for k in ("schema_version", "id", "version", "tick_rate", "fps", "size", "media")}
     if "hash" in head:
         doc["hash"] = head["hash"]
     doc["tracks"], doc["markers"] = [], []

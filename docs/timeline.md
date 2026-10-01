@@ -7,7 +7,7 @@ frozen after slice 1: any change means `hs.timeline/2`.
 ## Example
 
 ```json
-{"schema": "hs.timeline/1", "id": "p-7f3a", "version": 13, "hash": "sha256:…",
+{"schema_version": "hs.timeline/1", "id": "p-7f3a", "version": 13, "hash": "sha256:…",
  "tick_rate": 705600000, "fps": [30, 1], "size": [1080, 1920],
  "media": {"m1": {"path": "media/talk.mp4", "dur": 846720000000, "fps": [30000, 1001], "proxy": "cache/proxy/m1.mp4"}},
  "tracks": [
@@ -28,7 +28,7 @@ frozen after slice 1: any change means `hs.timeline/2`.
 
 | Where | Field | Rule |
 |---|---|---|
-| doc | `schema` | exactly `"hs.timeline/1"` |
+| doc | `schema_version` | exactly `"hs.timeline/1"` |
 | doc | `id` | project id |
 | doc | `version` | integer ≥ 0, monotonic, set by the engine. **Not hashed** |
 | doc | `hash` | optional `sha256:<64 hex>`; must match the content when present. **Not hashed** |
@@ -52,15 +52,15 @@ rejected anywhere a number is expected. Other fractions are reduced `[num, den]`
 be NFC-normalized. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
 (media, tracks, items and markers).
 
-**Tracks.** Roles and ids: `text` = `T<n>`, `overlay` = `V<n>` (n ≥ 2), `main` = `V1` (required,
-exactly one), `voice` and `music` = `A<n>`. Text tracks hold text items; the others hold clips and
-transitions. Track order is meaningful and fixed: text, overlay, main, voice, music; text and video
-tracks highest number first (top of the stack first), audio tracks lowest number first. The
-default doc is T1, V1, A1, A2.
+**Tracks.** The roles are exactly `text` (`T<n>`), `main` (`V1`, required, the only video
+track), `voice` and `music` (`A<n>`). Text tracks hold text items; the others hold clips and
+transitions. Track order is meaningful and fixed: text, main, voice, music; text tracks highest
+number first (top of the stack first), audio tracks lowest number first. The default doc is
+T1, V1, A1, A2.
 
 **Timing.** A clip lasts `(out − in) / speed` ticks, which must be whole. Fades are plain ticks:
 `fade_in`, `fade_out` ≥ 0 and `fade_in + fade_out` ≤ the item's duration. Gaps are implied by `at`;
-there is no gap object. On main, overlay and voice tracks nothing may overlap, except two
+there is no gap object. On main and voice tracks nothing may overlap, except two
 consecutive clips joined by an `xfade` whose `dur` equals their overlap exactly. Text and music
 tracks may overlap (their items can be anchored and move with V1).
 
@@ -81,8 +81,8 @@ item's absolute `(start, end)`.
    `(start, id)` (anchored items at their resolved start, a transition at the start of its
    overlap); markers sorted by `(at, id)`. Item and marker list order is not meaningful; track
    order is (it is fixed by role and checked).
-3. Drop `version` and `hash`. Everything else, including `schema`, is hashed (any other `schema`
-   value fails validation first).
+3. Drop `version` and `hash`. Everything else, including `schema_version`, is hashed (any other
+   `schema_version` value fails validation first).
 4. `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, UTF-8. The doc has no
    floats, so no number formatting choices remain. Strings are hashed as given (they must already
    be NFC).
