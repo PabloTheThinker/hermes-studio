@@ -14,7 +14,7 @@ and reported as an ``ignored_field`` warning. The engine computes every inverse 
 an op. Undo and redo append a new entry (``undoes``); history is never rewritten.
 
 Times are integer ticks (``timeline.TICK_RATE``); the tool layer converts seconds once with
-``timeline.seconds_to_ticks`` before calling in.
+``timeline.seconds_to_ticks_nearest`` before calling in.
 """
 
 from __future__ import annotations
