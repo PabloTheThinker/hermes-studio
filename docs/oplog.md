@@ -136,7 +136,8 @@ plus every timeline rule.
 - `id_reused`: a caller named an id that is in the doc's past but not in the doc now. It existed
   earlier in the log, or earlier in the same batch (including an id the engine handed out and the
   batch then removed). The path is at that id (`/ops/k/id`, `/ops/k/ids/i`). An id that's in the
-  doc now is still `duplicate_id`. Inverses (undo, redo, `load`, `replay`) restore old ids on
+  doc now is still `duplicate_id`. For `split_clip`'s `ids`, every id error (`bad_arg`,
+  `duplicate_id`, `id_reused`) points at the entry (`/ops/k/ids/i`). Inverses (undo, redo, `load`, `replay`) restore old ids on
   purpose and skip this check.
 
 ## Undo and redo
@@ -166,6 +167,11 @@ inverse. `replay(base, entries)` re-applies them and checks each hash. Snapshots
 store and the lock are Slice 3.
 
 ### Dedupe and stale retries
+
+- Shape checks run **before** the dedupe lookup, so a junk retry on a cached key gets the same
+  `invalid_op` / `bad_arg` as a fresh call and never reaches the mismatch comparison. That covers
+  `ops` (a list of 1–500 objects, each with a string `op`; `/ops` or `/ops/k`), `base_version`,
+  `summary`, `group_id`, and undo/redo's `op_id`/`group_id` (strings, exactly one of them).
 
 - A retry with the same `(actor, client_op_id)` returns the original result, even when its
   `base_version` is now stale. It doesn't raise `conflict` and doesn't append a line.

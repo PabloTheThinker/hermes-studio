@@ -638,7 +638,7 @@ def test_the_log_file_replays_to_the_live_hash(tmp_path):
     retry = again.call(hermes(4), "timeline_apply", first)
     assert retry["op_id"] == r["op_id"] and again.version == log.version  # dedupe survives a reload
     with pytest.raises(O.OplogError) as e:  # and so does the mismatch check
-        again.call(hermes(4), "timeline_apply", {**first, "ops": [], "summary": "s"})
+        again.call(hermes(4), "timeline_apply", {**first, "summary": "s"})
     assert e.value.extra["rule"] == "client_op_id_mismatch"
     lines[1]["hash"] = "sha256:" + "0" * 64
     with pytest.raises(ValueError):
@@ -1130,3 +1130,154 @@ def test_the_mismatch_check_survives_load(tmp_path):
     _mismatch(again, HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "same"})
     _mismatch(again, HUMAN, "history_undo", {"group_id": "g", "client_op_id": "u1"})
     assert T.canonical_hash(O.replay(base(), again.history_list())) == h(again)
+
+
+# --------------------------------------------------------------------------- junk retries on a cached key (Wire)
+
+
+def _cached() -> tuple[O.Oplog, dict, dict]:
+    log = new_log()
+    a = log.call(HUMAN, "timeline_apply", APPLY)
+    u = log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1"})
+    return log, a, u
+
+
+def _bad_arg(log: O.Oplog, tool: str, args: dict, path: str) -> None:
+    v, n = log.version, len(log.history_list())
+    with pytest.raises(O.OplogError) as e:
+        log.call(HUMAN, tool, args)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "bad_arg", path)
+    assert log.version == v and len(log.history_list()) == n
+
+
+@pytest.mark.parametrize(
+    "ops, path",
+    [
+        (5, "/ops"),
+        (None, "/ops"),
+        ("x", "/ops"),
+        ({}, "/ops"),
+        ([], "/ops"),
+        ([5], "/ops/0"),
+        ([None], "/ops/0"),
+        ([{"op": "add_marker", "at": 0, "label": "x"}, "y"], "/ops/1"),
+        ([{"op": 3}], "/ops/0"),
+        ([{}], "/ops/0"),
+    ],
+    ids=["int", "None", "str", "dict", "empty", "[5]", "[None]", "[op,str]", "op-not-str", "[{}]"],
+)
+def test_a_cached_key_with_junk_ops_is_bad_arg_like_a_fresh_call(ops, path):
+    log, _, _ = _cached()
+    _bad_arg(log, "timeline_apply", {**APPLY, "ops": ops}, path)  # cached key "same"
+    _bad_arg(log, "timeline_apply", {**APPLY, "ops": ops, "client_op_id": "fresh"}, path)
+
+
+@pytest.mark.parametrize(
+    "tool, change, path",
+    [
+        ("timeline_apply", {"base_version": "0"}, "/base_version"),
+        ("timeline_apply", {"base_version": True}, "/base_version"),
+        ("timeline_apply", {"base_version": None}, "/base_version"),
+        ("timeline_apply", {"base_version": -1}, "/base_version"),
+        ("timeline_apply", {"base_version": 1.5}, "/base_version"),
+        ("timeline_apply", {"summary": 5}, "/summary"),
+        ("timeline_apply", {"summary": None}, "/summary"),
+        ("timeline_apply", {"group_id": 7}, "/group_id"),
+        ("timeline_apply", {"group_id": []}, "/group_id"),
+        ("history_undo", {"op_id": 7}, "/op_id"),
+        ("history_undo", {"op_id": None}, "/op_id"),
+        ("history_undo", {"op_id": []}, "/op_id"),
+        ("history_undo", {"op_id": {}}, "/op_id"),
+        ("history_undo", {"group_id": None}, "/group_id"),
+        ("history_undo", {"group_id": 7}, "/group_id"),
+        ("history_undo", {"summary": 5}, "/summary"),
+        ("history_undo", {"summary": ["s"]}, "/summary"),
+        ("history_undo", {"base_version": "1"}, "/base_version"),
+        ("history_undo", {"base_version": False}, "/base_version"),
+        ("history_undo", {"base_version": None}, "/base_version"),
+        ("history_redo", {"op_id": 7}, "/op_id"),
+        ("history_redo", {"op_id": None}, "/op_id"),
+        ("history_redo", {"summary": {}}, "/summary"),
+        ("history_redo", {"base_version": 2.0}, "/base_version"),
+    ],
+)
+def test_wrong_typed_fields_on_a_cached_key_are_bad_arg(tool, change, path):
+    log, a, u = _cached()
+    if tool == "timeline_apply":
+        base_args = dict(APPLY)
+    else:
+        base_args = {"op_id": a["op_id"] if tool == "history_undo" else u["op_id"], "client_op_id": "u1"}
+        if "group_id" in change:
+            base_args.pop("op_id")
+    for key in (base_args["client_op_id"], "same", "u1", "fresh"):  # cached under each tool, and fresh
+        _bad_arg(log, tool, {**base_args, **change, "client_op_id": key}, path)
+
+
+def test_an_undo_with_both_or_neither_target_is_bad_arg_on_a_cached_key():
+    log, a, _ = _cached()
+    _bad_arg(log, "history_undo", {"client_op_id": "u1"}, "")
+    _bad_arg(log, "history_undo", {"op_id": a["op_id"], "group_id": "g", "client_op_id": "u1"}, "")
+    _bad_arg(log, "history_redo", {"group_id": "g", "client_op_id": "u1"}, "")
+
+
+_JUNK = [
+    5,
+    None,
+    "x",
+    {},
+    [],
+    [5],
+    [None],
+    True,
+    -1,
+    1.5,
+    "c1",
+    {"op": 3},
+    [{"op": "move_clip"}],
+    "Ω",
+    10**30,
+    [{"op": "add_marker", "at": 0, "label": "x"}],
+    "op1",
+    "g",
+    0,
+    "s",
+]
+
+
+def test_junk_args_on_a_cached_key_never_crash_over_3000_seeded_runs():
+    log, a, u = _cached()
+    v, n = log.version, len(log.history_list())
+    good = {  # the cached calls; each run mutates one to three fields with junk
+        "timeline_apply": {k: v for k, v in APPLY.items() if k != "client_op_id"},
+        "history_undo": {"op_id": a["op_id"]},
+        "history_redo": {"op_id": u["op_id"]},
+    }
+    fields = ["base_version", "ops", "summary", "group_id", "op_id", "project_id", "junk_key"]
+    seen: dict[str, int] = {}
+    for seed in range(3000):
+        rng = random.Random(seed)
+        tool = rng.choice(list(good))
+        args = dict(good[tool])
+        for k in rng.sample(fields, rng.randrange(1, 4)):
+            if rng.random() < 0.15:
+                args.pop(k, None)
+            else:
+                args[k] = rng.choice(_JUNK + [a["op_id"], u["op_id"]])
+        args["client_op_id"] = rng.choice(["same", "u1"])
+        try:
+            r = log.call(HUMAN, tool, args)
+            assert r["op_id"] in (a["op_id"], u["op_id"])  # only ever the cached result
+            out = "cached"
+        except O.OplogError as e:
+            out = f"{e.code}/{e.extra.get('rule')}"
+        seen[out] = seen.get(out, 0) + 1
+        assert log.version == v and len(log.history_list()) == n
+    assert {"invalid_op/bad_arg", "invalid_op/client_op_id_mismatch", "invalid_op/unknown_arg"} <= set(seen)
+
+
+@pytest.mark.parametrize("ids, path", [(["n1", "c1"], "/ops/0/ids/1"), (["c1", "n1"], "/ops/0/ids/0")])
+def test_split_duplicate_piece_id_points_at_that_entry(ids, path):
+    log = new_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "split_clip", "id": "c2", "at": 5 * S, "ids": ids})
+    assert (e.value.extra["rule"], e.value.extra["path"]) == ("duplicate_id", path)

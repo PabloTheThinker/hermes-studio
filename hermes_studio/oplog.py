@@ -507,8 +507,9 @@ def op_split_clip(ctx: _Ctx, a: dict) -> list[dict]:
         ):
             raise _OpError("bad_id", "ids must be two different ids", "ids")
         taken = ctx.taken(ctx.doc)
-        if any(x in taken for x in ids):
-            raise _OpError("duplicate_id", "a piece id is already used", "ids")
+        for i, x in enumerate(ids):
+            if x in taken:
+                raise _OpError("duplicate_id", f"piece id {x!r} is already used", ("ids", i))
         for i, x in enumerate(ids):
             ctx.not_reused(x, ("ids", i))
     else:
@@ -778,7 +779,7 @@ class Oplog:
     # ---- internals
 
     def _check_args(self, args: dict, required: set[str], optional: set[str]) -> None:
-        for k in sorted(set(args) - required - optional):
+        for k in sorted(set(args) - required - optional, key=repr):
             raise OplogError("invalid_op", f"unknown argument '{k}'", rule="unknown_arg", path=T._j("", k))
         for k in sorted(required - set(args)):
             raise OplogError("invalid_op", f"'{k}' is required", rule="missing_arg", path=T._j("", k))
@@ -810,12 +811,40 @@ class Oplog:
                 id=str(args["project_id"]),
             )
 
+    @staticmethod
+    def _base_version_type(args: dict) -> None:
+        if "base_version" in args and not (T._is_int(args["base_version"]) and args["base_version"] >= 0):
+            raise OplogError("invalid_op", "base_version must be an integer >= 0", rule="bad_arg", path="/base_version")
+
+    @staticmethod
+    def _ops_shape(ops: Any) -> None:
+        """The shape of ``ops``, checked before dedupe so a junk retry is bad_arg, never a crash."""
+        if not (isinstance(ops, list) and 0 < len(ops) <= MAX_OPS):
+            raise OplogError("invalid_op", f"ops must be a list of 1-{MAX_OPS} ops", rule="bad_arg", path="/ops")
+        for k, op in enumerate(ops):
+            if not isinstance(op, dict) or not isinstance(op.get("op"), str):
+                raise OplogError(
+                    "invalid_op",
+                    f"op {k}: an op is an object with an 'op' name",
+                    rule="bad_arg",
+                    op_index=k,
+                    path=T._j("", "ops", k),
+                )
+
+    @staticmethod
+    def _undo_shape(args: dict, redo: bool) -> None:
+        """The shape of undo/redo args, checked before dedupe (same reason as _ops_shape)."""
+        for k in ("op_id", "group_id"):
+            if k in args and not isinstance(args[k], str):
+                raise OplogError("invalid_op", f"{k} must be a string", rule="bad_arg", path=T._j("", k))
+        if ("op_id" in args) == ("group_id" in args) or (redo and "group_id" in args):
+            raise OplogError("invalid_op", "give exactly one of op_id or group_id (redo takes op_id)", rule="bad_arg", path="")
+
     def _base_version(self, args: dict, *, required: bool) -> None:
         if "base_version" not in args and not required:
             return
+        self._base_version_type(args)
         bv = args["base_version"]
-        if not (T._is_int(bv) and bv >= 0):
-            raise OplogError("invalid_op", "base_version must be an integer >= 0", rule="bad_arg", path="/base_version")
         if bv != self.version:
             raise OplogError(
                 "conflict",
@@ -853,7 +882,10 @@ class Oplog:
         the default one for that tool), and base_version, if given, equal to the line's."""
 
         def same(x: Any, y: Any) -> bool:
-            return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
+            try:
+                return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
+            except (TypeError, ValueError):
+                return False
 
         if tool == "timeline_apply":
             if e["undoes"] is not None or not all(same(args.get(k), e[k]) for k in ("base_version", "summary", "group_id")):
@@ -985,13 +1017,13 @@ class Oplog:
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
         self._check_args(args, {"base_version", "ops", "summary", "client_op_id"}, {"project_id", "group_id"})
+        self._base_version_type(args)  # every shape check runs before dedupe
+        self._ops_shape(args["ops"])
         done = self._replayed(session, "timeline_apply", args)
         if done is not None:
             return done
         self._base_version(args, required=True)
         ops = args["ops"]
-        if not (isinstance(ops, list) and 0 < len(ops) <= MAX_OPS):
-            raise OplogError("invalid_op", f"ops must be a list of 1-{MAX_OPS} ops", rule="bad_arg", path="/ops")
         new, logged, inverse = self._run(ops, internal=False)
         return self._commit(session, args, new, logged, inverse, None, args["summary"], warnings)
 
@@ -1006,11 +1038,11 @@ class Oplog:
 
     def _undo(self, session: Session, args: dict, warnings: list[dict], *, redo: bool) -> dict:
         self._check_args(args, {"client_op_id"}, {"project_id", "op_id", "group_id", "summary", "base_version"})
+        self._base_version_type(args)  # every shape check runs before dedupe
+        self._undo_shape(args, redo)
         done = self._replayed(session, "history_redo" if redo else "history_undo", args)
         if done is not None:
             return done
-        if ("op_id" in args) == ("group_id" in args) or (redo and "group_id" in args):
-            raise OplogError("invalid_op", "give exactly one of op_id or group_id (redo takes op_id)", rule="bad_arg", path="")
         self._base_version(args, required=False)
         cancelled = self._cancelled()
         if "op_id" in args:
