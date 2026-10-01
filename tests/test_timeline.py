@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -78,8 +79,47 @@ def _resolve_pointer(d, ptr: str):
     return o
 
 
+def _id_pointers(d) -> dict[str, list[str]]:
+    """Every id in the doc -> the pointers of the objects that use it (items and markers by
+    pointer; media keys and tracks too, so clashes count)."""
+    out: dict[str, list[str]] = {}
+    if not isinstance(d, dict):
+        return out
+    for k in d.get("media", {}) if isinstance(d.get("media"), dict) else {}:
+        out.setdefault(k, []).append(T._j("", "media", k))
+    for ti, tr in enumerate(d.get("tracks", []) if isinstance(d.get("tracks"), list) else []):
+        if not isinstance(tr, dict):
+            continue
+        if isinstance(tr.get("id"), str):
+            out.setdefault(tr["id"], []).append(T._j("", "tracks", ti))
+        for ii, it in enumerate(tr.get("items", []) if isinstance(tr.get("items"), list) else []):
+            if isinstance(it, dict) and isinstance(it.get("id"), str):
+                out.setdefault(it["id"], []).append(T._j("", "tracks", ti, "items", ii))
+    for mi, mk in enumerate(d.get("markers", []) if isinstance(d.get("markers"), list) else []):
+        if isinstance(mk, dict) and isinstance(mk.get("id"), str):
+            out.setdefault(mk["id"], []).append(T._j("", "markers", mi))
+    return out
+
+
+def V(d) -> list[dict]:
+    """T.validate(d), plus the blanket id check every test goes through: a problem's id names
+    exactly one valid item or marker, and its path is that item's pointer or inside it."""
+    found = T.validate(d)
+    ptrs = _id_pointers(d)
+    for p in found:
+        if "id" not in p:
+            continue
+        assert p["rule"] not in ("bad_id", "duplicate_id"), p
+        assert T.ID_RE.fullmatch(p["id"]), p
+        where = ptrs.get(p["id"], [])
+        assert len(where) == 1, (p, where)
+        assert re.fullmatch(r"/(tracks/\d+/items|markers)/\d+", where[0]), (p, where)
+        assert p["path"] == where[0] or p["path"].startswith(where[0] + "/"), (p, where)
+    return found
+
+
 def rules(d) -> set[str]:
-    return {p["rule"] for p in T.validate(d)}
+    return {p["rule"] for p in V(d)}
 
 
 def test_fixture_is_valid_and_every_rule_is_listed():
@@ -216,11 +256,11 @@ def test_validator_rejects(name):
     mutate, rule = BAD[name]
     d = doc()
     mutate(d)
-    assert rule in rules(d), (name, T.validate(d))
+    assert rule in rules(d), (name, V(d))
     with pytest.raises(T.TimelineError) as e:
         T.validate_or_raise(d)
     assert rule in e.value.rules
-    assert e.value.code == "bad_input" and e.value.as_dict()["problems"] == T.validate(d)
+    assert e.value.code == "bad_input" and e.value.as_dict()["problems"] == V(d)
     for p in e.value.problems:
         assert p["rule"] in T.RULES and set(p) <= {"rule", "path", "message", "id"}
         assert p["path"] == "" or p["path"].startswith("/")  # RFC 6901 JSON Pointer
@@ -243,7 +283,7 @@ def test_v1_gaps_are_allowed_without_a_gap_object():
     track(d, "V1")["items"] = [i for i in track(d, "V1")["items"] if i["id"] != "x1"]
     item(d, "c2")["at"] = 30 * S
     item(d, "c3")["at"] = 60 * S
-    assert T.validate(d) == []
+    assert V(d) == []
 
 
 def test_xfade_is_the_only_allowed_overlap_on_v1():
@@ -258,7 +298,7 @@ def test_text_and_music_tracks_may_overlap():
     track(d, "T1")["items"].append({"id": "t3", "type": "text", "at": S, "dur": S, "text": "x", "style": "pop",
                                    "fade_in": 0, "fade_out": 0})
     assert T.resolve(d)["mu2"][0] < T.resolve(d)["mu1"][1]
-    assert T.validate(d) == []
+    assert V(d) == []
 
 
 def test_anchored_items_follow_their_v1_clip():
@@ -272,15 +312,15 @@ def test_anchored_items_follow_their_v1_clip():
     assert after["t1"][0] == before["t1"][0] + 5 * S
     assert after["mu1"][0] == before["mu1"][0] + 5 * S
     assert after["t2"] == before["t2"] and after["mu2"] == before["mu2"]  # absolute items stay
-    assert T.validate(d) == []
+    assert V(d) == []
 
 
 def test_fades_are_plain_ticks_up_to_the_duration():
     d = doc()
     item(d, "c1")["fade_in"], item(d, "c1")["fade_out"] = 4 * S, 4 * S  # == 8 s duration: allowed
-    assert T.validate(d) == []
+    assert V(d) == []
     item(d, "c3")["fade_in"], item(d, "c3")["fade_out"] = S, S  # c3 is 4 s of source at 2x = 2 s
-    assert T.validate(d) == []
+    assert V(d) == []
     item(d, "c3")["fade_out"] = S + 1
     assert rules(d) == {"fade_too_long"}
     item(d, "c1")["fade_in"] = {"keyframes": []}
@@ -352,20 +392,20 @@ def test_version_and_stored_hash_are_not_hashed():
     b, stamped = T.stamp_hash(a)
     assert stamped == h and b["hash"] == h and "hash" not in a  # a copy; the input is untouched
     b["version"] = 9999
-    assert T.canonical_hash(b) == h and T.validate(b) == []  # version is free to move
+    assert T.canonical_hash(b) == h and V(b) == []  # version is free to move
 
 
 def test_canonical_hash_refuses_a_stale_hash_and_stamp_hash_fixes_it():
     d = doc()
     d["hash"] = "sha256:" + "f" * 64  # the only problem
-    assert T.validate(d) == [{"rule": "hash_mismatch", "path": "/hash", "message": "hash does not match the content"}]
+    assert V(d) == [{"rule": "hash_mismatch", "path": "/hash", "message": "hash does not match the content"}]
     with pytest.raises(T.TimelineError) as e:
         T.canonical_hash(d)
     assert e.value.rules == ["hash_mismatch"]
     with pytest.raises(T.TimelineError):
         T.canonical_json(d)
     fixed, h = T.stamp_hash(d)
-    assert fixed["hash"] == h == T.canonical_hash(fixed) and T.validate(fixed) == []
+    assert fixed["hash"] == h == T.canonical_hash(fixed) and V(fixed) == []
     item(d, "c1")["at"] = -1  # stamp_hash still refuses every other problem
     with pytest.raises(T.TimelineError) as e:
         T.stamp_hash(d)
@@ -505,7 +545,7 @@ def test_the_documented_example_is_valid():
 
     text = (Path(__file__).resolve().parents[1] / "docs/timeline.md").read_text(encoding="utf-8")
     d = json.loads(re.search(r"```json\n(.*?)```", text, re.S).group(1).replace('"hash": "sha256:…",', ""))
-    assert T.validate(d) == []
+    assert V(d) == []
     assert ", ".join(f"`{r}`" for r in T.RULES) in " ".join(text.split("## Rule ids")[1].split())
 
 
@@ -527,7 +567,7 @@ def test_problem_paths_are_json_pointers_into_the_doc():
     d = doc()
     d["media"]["m.1"] = {"path": "x.mp4", "dur": S, "fps": 29.97}  # a valid id with a dot
     item(d, "c2")["fade_in"] = -1
-    found = T.validate(d)
+    found = V(d)
     by_rule = {p["rule"]: p for p in found}
     assert by_rule["bad_rational"]["path"] == "/media/m.1/fps" and "id" not in by_rule["bad_rational"]
     assert _resolve_pointer(d, "/media/m.1/fps") == 29.97
@@ -540,7 +580,7 @@ def test_problem_paths_are_json_pointers_into_the_doc():
 def test_media_key_with_slash_or_tilde_is_a_bad_id_at_an_escaped_path(key, ptr):
     d = doc()
     d["media"][key] = {"path": "x.mp4", "dur": S, "fps": None}
-    assert {"rule": "bad_id", "path": ptr} == {k: v for k, v in T.validate(d)[0].items() if k in ("rule", "path")}
+    assert {"rule": "bad_id", "path": ptr} == {k: v for k, v in V(d)[0].items() if k in ("rule", "path")}
     assert _resolve_pointer(d, ptr) == d["media"][key]
 
 
@@ -559,7 +599,7 @@ def test_media_key_with_slash_or_tilde_is_a_bad_id_at_an_escaped_path(key, ptr):
 def test_problems_in_an_item_or_marker_carry_its_id(mutate, rule, path, iid):
     d = doc()
     mutate(d)
-    p = next(p for p in T.validate(d) if p["rule"] == rule)
+    p = next(p for p in V(d) if p["rule"] == rule)
     assert p["path"] == path
     assert p.get("id") == iid and (("id" in p) == (iid is not None))
 
@@ -579,7 +619,7 @@ def test_exactly_one_main_track_surfaces_as_three_rules():
 def test_bad_id_never_carries_an_id():
     d = doc()
     item(d, "c2")["id"] = "c 2"
-    p = next(p for p in T.validate(d) if p["rule"] == "bad_id")
+    p = next(p for p in V(d) if p["rule"] == "bad_id")
     assert p["path"] == "/tracks/2/items/1/id" and "id" not in p and "'c 2'" in p["message"]
 
 
@@ -587,7 +627,7 @@ def test_duplicate_id_has_no_id_and_points_at_the_second_copy():
     d = doc()
     track(d, "A1")["items"].append({"id": "c2", "type": "clip", "media": "m1", "src": [0, S], "at": 100 * S,
                                     "fade_in": 0, "fade_out": 0})
-    dup = [p for p in T.validate(d) if p["rule"] == "duplicate_id"]
+    dup = [p for p in V(d) if p["rule"] == "duplicate_id"]
     assert len(dup) == 1 and dup[0]["path"] == "/tracks/3/items/1" and "id" not in dup[0]
     assert "'c2'" in dup[0]["message"] and "/tracks/2/items/1" in dup[0]["message"]  # names the first copy
 
@@ -596,21 +636,31 @@ def test_other_problems_on_a_duplicated_or_malformed_id_carry_no_id():
     d = doc()
     track(d, "A1")["items"].append({"id": "c2", "type": "clip", "media": "m1", "src": [0, S], "at": 100 * S,
                                     "fade_in": S, "fade_out": S})  # duplicated id, and fades > 1 s
-    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    fade = next(p for p in V(d) if p["rule"] == "fade_too_long")
     assert fade["path"] == "/tracks/3/items/1" and "id" not in fade
     d = doc()
     item(d, "a1").update(id="a 1", fade_in=9 * S)  # malformed id
-    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    fade = next(p for p in V(d) if p["rule"] == "fade_too_long")
     assert "id" not in fade
     d = doc()
     d["media"]["a1"] = {"path": "x", "dur": S, "fps": None}  # an item id that clashes with a media key
     item(d, "a1")["fade_in"] = 9 * S
-    assert "id" not in next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    assert "id" not in next(p for p in V(d) if p["rule"] == "fade_too_long")
 
 
 def test_a_fade_error_on_a_normal_item_keeps_its_id():
     d = doc()
     item(d, "a1")["fade_in"] = 9 * S
-    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    fade = next(p for p in V(d) if p["rule"] == "fade_too_long")
     assert fade == {"rule": "fade_too_long", "path": "/tracks/3/items/0", "id": "a1",
                     "message": "fade_in + fade_out must not exceed the item's duration"}
+
+
+def test_three_copies_of_an_id_give_two_duplicate_id_errors():
+    d = doc()
+    for tid in ("A1", "A2"):
+        track(d, tid)["items"].append({"id": "c2", "type": "clip", "media": "m1", "src": [0, S], "at": 150 * S,
+                                       "fade_in": 0, "fade_out": 0})
+    dup = [p for p in V(d) if p["rule"] == "duplicate_id"]
+    assert [p["path"] for p in dup] == ["/tracks/3/items/1", "/tracks/4/items/2"]
+    assert all("id" not in p and "/tracks/2/items/1" in p["message"] for p in dup)
