@@ -38,8 +38,21 @@ FORGED_FIELDS = ("actor", "step")  # never taken from args: the session decides 
 MAX_OPS = 500
 SUMMARY_MAX = 200
 CLIENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
-LINE_FIELDS = ("seq", "op_id", "client_op_id", "group_id", "actor", "summary", "base_version", "new_version",
-               "hash", "ops", "inverse", "changed_ids", "undoes")
+LINE_FIELDS = (
+    "seq",
+    "op_id",
+    "client_op_id",
+    "group_id",
+    "actor",
+    "summary",
+    "base_version",
+    "new_version",
+    "hash",
+    "ops",
+    "inverse",
+    "changed_ids",
+    "undoes",
+)
 LINE_OPTIONAL = ("step",)
 
 # --------------------------------------------------------------------------- sessions
@@ -120,8 +133,9 @@ class OplogError(HermesStudioError):
 
 
 class _OpError(Exception):
-    def __init__(self, rule: str, message: str, key: str | tuple | None = None, *, code: str = "invalid_op",
-                 ident: Any = None) -> None:
+    def __init__(
+        self, rule: str, message: str, key: str | tuple | None = None, *, code: str = "invalid_op", ident: Any = None
+    ) -> None:
         super().__init__(message)
         self.rule, self.message, self.key, self.code = rule, message, key, code
         self.ident = ident  # for not_found: the id that wasn't there
@@ -293,8 +307,14 @@ def _timed(a: dict, item: dict) -> None:
 def op_insert_clip(ctx: _Ctx, a: dict) -> list[dict]:
     _, tr = _track(ctx.doc, a["track"])
     iid = _new_id(ctx, a, "c")
-    it = {"id": iid, "type": "clip", "media": a["media"], "src": copy.deepcopy(a["src"]),
-          "fade_in": a.get("fade_in", 0), "fade_out": a.get("fade_out", 0)}
+    it = {
+        "id": iid,
+        "type": "clip",
+        "media": a["media"],
+        "src": copy.deepcopy(a["src"]),
+        "fade_in": a.get("fade_in", 0),
+        "fade_out": a.get("fade_out", 0),
+    }
     _timed(a, it)
     if "props" in a:
         it["props"] = copy.deepcopy(a["props"])
@@ -308,8 +328,15 @@ def op_add_text(ctx: _Ctx, a: dict) -> list[dict]:
     a.setdefault("track", next((t["id"] for t in ctx.doc["tracks"] if t["role"] == "text"), "T1"))
     _, tr = _track(ctx.doc, a["track"])
     iid = _new_id(ctx, a, "x")
-    it = {"id": iid, "type": "text", "dur": a["dur"], "text": a["text"], "style": a["style"],
-          "fade_in": a.setdefault("fade_in", 0), "fade_out": a.setdefault("fade_out", 0)}
+    it = {
+        "id": iid,
+        "type": "text",
+        "dur": a["dur"],
+        "text": a["text"],
+        "style": a["style"],
+        "fade_in": a.setdefault("fade_in", 0),
+        "fade_out": a.setdefault("fade_out", 0),
+    }
     _timed(a, it)
     tr["items"].append(it)
     return [{"op": "delete_item", "id": iid}]
@@ -320,8 +347,9 @@ def op_add_transition(ctx: _Ctx, a: dict) -> list[dict]:
     a.setdefault("kind", "xfade")
     _, tr = _track(ctx.doc, a["track"])
     iid = _new_id(ctx, a, "tr")
-    tr["items"].append({"id": iid, "type": "transition", "kind": a["kind"], "between": copy.deepcopy(a["between"]),
-                        "dur": a["dur"]})
+    tr["items"].append(
+        {"id": iid, "type": "transition", "kind": a["kind"], "between": copy.deepcopy(a["between"]), "dur": a["dur"]}
+    )
     return [{"op": "delete_item", "id": iid}]
 
 
@@ -471,8 +499,12 @@ def op_split_clip(ctx: _Ctx, a: dict) -> list[dict]:
     off = cut - start
     if "ids" in a:
         ids = a["ids"]
-        if not (isinstance(ids, list) and len(ids) == 2 and all(isinstance(x, str) and T.ID_RE.fullmatch(x) for x in ids)
-                and ids[0] != ids[1]):
+        if not (
+            isinstance(ids, list)
+            and len(ids) == 2
+            and all(isinstance(x, str) and T.ID_RE.fullmatch(x) for x in ids)
+            and ids[0] != ids[1]
+        ):
             raise _OpError("bad_id", "ids must be two different ids", "ids")
         taken = ctx.taken(ctx.doc)
         if any(x in taken for x in ids):
@@ -493,20 +525,23 @@ def op_split_clip(ctx: _Ctx, a: dict) -> list[dict]:
         pa["dur"], pb["dur"] = off, dur - off
     pa["fade_out"], pb["fade_in"] = 0, 0
     pa["fade_in"], pb["fade_out"] = min(it["fade_in"], off), min(it["fade_out"], dur - off)
-    tr["items"][idx:idx + 1] = [pa, pb]
+    tr["items"][idx : idx + 1] = [pa, pb]
     transitions, anchors = {}, {}
     for t2 in ctx.doc["tracks"]:
         for x in t2["items"]:
             if x["type"] == "transition" and it["id"] in x["between"]:
                 transitions[x["id"]] = list(x["between"])
-                x["between"] = [ids[1] if x["between"][0] == it["id"] else x["between"][0],
-                                ids[0] if x["between"][1] == it["id"] else x["between"][1]]
+                x["between"] = [
+                    ids[1] if x["between"][0] == it["id"] else x["between"][0],
+                    ids[0] if x["between"][1] == it["id"] else x["between"][1],
+                ]
             elif x.get("anchor", {}).get("to") == it["id"]:
                 anchors[x["id"]] = copy.deepcopy(x["anchor"])
                 o = x["anchor"]["offset"]
                 x["anchor"] = {"to": ids[0], "offset": o} if o < off else {"to": ids[1], "offset": o - off}
-    return [{"op": "join_clips", "a": ids[0], "b": ids[1], "item": it, "index": idx,
-             "transitions": transitions, "anchors": anchors}]
+    return [
+        {"op": "join_clips", "a": ids[0], "b": ids[1], "item": it, "index": idx, "transitions": transitions, "anchors": anchors}
+    ]
 
 
 def op_join_clips(ctx: _Ctx, a: dict) -> list[dict]:
@@ -541,9 +576,15 @@ def op_delete_clip(ctx: _Ctx, a: dict) -> list[dict]:
         for x in t2["items"]:
             if x.get("anchor", {}).get("to") == it["id"]:
                 inv_anchor += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
-    gone = sorted(((i, x) for i, x in enumerate(tr["items"])
-                   if x["id"] == it["id"] or (x["type"] == "transition" and it["id"] in x["between"])),
-                  key=lambda p: p[0], reverse=True)
+    gone = sorted(
+        (
+            (i, x)
+            for i, x in enumerate(tr["items"])
+            if x["id"] == it["id"] or (x["type"] == "transition" and it["id"] in x["between"])
+        ),
+        key=lambda p: p[0],
+        reverse=True,
+    )
     for i, _ in gone:
         del tr["items"][i]
     inv_insert = [{"op": "insert_item", "track": tr["id"], "index": i, "item": x} for i, x in reversed(gone)]
@@ -587,8 +628,11 @@ def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
 
 # name -> (handler, required args, optional args)
 PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
-    "insert_clip": (op_insert_clip, frozenset({"track", "media", "src"}),
-                    frozenset({"id", "at", "anchor", "fade_in", "fade_out", "props"})),
+    "insert_clip": (
+        op_insert_clip,
+        frozenset({"track", "media", "src"}),
+        frozenset({"id", "at", "anchor", "fade_in", "fade_out", "props"}),
+    ),
     "move_clip": (op_move_clip, frozenset({"id", "at"}), frozenset()),
     "trim_clip": (op_trim_clip, frozenset({"id"}), frozenset({"src_in", "src_out", "dur", "ripple"})),
     "split_clip": (op_split_clip, frozenset({"id", "at"}), frozenset({"ids"})),
@@ -596,8 +640,11 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_props": (op_set_props, frozenset({"id", "props"}), frozenset()),
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
-    "add_text": (op_add_text, frozenset({"dur", "text", "style"}),
-                 frozenset({"id", "track", "at", "anchor", "fade_in", "fade_out"})),
+    "add_text": (
+        op_add_text,
+        frozenset({"dur", "text", "style"}),
+        frozenset({"id", "track", "at", "anchor", "fade_in", "fade_out"}),
+    ),
     "add_transition": (op_add_transition, frozenset({"between", "dur"}), frozenset({"id", "track", "kind"})),
     "add_track": (op_add_track, frozenset({"role"}), frozenset({"id"})),
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
@@ -680,8 +727,7 @@ class Oplog:
     ``path``, every entry is appended to that ``oplog.jsonl`` (flushed and fsynced) before it
     takes effect; a failed write leaves the timeline and the log unchanged."""
 
-    def __init__(self, base: dict, *, path: str | os.PathLike | None = None,
-                 new_op_id: Callable[[], str] | None = None) -> None:
+    def __init__(self, base: dict, *, path: str | os.PathLike | None = None, new_op_id: Callable[[], str] | None = None) -> None:
         self._base, _ = T.stamp_hash(base)
         self._doc = copy.deepcopy(self._base)
         self._entries: list[dict] = []
@@ -708,10 +754,8 @@ class Oplog:
 
     def history_diff(self, since_version: int) -> list[dict]:
         """What changed after ``since_version``: one short record per entry (no ops)."""
-        keep = ("seq", "op_id", "group_id", "actor", "step", "summary", "base_version", "new_version", "changed_ids",
-                "undoes")
-        return [{k: copy.deepcopy(e[k]) for k in keep if k in e} for e in self._entries
-                if e["new_version"] > since_version]
+        keep = ("seq", "op_id", "group_id", "actor", "step", "summary", "base_version", "new_version", "changed_ids", "undoes")
+        return [{k: copy.deepcopy(e[k]) for k in keep if k in e} for e in self._entries if e["new_version"] > since_version]
 
     # ---- the single entry point
 
@@ -740,21 +784,31 @@ class Oplog:
             raise OplogError("invalid_op", f"'{k}' is required", rule="missing_arg", path=T._j("", k))
         cid = args["client_op_id"]
         if not (isinstance(cid, str) and CLIENT_ID_RE.fullmatch(cid)):
-            raise OplogError("invalid_op", f"client_op_id must match {CLIENT_ID_RE.pattern}", rule="bad_arg",
-                             path="/client_op_id")
+            raise OplogError(
+                "invalid_op", f"client_op_id must match {CLIENT_ID_RE.pattern}", rule="bad_arg", path="/client_op_id"
+            )
         for k in ("group_id", "op_id"):
             if args.get(k) is not None and not (isinstance(args[k], str) and CLIENT_ID_RE.fullmatch(args[k])):
-                raise OplogError("invalid_op", f"{k} must match {CLIENT_ID_RE.pattern}", rule="bad_arg",
-                                 path=T._j("", k))
+                raise OplogError("invalid_op", f"{k} must match {CLIENT_ID_RE.pattern}", rule="bad_arg", path=T._j("", k))
         if "summary" in args:
             s = args["summary"]
-            if not (isinstance(s, str) and s.strip() and len(s) <= SUMMARY_MAX and _utf8(s)
-                    and unicodedata.normalize("NFC", s) == s):
-                raise OplogError("invalid_op", f"summary must be a non-empty NFC string of at most {SUMMARY_MAX} chars",
-                                 rule="bad_arg", path="/summary")
+            if not (
+                isinstance(s, str) and s.strip() and len(s) <= SUMMARY_MAX and _utf8(s) and unicodedata.normalize("NFC", s) == s
+            ):
+                raise OplogError(
+                    "invalid_op",
+                    f"summary must be a non-empty NFC string of at most {SUMMARY_MAX} chars",
+                    rule="bad_arg",
+                    path="/summary",
+                )
         if "project_id" in args and args["project_id"] != self._doc["id"]:
-            raise OplogError("not_found", f"no project {args['project_id']!r} here", rule="not_found",
-                             path="/project_id", id=str(args["project_id"]))
+            raise OplogError(
+                "not_found",
+                f"no project {args['project_id']!r} here",
+                rule="not_found",
+                path="/project_id",
+                id=str(args["project_id"]),
+            )
 
     def _base_version(self, args: dict, *, required: bool) -> None:
         if "base_version" not in args and not required:
@@ -763,9 +817,13 @@ class Oplog:
         if not (T._is_int(bv) and bv >= 0):
             raise OplogError("invalid_op", "base_version must be an integer >= 0", rule="bad_arg", path="/base_version")
         if bv != self.version:
-            raise OplogError("conflict", f"the timeline is at version {self.version}, not {bv}",
-                             hint="Read the history_diff, then retry against current_version.",
-                             current_version=self.version, history_diff=self.history_diff(min(bv, self.version)))
+            raise OplogError(
+                "conflict",
+                f"the timeline is at version {self.version}, not {bv}",
+                hint="Read the history_diff, then retry against current_version.",
+                current_version=self.version,
+                history_diff=self.history_diff(min(bv, self.version)),
+            )
 
     def _replayed(self, session: Session, tool: str, args: dict) -> dict | None:
         """The cached result of an identical earlier call with this (actor, client_op_id), or
@@ -776,9 +834,14 @@ class Oplog:
             return None
         entry = next(e for e in self._entries if e["op_id"] == r["op_id"])
         if not self._same_call(tool, args, entry):
-            raise OplogError("invalid_op", "this client_op_id was already used for a different call",
-                             rule="client_op_id_mismatch", path="/client_op_id", op_ids=[entry["op_id"]],
-                             hint="Use a new client_op_id for a new call.")
+            raise OplogError(
+                "invalid_op",
+                "this client_op_id was already used for a different call",
+                rule="client_op_id_mismatch",
+                path="/client_op_id",
+                op_ids=[entry["op_id"]],
+                hint="Use a new client_op_id for a new call.",
+            )
         return copy.deepcopy(r)
 
     def _same_call(self, tool: str, args: dict, e: dict) -> bool:
@@ -793,9 +856,7 @@ class Oplog:
             return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
 
         if tool == "timeline_apply":
-            if e["undoes"] is not None or not all(
-                same(args.get(k), e[k]) for k in ("base_version", "summary", "group_id")
-            ):
+            if e["undoes"] is not None or not all(same(args.get(k), e[k]) for k in ("base_version", "summary", "group_id")):
                 return False
             then = Oplog(self._base)
             for prev in self._entries[: e["seq"] - 1]:
@@ -833,8 +894,14 @@ class Oplog:
                 a, inv = _apply_one(ctx, op, internal)
             except _OpError as e:
                 found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
-                raise OplogError(e.code, f"op {k}: {e.message}", rule=e.rule, op_index=k,
-                                 path=T._j("", "ops", k, *_key_parts(e.key)), **found_id) from None
+                raise OplogError(
+                    e.code,
+                    f"op {k}: {e.message}",
+                    rule=e.rule,
+                    op_index=k,
+                    path=T._j("", "ops", k, *_key_parts(e.key)),
+                    **found_id,
+                ) from None
             logged.append(a)
             inverse = inv + inverse
             ctx.seen |= set(T._all_ids(ctx.doc))
@@ -844,10 +911,16 @@ class Oplog:
         new.pop("hash", None)
         found = T.validate(new)
         if found:
-            raise OplogError("invalid_op", f"the timeline after these ops is invalid: {found[0]['message']}",
-                             hint=T._HINTS.get(found[0]["rule"], ""), op_index=self._first_bad(ops, internal, start),
-                             rule=found[0]["rule"], path=found[0]["path"],
-                             **({"id": found[0]["id"]} if "id" in found[0] else {}), problems=found)
+            raise OplogError(
+                "invalid_op",
+                f"the timeline after these ops is invalid: {found[0]['message']}",
+                hint=T._HINTS.get(found[0]["rule"], ""),
+                op_index=self._first_bad(ops, internal, start),
+                rule=found[0]["rule"],
+                path=found[0]["path"],
+                **({"id": found[0]["id"]} if "id" in found[0] else {}),
+                problems=found,
+            )
         new, _ = T.stamp_hash(new)
         return new, logged, inverse
 
@@ -868,13 +941,31 @@ class Oplog:
                 return k
         return len(ops) - 1
 
-    def _commit(self, session: Session, args: dict, new: dict, logged: list, inverse: list,
-                undoes: list[str] | None, summary: str, warnings: list[dict]) -> dict:
+    def _commit(
+        self,
+        session: Session,
+        args: dict,
+        new: dict,
+        logged: list,
+        inverse: list,
+        undoes: list[str] | None,
+        summary: str,
+        warnings: list[dict],
+    ) -> dict:
         entry: dict[str, Any] = {
-            "seq": len(self._entries) + 1, "op_id": self._new_op_id(), "client_op_id": args["client_op_id"],
-            "group_id": args.get("group_id"), "actor": session.actor.as_dict(), "summary": summary,
-            "base_version": self.version, "new_version": new["version"], "hash": new["hash"], "ops": logged,
-            "inverse": inverse, "changed_ids": changed_ids(self._doc, new), "undoes": undoes,
+            "seq": len(self._entries) + 1,
+            "op_id": self._new_op_id(),
+            "client_op_id": args["client_op_id"],
+            "group_id": args.get("group_id"),
+            "actor": session.actor.as_dict(),
+            "summary": summary,
+            "base_version": self.version,
+            "new_version": new["version"],
+            "hash": new["hash"],
+            "ops": logged,
+            "inverse": inverse,
+            "changed_ids": changed_ids(self._doc, new),
+            "undoes": undoes,
         }
         step = session.step()
         if step is not None:
@@ -919,36 +1010,41 @@ class Oplog:
         if done is not None:
             return done
         if ("op_id" in args) == ("group_id" in args) or (redo and "group_id" in args):
-            raise OplogError("invalid_op", "give exactly one of op_id or group_id (redo takes op_id)",
-                             rule="bad_arg", path="")
+            raise OplogError("invalid_op", "give exactly one of op_id or group_id (redo takes op_id)", rule="bad_arg", path="")
         self._base_version(args, required=False)
         cancelled = self._cancelled()
         if "op_id" in args:
             hit = [e for e in self._entries if e["op_id"] == args["op_id"]]
             if not hit:
-                raise OplogError("not_found", f"no entry {args['op_id']!r}", rule="not_found", path="/op_id",
-                                 id=args["op_id"])
+                raise OplogError("not_found", f"no entry {args['op_id']!r}", rule="not_found", path="/op_id", id=args["op_id"])
             if redo and not hit[0]["undoes"]:
-                raise OplogError("invalid_op", "history_redo takes the op_id of an undo entry", rule="not_an_undo",
-                                 path="/op_id")
+                raise OplogError("invalid_op", "history_redo takes the op_id of an undo entry", rule="not_an_undo", path="/op_id")
             group = [e for e in hit if e["op_id"] not in cancelled]
         else:
             hit = [e for e in self._entries if e["group_id"] == args["group_id"]]
             if not hit:
-                raise OplogError("not_found", f"no group {args['group_id']!r}", rule="not_found", path="/group_id",
-                                 id=args["group_id"])
+                raise OplogError(
+                    "not_found", f"no group {args['group_id']!r}", rule="not_found", path="/group_id", id=args["group_id"]
+                )
             group = [e for e in hit if e["op_id"] not in cancelled]
         if not group:
-            raise OplogError("invalid_op", "already undone", rule="already_undone",
-                             path="/op_id" if "op_id" in args else "/group_id")
+            raise OplogError(
+                "invalid_op", "already undone", rule="already_undone", path="/op_id" if "op_id" in args else "/group_id"
+            )
         # every undo_blocked result points at the target the caller named
         where = {"path": "/op_id", "id": args["op_id"]} if "op_id" in args else {"path": "/group_id", "id": args["group_id"]}
         target_ids = [e["op_id"] for e in sorted(group, key=lambda e: e["seq"])]
         if session.actor.kind == "agent":
             others = [e["op_id"] for e in group if e["actor"] != session.actor.as_dict()]
             if others:
-                raise OplogError("undo_blocked", "an agent can only undo its own entries", reason="actor",
-                                 op_ids=others, **where, hint="Ask the person to undo it.")
+                raise OplogError(
+                    "undo_blocked",
+                    "an agent can only undo its own entries",
+                    reason="actor",
+                    op_ids=others,
+                    **where,
+                    hint="Ask the person to undo it.",
+                )
         ids = {e["op_id"] for e in group}
         first = min(e["seq"] for e in group)
         seq_of = {e["op_id"]: e["seq"] for e in self._entries}
@@ -962,15 +1058,28 @@ class Oplog:
             if touched & set(e["changed_ids"]) or _mentions(e["ops"], touched):
                 dependents.append(e["op_id"])
         if dependents:
-            raise OplogError("undo_blocked", "later entries changed the same items", reason="dependents",
-                             blocking_op_ids=dependents, op_ids=dependents, **where, hint="Undo those first, or restore to before this step.")
+            raise OplogError(
+                "undo_blocked",
+                "later entries changed the same items",
+                reason="dependents",
+                blocking_op_ids=dependents,
+                op_ids=dependents,
+                **where,
+                hint="Undo those first, or restore to before this step.",
+            )
         ops = [op for e in sorted(group, key=lambda e: -e["seq"]) for op in e["inverse"]]
         try:
             new, logged, inverse = self._run(ops, internal=True)
         except OplogError as e:
-            raise OplogError("undo_blocked", "the inverse no longer applies", reason="inverse_invalid",
-                             op_ids=target_ids, **where, problems=e.extra.get("problems", []),
-                             rule=e.extra.get("rule")) from None
+            raise OplogError(
+                "undo_blocked",
+                "the inverse no longer applies",
+                reason="inverse_invalid",
+                op_ids=target_ids,
+                **where,
+                problems=e.extra.get("problems", []),
+                rule=e.extra.get("rule"),
+            ) from None
         last = max(group, key=lambda e: e["seq"])
         summary = args.get("summary") or (("Redo: " if redo else "Undo: ") + last["summary"])[:SUMMARY_MAX]
         undoes = [e["op_id"] for e in sorted(group, key=lambda e: -e["seq"])]
@@ -1031,8 +1140,9 @@ def _mentions(obj: Any, ids: set[str]) -> bool:
         return any(_mentions(x, ids) for x in obj)
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k in _REF_KEYS and (v in ids if isinstance(v, str) else
-                                   isinstance(v, list) and any(isinstance(x, str) and x in ids for x in v)):
+            if k in _REF_KEYS and (
+                v in ids if isinstance(v, str) else isinstance(v, list) and any(isinstance(x, str) and x in ids for x in v)
+            ):
                 return True
             if isinstance(v, (dict, list)) and _mentions(v, ids):
                 return True
@@ -1040,10 +1150,21 @@ def _mentions(obj: Any, ids: set[str]) -> bool:
 
 
 def _result(entry: dict, warnings: list[dict]) -> dict:
-    r = {"ok": True, "op_id": entry["op_id"], "group_id": entry["group_id"], "seq": entry["seq"],
-         "new_version": entry["new_version"], "hash": entry["hash"], "tick_rate": T.TICK_RATE,
-         "summary": entry["summary"], "changed_ids": list(entry["changed_ids"]), "undoes": entry["undoes"],
-         "before_frame": None, "after_frame": None, "warnings": copy.deepcopy(warnings)}
+    r = {
+        "ok": True,
+        "op_id": entry["op_id"],
+        "group_id": entry["group_id"],
+        "seq": entry["seq"],
+        "new_version": entry["new_version"],
+        "hash": entry["hash"],
+        "tick_rate": T.TICK_RATE,
+        "summary": entry["summary"],
+        "changed_ids": list(entry["changed_ids"]),
+        "undoes": entry["undoes"],
+        "before_frame": None,
+        "after_frame": None,
+        "warnings": copy.deepcopy(warnings),
+    }
     return r
 
 
@@ -1057,8 +1178,13 @@ def _strip_forged(args: dict) -> tuple[dict, list[dict]]:
         for k in FORGED_FIELDS:
             if k in obj:
                 del obj[k]
-                warnings.append({"code": "ignored_field", "path": T._j(base, k),
-                                 "message": f"'{k}' is ignored: it comes from the session, not the arguments"})
+                warnings.append(
+                    {
+                        "code": "ignored_field",
+                        "path": T._j(base, k),
+                        "message": f"'{k}' is ignored: it comes from the session, not the arguments",
+                    }
+                )
         return obj
 
     args = drop(args, "")
