@@ -79,6 +79,21 @@ Fonts in hermes_studio/data/fonts/, bundled unmodified, SIL Open Font License 1.
 Sørensen), Caveat (Impallari Type), JetBrains Mono (JetBrains), Open Sans (Steve Matteson /
 Google). Each font's OFL text is in hermes_studio/data/fonts/OFL-<Family>.txt.
 
+--------------------------------------------------------------------------------
+OpenCut classic (https://github.com/OpenCut-app/opencut-classic), MIT. Two patterns in
+hermes_studio/timeline.py are modelled on it (ideas only, no code copied verbatim): the
+half-open overlap test (apps/web/src/timeline/placement/overlap.ts) and the table of which
+items each track kind holds (apps/web/src/timeline/track-capabilities.ts), as of commit
+cf5e79e919144200294fb9fed22a222592a0aeea.
+
+Copyright 2025-2026 OpenCut
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 ================================================================================
 FFmpeg (bundled program: resources/engine/bin/ffmpeg, ffprobe)
 ================================================================================
@@ -194,7 +209,29 @@ loads Chromium's FFmpeg build, libffmpeg.so / ffmpeg.dll, which reports
   uncompressed `git archive --format=tar`, bundle sources-common). See
   "Mirrored source archives" below.
 
-The versions of PyAV and opencv-python-headless above are pinned for the app
+================================================================================
+OpenTimelineIO (opentimelineio 0.18.1, Apache-2.0)
+================================================================================
+The app's engine uses OpenTimelineIO to export timelines as .otio files
+(hermes_studio/timeline.py). The wheel's compiled core includes Imath
+(BSD-3-Clause), RapidJSON (MIT; its bundled msinttypes is BSD-3-Clause) and
+pybind11 (BSD-3-Clause). OpenTimelineIO's NOTICE reads:
+
+  OpenTimelineIO
+  Copyright Contributors to the OpenTimelineIO project.
+  All rights reserved.
+
+  This product includes software developed at:
+
+  Pixar (http://www.pixar.com/).
+
+Full texts: licenses/OpenTimelineIO.txt (Apache License 2.0 and the three
+bundled licenses); the wheel also ships LICENSE.txt and NOTICE.txt in
+opentimelineio-0.18.1.dist-info/licenses/.
+  Source: https://github.com/AcademySoftwareFoundation/OpenTimelineIO/tree/v0.18.1
+          https://pypi.org/project/opentimelineio/0.18.1/
+
+The versions of PyAV, opencv-python-headless and opentimelineio above are pinned for the app
 build in packaging/engine-constraints.txt. Change this NOTICE whenever that file or the
 FFMPEG_* pins in .github/workflows/desktop.yml change; tests/test_notices.py
 fails otherwise.

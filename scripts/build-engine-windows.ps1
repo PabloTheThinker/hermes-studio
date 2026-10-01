@@ -75,7 +75,7 @@ $env:ENGINE_OUT = $Out
 $env:REPO_ROOT = $Root
 $smoke = @'
 import os, shutil, subprocess, sys, tempfile
-import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
+import hermes_studio.studio, hermes_studio.pipeline, hermes_studio.timeline, faster_whisper, yt_dlp, opentimelineio  # noqa: F401
 from faster_whisper.audio import decode_audio
 from hermes_studio.download import _ytdlp
 for tool in ("ffmpeg", "ffprobe"):
@@ -96,6 +96,7 @@ assert f"FFmpeg {av.ffmpeg_version_info}" in notice, f"NOTICE does not name PyAV
 for lib, v in av.library_versions.items():
     assert f"{lib} {'.'.join(map(str, v))}" in notice, f"NOTICE does not list {lib} {v}"
 assert f"opencv-python-headless {version('opencv-python-headless')}" in notice, "NOTICE does not name the bundled OpenCV wheel"
+assert f"opentimelineio {version('opentimelineio')}" in notice, "NOTICE does not name the bundled OpenTimelineIO wheel"
 # Every library in the shipped ffmpeg and PyAV wheel must be the set NOTICE and
 # packaging/third-party-sources.txt cover (tests/test_notices.py maps them).
 pkg = os.path.join(os.environ["REPO_ROOT"], "packaging")

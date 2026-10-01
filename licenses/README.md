@@ -14,5 +14,6 @@ uses which license.
 | `Rust-std-Apache-2.0.txt` | Apache License 2.0 (rust-lang/rust `LICENSE-APACHE` at d080e7dff1b0) | same; the Rust standard library is MIT OR Apache-2.0 |
 | `winpthreads.txt` | MIT and BSD-3-Clause (mingw-w64 v14.0.0 `mingw-w64-libraries/winpthreads/COPYING`) | `libwinpthread-1.dll` in the PyAV Windows wheel |
 | `zlib.txt` | zlib License (zlib 1.3.2 `LICENSE`) | `zlib1.dll` in the PyAV Windows wheel |
+| `OpenTimelineIO.txt` | Apache License 2.0 (OpenTimelineIO 0.18.1 `LICENSE.txt` and `NOTICE.txt`), plus the BSD-3-Clause / MIT texts of the Imath, RapidJSON and pybind11 code compiled into it | the `opentimelineio` wheel in the engine (timeline export) |
 
 Hermes Studio's own code is MIT (`LICENSE`).

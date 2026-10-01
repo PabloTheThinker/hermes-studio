@@ -82,7 +82,7 @@ rm -rf "$OUT/python/lib/python$PYVER/test" "$OUT/python/lib/python$PYVER/idlelib
 #    audio the way faster-whisper does (catches PyAV/faster-whisper API drift).
 ENGINE_OUT="$OUT" REPO_ROOT="$ROOT" PATH="$OUT/bin:$OUT/python/bin:/usr/bin:/bin" "$PY" - <<'PY'
 import os, shutil, subprocess, sys, tempfile
-import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
+import hermes_studio.studio, hermes_studio.pipeline, hermes_studio.timeline, faster_whisper, yt_dlp, opentimelineio  # noqa: F401
 from faster_whisper.audio import decode_audio
 for tool in ("ffmpeg", "ffprobe", "yt-dlp"):
     assert shutil.which(tool), f"{tool} not found on PATH"
@@ -101,6 +101,7 @@ for lib, v in av.library_versions.items():
     assert f"{lib} {'.'.join(map(str, v))}" in notice, f"NOTICE does not list {lib} {v}"
 from importlib.metadata import version
 assert f"opencv-python-headless {version('opencv-python-headless')}" in notice, "NOTICE does not name the bundled OpenCV wheel"
+assert f"opentimelineio {version('opentimelineio')}" in notice, "NOTICE does not name the bundled OpenTimelineIO wheel"
 # Every library in the shipped ffmpeg and PyAV wheel must be the set NOTICE and
 # packaging/third-party-sources.txt cover (tests/test_notices.py maps them).
 pkg = os.path.join(os.environ["REPO_ROOT"], "packaging")
