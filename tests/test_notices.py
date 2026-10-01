@@ -27,6 +27,7 @@ LICENSE_TEXTS = {
     "Rust-std-Apache-2.0.txt": ("Apache License\n                        Version 2.0, January 2004", 9000),
     "winpthreads.txt": ("Copyright (c) 2011 mingw-w64 project", 2500),
     "zlib.txt": ("Permission is granted to anyone to use this software for any purpose", 900),
+    "OpenTimelineIO.txt": ("Apache License\n                           Version 2.0, January 2004", 15000),
 }
 
 
@@ -65,11 +66,18 @@ def test_notice_names_the_pinned_wheels():
         for line in (ROOT / "packaging/engine-constraints.txt").read_text().splitlines()
         if "==" in line and not line.startswith("#")
     )
-    assert set(pins) == {"av", "opencv-python-headless"}
+    assert set(pins) == {"av", "opencv-python-headless", "opentimelineio"}
     assert f"PyAV {pins['av']} (BSD-3-Clause)" in NOTICE
     assert f"PyAV-Org/PyAV/tree/v{pins['av']}" in NOTICE
     assert f"opencv-python-headless {pins['opencv-python-headless']}" in NOTICE
     assert "libx264 and libx265" in NOTICE  # the GPL parts of the PyAV wheel
+    otio = pins["opentimelineio"]
+    assert f"OpenTimelineIO (opentimelineio {otio}, Apache-2.0)" in NOTICE
+    assert f"OpenTimelineIO/tree/v{otio}" in NOTICE and f"opentimelineio-{otio}.dist-info" in NOTICE
+    assert f"OpenTimelineIO {otio} (opentimelineio wheel)" in (ROOT / "licenses/OpenTimelineIO.txt").read_text()
+    dep = next(d for d in tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["dependencies"]
+               if d.startswith("opentimelineio"))
+    assert f">={otio}" in dep, "pyproject.toml must allow the pinned opentimelineio"
 
 
 @pytest.mark.parametrize("name,header,size", [(n, h, z) for n, (h, z) in LICENSE_TEXTS.items()])
@@ -83,7 +91,8 @@ def test_license_texts_are_complete(name, header, size):
 def test_every_license_text_is_known_and_byte_checked_in_the_app():
     files = {p.name for p in (ROOT / "licenses").iterdir()} - {"README.md"}
     assert files == set(LICENSE_TEXTS), "add new license texts to LICENSE_TEXTS and licenses/README.md"
-    for name in ("Rust-std-MIT.txt", "Rust-std-Apache-2.0.txt", "winpthreads.txt", "zlib.txt", "GCC-RLE-3.1.txt"):
+    for name in ("Rust-std-MIT.txt", "Rust-std-Apache-2.0.txt", "winpthreads.txt", "zlib.txt", "GCC-RLE-3.1.txt",
+                 "OpenTimelineIO.txt"):
         assert f"licenses/{name}" in NOTICE, f"NOTICE must point at licenses/{name}"
     # The AppImage and installer checks compare every file in licenses/ with the shipped copies
     # in resources/ and resources/engine/.
@@ -457,3 +466,13 @@ def test_appimage_leaves_out_unused_indicator_and_notification_libs():
         assert not re.search(r"\b(Tray|Notification|setBadge\w*|appIndicator)\b", f.read_text()), f
     assert "bash /work/check-appimage-libs.sh" in (ROOT / "scripts/clean-test-linux.sh").read_text()
     assert "cp scripts/clean-test-linux.sh scripts/check-appimage-libs.sh work/" in DESKTOP_YML
+
+
+def test_opencut_patterns_are_attributed():
+    """timeline.py borrows two OpenCut classic (MIT) patterns; NOTICE keeps its license. No GPL editor code."""
+    src = (ROOT / "hermes_studio/timeline.py").read_text()
+    assert "OpenCut classic (MIT; see NOTICE)" in src
+    assert "OpenCut classic (https://github.com/OpenCut-app/opencut-classic), MIT." in NOTICE
+    assert "Copyright 2025-2026 OpenCut" in NOTICE
+    for gpl in ("kdenlive", "shotcut", "olive", "openshot", "losslesscut"):
+        assert gpl not in src.lower()

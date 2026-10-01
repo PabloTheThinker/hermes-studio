@@ -11,6 +11,8 @@ dependencies = [
   "yt-dlp>=2026.8.0",
   # Design: page render for agents and export.
   "pillow>=10.3",
+  # Timeline: .otio export (Apache-2.0; NOTICE).
+  "opentimelineio>=0.18.1,<0.19",
 ]
 
 [project.optional-dependencies]
