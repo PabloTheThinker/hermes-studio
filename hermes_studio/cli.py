@@ -299,6 +299,43 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--plan", choices=PLANS, default="heuristic")
     _common(pl)
 
+    dg = sub.add_parser("design", help="Canva-style designs: carousels, thumbnails, posts (new, list, show, edit, render)")
+    dsub = dg.add_subparsers(dest="design_cmd", metavar="<action>", parser_class=_Parser)
+    dn = dsub.add_parser("new", help="start a design from a size and a template")
+    dn.add_argument("--title", default="")
+    dn.add_argument("--size", default="tiktok-carousel", help="tiktok-carousel, story, square, youtube-thumb, x-post")
+    dn.add_argument("--template", default="blank", help="blank, carousel, quote, thumbnail, announcement")
+    dn.add_argument("--w", type=int)
+    dn.add_argument("--h", type=int)
+    _common(dn)
+    _common(dsub.add_parser("list", help="your designs, newest first"))
+    _common(dsub.add_parser("options", help="sizes, templates, fonts and photo looks"))
+    dsh = dsub.add_parser("show", help="one design as JSON")
+    dsh.add_argument("id")
+    _common(dsh)
+    de = dsub.add_parser("edit", help="apply edit ops (JSON list) to a design")
+    de.add_argument("id")
+    de.add_argument("ops", help='JSON list, e.g. \'[{"op":"update","page":1,"index":0,"set":{"text":"Hi"}}]\' or @file.json')
+    _common(de)
+    drz = dsub.add_parser("resize", help="copy a design into another size (the original stays)")
+    drz.add_argument("id")
+    drz.add_argument("--size", default="story", help="tiktok-carousel, story, square, youtube-thumb, x-post")
+    _common(drz)
+    dr_ = dsub.add_parser("render", help="export pages as PNG or JPG")
+    dr_.add_argument("id")
+    dr_.add_argument("--pages", default="", help="e.g. 1,3 (default: all)")
+    dr_.add_argument("--format", dest="fmt", choices=["png", "jpg"], default="png")
+    _common(dr_)
+    _common(dg)
+
+    ph = sub.add_parser("photo", help="edit a photo: cutout (remove background), enhance, look")
+    ph.add_argument("op", choices=["cutout", "enhance", "look"])
+    ph.add_argument("src", help="image file (PNG, JPEG, WebP)")
+    ph.add_argument("--out", default="")
+    ph.add_argument("--look", default="", help="bw, warm, cool, punch, fade, noir")
+    ph.add_argument("--strength", type=float, default=1.0)
+    _common(ph)
+
     tl = sub.add_parser("tools", help="what Studio can do: modes, styles, filters, layouts")
     _common(tl)
 
@@ -706,11 +743,73 @@ def cmd_update(a: argparse.Namespace, o: Out) -> int:
     return 0
 
 
+def cmd_design(a: argparse.Namespace, o: Out) -> int:
+    import json as _json
+
+    from hermes_studio import api
+
+    act = getattr(a, "design_cmd", None) or "list"
+    if act == "new":
+        res = api.design_new(a.title, a.size, a.template, a.w, a.h)
+        o.emit(res)
+        o.say(o.green("✓ ") + f"{res['id']}  {res['design']['title']}  ({len(res['design']['pages'])} pages)")
+        o.say(o.dim(f"open in the desk: Design · or: hermes-studio design render {res['id']}"))
+    elif act == "list":
+        res = api.design_list()
+        o.emit(res)
+        for d in res["designs"]:
+            o.say(f"{o.amber(d['id'])}  {d['title']}  {d['w']}x{d['h']}  {d['pages']} pages")
+        if not res["designs"]:
+            o.say(o.dim("no designs yet: hermes-studio design new --template carousel"))
+    elif act == "options":
+        res = api.design_options()
+        o.emit(res)
+        o.say("sizes      " + ", ".join(res["sizes"]))
+        o.say("templates  " + ", ".join(t["id"] for t in res["templates"]))
+        o.say("fonts      " + ", ".join(res["fonts"]))
+        o.say("looks      " + ", ".join(res["looks"]))
+    elif act == "show":
+        res = api.design_show(a.id)
+        o.emit(res)
+        o.say(_json.dumps(res["design"], indent=1))
+    elif act == "edit":
+        raw = a.ops
+        if raw.startswith("@"):
+            raw = Path(raw[1:]).expanduser().read_text()
+        try:
+            ops = _json.loads(raw)
+        except ValueError as exc:
+            raise HermesStudioError(f"ops is not JSON: {exc}", hint="pass a JSON list or @file.json") from None
+        res = api.design_edit(a.id, ops)
+        o.emit({"ok": True, "id": a.id, "pages": len(res["design"]["pages"])})
+        o.say(o.green("✓ ") + f"{a.id} saved")
+    elif act == "resize":
+        res = api.design_resize(a.id, a.size)
+        o.emit(res)
+        o.say(o.green("✓ ") + f"{res['id']}  {res['design']['title']}")
+    elif act == "render":
+        pages = [int(x) for x in a.pages.split(",") if x.strip()] or None
+        res = api.design_render(a.id, pages, a.fmt)
+        o.emit(res)
+        for f in res["files"]:
+            o.say(o.green("✓ ") + _short(f))
+    return 0
+
+
+def cmd_photo(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio import api
+
+    res = api.photo_edit(a.op, a.src, a.out, a.look, a.strength)
+    o.emit(res)
+    o.say(o.green("✓ ") + f"{a.op}: {_short(res['file'])}  {res['w']}x{res['h']}")
+    return 0
+
+
 COMMANDS = {
     "run": cmd_run, "captions": cmd_run, "list": cmd_list, "ls": cmd_list, "show": cmd_show, "open": cmd_open,
     "probe": cmd_probe, "recommend": cmd_recommend, "restyle": cmd_restyle, "edit": cmd_edit, "name": cmd_name,
     "copy": cmd_copy, "transcribe": cmd_transcribe, "plan": cmd_plan, "tools": cmd_tools, "doctor": cmd_doctor,
-    "studio": cmd_studio, "organize": cmd_organize, "mcp": cmd_mcp, "app": cmd_app, "update": cmd_update,
+    "studio": cmd_studio, "organize": cmd_organize, "design": cmd_design, "photo": cmd_photo, "mcp": cmd_mcp, "app": cmd_app, "update": cmd_update,
 }
 
 

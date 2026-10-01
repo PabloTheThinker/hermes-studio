@@ -493,3 +493,73 @@ def doctor() -> dict:
 
     ok = all(c["ok"] for c in checks if c["required"])
     return {"ok": ok, "version": __version__, "python": sys.executable, "checks": checks}
+
+
+# --------------------------------------------------------------------------- design + photo
+
+
+def _design_call(fn, *args, **kw) -> dict:
+    from hermes_studio.design import DesignError
+    from hermes_studio.photo import PhotoError
+
+    try:
+        return fn(*args, **kw)
+    except (DesignError, PhotoError) as exc:
+        msg = str(exc)
+        code = "not_found" if msg.startswith("no ") else "missing_dependency" if "OpenCV" in msg else "bad_input"
+        raise HermesStudioError(msg, code=code, hint="hermes-studio design --help") from None
+
+
+def design_new(title: str = "", size: str = "tiktok-carousel", template: str = "blank",
+               w: int | None = None, h: int | None = None) -> dict:
+    from hermes_studio import design
+
+    doc = _design_call(design.create, title, size, template, w, h)
+    return {"ok": True, "id": doc["id"], "design": doc, "folder": str(design.design_dir(doc["id"]))}
+
+
+def design_list() -> dict:
+    from hermes_studio import design
+
+    return {"ok": True, "designs": design.list_designs()}
+
+
+def design_show(design_id: str) -> dict:
+    from hermes_studio import design
+
+    doc = _design_call(design.load, design_id)
+    return {"ok": True, "id": design_id, "design": doc, "folder": str(design.design_dir(design_id))}
+
+
+def design_edit(design_id: str, ops: list[dict]) -> dict:
+    from hermes_studio import design
+
+    doc = _design_call(design.apply_ops, design_id, ops)
+    return {"ok": True, "id": design_id, "design": doc}
+
+
+def design_render(design_id: str, pages: list[int] | None = None, fmt: str = "png") -> dict:
+    from hermes_studio import design
+
+    return _design_call(design.render, design_id, pages=pages, fmt=fmt)
+
+
+def design_options() -> dict:
+    from hermes_studio import design, photo
+
+    return {"ok": True, "sizes": {k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
+            "templates": design.templates(), "fonts": {k: v[1] for k, v in design.FONTS.items()},
+            "layer_types": list(design.LAYER_TYPES), "looks": list(photo.LOOKS)}
+
+
+def photo_edit(op: str, src: str, out: str = "", look: str = "", strength: float = 1.0) -> dict:
+    from hermes_studio import photo
+
+    return _design_call(photo.run_file, op, src, out, look_name=look, strength=strength)
+
+
+def design_resize(design_id: str, size: str = "", w: int | None = None, h: int | None = None) -> dict:
+    from hermes_studio import design
+
+    doc = _design_call(design.resize, design_id, size, w, h)
+    return {"ok": True, "id": doc["id"], "design": doc, "from": design_id}

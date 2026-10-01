@@ -9,6 +9,8 @@ dependencies = [
   # PyAV 19 dropped open(metadata_errors=...), which faster-whisper 1.2.x still passes.
   "av>=11,<19",
   "yt-dlp>=2026.8.0",
+  # Design: page render for agents and export.
+  "pillow>=10.3",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +25,7 @@ hermesclip = "hermes_studio.cli:_old_name"
 include = ["hermes_studio*"]
 
 [tool.setuptools.package-data]
-hermes_studio = ["ui/*", "data/*"]
+hermes_studio = ["ui/*", "ui/vendor/*", "data/*", "data/fonts/*"]
 
 [tool.ruff]
 line-length = 130

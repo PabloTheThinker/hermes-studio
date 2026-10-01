@@ -2,7 +2,8 @@ name: hermes-studio
 version: "0.5.1"
 description: >
   Hermes Studio for any Hermes Agent: long video or link in, captioned
-  short clips out. Local Whisper + FFmpeg. Localhost library. Does not post.
+  short clips out; Canva-style designs (carousels, covers, thumbnails) and
+  photo edits. Local Whisper + FFmpeg. Localhost library. Does not post.
 author: "Pablo Navarro"
 kind: standalone
 provides_tools:
@@ -18,3 +19,5 @@ provides_tools:
   - hermes_studio_copy
   - hermes_studio_restyle
   - hermes_studio_name
+  - hermes_studio_design
+  - hermes_studio_photo
