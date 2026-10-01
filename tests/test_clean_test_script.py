@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -19,11 +20,15 @@ SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "clean-test-linux.
 pytestmark = pytest.mark.skipif(not (shutil.which("sh") and shutil.which("curl")), reason="needs sh and curl")
 
 
-def _helpers() -> str:
+def _block(name: str) -> str:
     text = SCRIPT.read_text()
-    start = text.index("# >>> job helpers")
-    end = text.index("# <<< job helpers <<<")
+    start = text.index(f"# >>> {name}")
+    end = text.index(f"# <<< {name} <<<")
     return text[start:end]
+
+
+def _helpers() -> str:
+    return _block("job helpers")
 
 
 class Engine:
@@ -64,6 +69,9 @@ class Engine:
                 n = engine.gets.get(job_id, 0)
                 engine.gets[job_id] = n + 1
                 status, error = seq[min(n, len(seq) - 1)]
+                if status == "hang":  # a wedged engine: answer far later than curl's --max-time
+                    time.sleep(error)
+                    status, error = "running", None
                 job = {"id": job_id, "status": status, "live_status": None, "error": error, "clips": []}
                 return self._send(200, {"ok": True, "job": job})
 
@@ -76,13 +84,13 @@ class Engine:
         self.server.server_close()
 
 
-def _run(engine, tmp_path, max_polls=20):
+def _run(engine, tmp_path, max_polls=20, **env_extra):
     script = (
         "set -e\n" + _helpers() + 'submit_job "{\\"src\\":\\"/s.mp4\\",\\"mode\\":\\"clip\\"}" clip\n'
         f'wait_job "$JOB_ID" {max_polls} clip\n'
         'echo "WAITED FOR $JOB_ID"\n'
     )
-    env = {**os.environ, "PORT": str(engine.port), "HOME": str(tmp_path), "POLL_SLEEP": "0"}
+    env = {**os.environ, "PORT": str(engine.port), "HOME": str(tmp_path), "POLL_SLEEP": "0", **env_extra}
     try:
         return subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=60)
     finally:
@@ -135,3 +143,84 @@ def test_old_list_order_polling_is_gone():
     text = SCRIPT.read_text()
     assert '/api/jobs" | grep' not in text
     assert text.count('wait_job "$JOB_ID"') == 2
+
+
+def test_cancelled_job_fails_fast(tmp_path):
+    eng = Engine("cancel000005", {"cancel000005": [("running", None), ("cancelled", "cancelled by user")]})
+    r = _run(eng, tmp_path, max_polls=50)
+    assert r.returncode == 1
+    assert 'FAIL: clip job cancel000005 cancelled: "error": "cancelled by user"' in r.stdout
+    assert eng.gets == {"cancel000005": 2}, "stops at the first cancelled poll, not at the poll limit"
+    assert "WAITED FOR" not in r.stdout
+
+
+def test_a_wedged_engine_costs_one_bounded_poll(tmp_path):
+    eng = Engine("wedged000006", {"wedged000006": [("hang", 5)]})
+    t0 = time.monotonic()
+    r = _run(eng, tmp_path, max_polls=2, CURL_MAX_TIME="1")
+    assert time.monotonic() - t0 < 5, "curl --max-time bounds each poll"
+    assert r.returncode == 1
+    assert "FAIL: clip job wedged000006 did not finish after 2 polls (last status: none, last HTTP: 000)" in r.stdout
+
+
+def test_every_curl_in_the_clean_tests_is_bounded():
+    for name in ("clean-test-linux.sh", "clean-test-installer.sh"):
+        text = (SCRIPT.parent / name).read_text()
+        calls = [line for line in text.splitlines() if "curl " in line and not line.lstrip().startswith("#")]
+        calls = [c for c in calls if "apt-get" not in c and "ca-certificates" not in c]
+        assert calls and all("--max-time" in c for c in calls), (name, calls)
+
+
+def test_apt_get_is_timestamped():
+    for name in ("clean-test-linux.sh", "clean-test-installer.sh"):
+        lines = (SCRIPT.parent / name).read_text().splitlines()
+        start = next(i for i, x in enumerate(lines) if x.startswith('echo "apt-get start: $(date -u'))
+        done = next(i for i, x in enumerate(lines) if x.startswith('echo "apt-get done: $(date -u'))
+        apt = [i for i, x in enumerate(lines) if x.startswith("apt-get ")]
+        assert apt and start < min(apt) and max(apt) < done, name
+
+
+def test_poll_limits_and_pace():
+    text = SCRIPT.read_text()
+    assert 'POLL_SLEEP="${POLL_SLEEP:-2}"' in text
+    assert 'CURL_MAX_TIME="${CURL_MAX_TIME:-10}"' in text
+    assert 'wait_job "$JOB_ID" 240 captions' in text
+    assert 'wait_job "$JOB_ID" 300 clip' in text
+
+
+def test_poll_limit_is_exact(tmp_path):
+    eng = Engine("limit0000007", {"limit0000007": [("running", None)] * 7 + [("completed", None)]})
+    r = _run(eng, tmp_path, max_polls=8)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert eng.gets == {"limit0000007": 8}, "the 8th poll of 8 still counts"
+
+
+def _outputs(tmp_path, files):
+    lib = tmp_path / ".hermes" / "clips" / "library"
+    for f in files:
+        (lib / f).parent.mkdir(parents=True, exist_ok=True)
+        (lib / f).write_bytes(b"")
+    script = "set -e\n" + _block("output check")
+    return subprocess.run(
+        ["sh", "-c", script], env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True, timeout=30
+    )
+
+
+@pytest.mark.parametrize(
+    "files, ok",
+    [
+        ([], False),
+        (["src/sample.mp4", "captions-sample.mp4"], False),  # other mp4s don't count
+        (["clip-notes.txt"], False),
+        (["run1/clip-01.mp4"], True),
+        (["run1/clip-01.mp4", "run1/clip-02.mp4", "src/sample.mp4"], True),
+    ],
+)
+def test_output_check_needs_a_real_clip_mp4(tmp_path, files, ok):
+    r = _outputs(tmp_path, files)
+    if ok:
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert f"clips written: {sum(f.split('/')[-1].startswith('clip-') for f in files)}" in r.stdout
+    else:
+        assert r.returncode == 1
+        assert "FAIL: no clips written" in r.stdout

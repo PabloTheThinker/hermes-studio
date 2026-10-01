@@ -6,11 +6,13 @@
 # Expects /work/HermesStudio.AppImage, /work/install.sh, /work/sample.mp4.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+echo "apt-get start: $(date -u +%FT%TZ)"
 apt-get update -qq
 # curl is the only thing the installer needs; python3 is only for the fake release server here.
 apt-get install -y -qq --no-install-recommends curl ca-certificates python3 \
   libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 libxtst6 libatk-bridge2.0-0t64 libdrm2 \
   xvfb xauth >/dev/null
+echo "apt-get done: $(date -u +%FT%TZ)"
 
 # A fake release: the same layout as github.com/<repo>/releases/latest/download/.
 REL=/srv/rel/PabloTheThinker/hermes-studio/releases/latest/download
@@ -18,8 +20,8 @@ mkdir -p "$REL"
 cp /work/HermesStudio.AppImage "$REL/Hermes-Studio-9.9.9.AppImage"
 (cd "$REL" && sha256sum Hermes-Studio-9.9.9.AppImage > SHA256SUMS.txt)
 (cd /srv/rel && python3 -m http.server 8765 >/dev/null 2>&1 &)
-for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
-curl -fsS -o /dev/null http://127.0.0.1:8765/ || { echo "FAIL: local release server never came up"; exit 1; }
+for _ in $(seq 1 30); do curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8765/ && break; sleep 1; done
+curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8765/ || { echo "FAIL: local release server never came up"; exit 1; }
 
 # A user who cannot become root and has no FUSE.
 useradd -m -s /bin/bash tester
@@ -80,7 +82,7 @@ APP=$!
 PORT=""
 for i in $(seq 1 90); do
   PORT=$(for p in /proc/[0-9]*/cmdline; do tr "\0" " " < "$p" 2>/dev/null; echo; done | grep "hermes_studio.cli" | grep -oE "\-\-port [0-9]+" | head -1 | cut -d" " -f2 || true)
-  if [ -n "$PORT" ] && curl -s -o /dev/null "http://127.0.0.1:$PORT/"; then break; fi
+  if [ -n "$PORT" ] && curl -s --max-time 5 -o /dev/null "http://127.0.0.1:$PORT/"; then break; fi
   sleep 1
 done
 [ -n "$PORT" ] || { echo "FAIL: app engine never came up"; tail -20 app.log; exit 1; }

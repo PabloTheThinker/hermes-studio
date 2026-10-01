@@ -56,7 +56,7 @@ before the entry takes effect; a failed write changes nothing):
 ## timeline_apply
 
 Args: `base_version`, `ops` (1–500), `summary` (non-empty NFC, ≤ 200 chars), `client_op_id`
-(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), optional `group_id`, optional `project_id` (must be this
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), optional `group_id` (a string like `client_op_id`; leave it out for no group, `null` is `bad_arg`), optional `project_id` (must be this
 timeline's `id`). Anything else is `invalid_op` / `unknown_arg`.
 
 Order of checks: args → dedupe (a retry returns the original result, even with a now-stale
@@ -133,6 +133,19 @@ Decisions:
     fails validation with `transition_overlap_mismatch`, as before.
   - `changed_ids` comes from the resolved diff, so it lists the trimmed clip, the shifted items,
     the moved crossfade and anything anchored to a shifted clip. Markers don't move.
+  - **Check order** (Ada's ruling): `transition_too_long` is checked before `empty_range`. A ripple
+    trim of a clip with a crossfade down to an empty or zero-length source range (`src_out` at or
+    before `src_in`) is `transition_too_long` at `/ops/k` naming the crossfade, not the
+    validator's `empty_range` on the clip's `src`. The same trim of a clip without crossfades is
+    `empty_range` as before.
+  - **Known limit: a neighbour that only overlaps** (Ada's ruling). On a track where clips may
+    overlap (music), a ripple trim never moves a neighbour that only overlaps the trimmed clip
+    without a crossfade of its own; it shifts only the items starting at or after the ripple
+    point. If that pulls one clip of a crossfade pair away from the other (e.g. `m0` overlaps
+    `ma`, and `ma`→`mb` has a crossfade: trimming `m0` shifts `mb` but not `ma`), the result is
+    rejected with the **existing** `transition_overlap_mismatch` (at the crossfade's `dur`, `id` =
+    the crossfade), and nothing changes. A non-ripple trim of the same clip is fine. Changing this
+    would be an S4 behaviour decision; no rule id is added for it (17 op-level, 36 validator).
 
 ### Errors
 
@@ -150,6 +163,11 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
 `non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
 `transition_too_long`, plus every timeline rule.
 
+- **Media:** `insert_clip`'s `media` must be the id of an entry in the doc's `media`. Anything
+  else (an unknown or empty string, a number, `null`, a list, an object or a bool) is
+  `invalid_op` / `unknown_media` at the op's own arg, `/ops/k/media`, with no `id`, checked
+  before the doc is validated (so never at the doc path `/tracks/…/media`). `unknown_media` is the
+  existing timeline rule, so no new rule id.
 - **Id types:** every id an op names must be a string. That covers `id`, `track`, each entry
   of `between` and `ids`, and `anchor.to`. Anything else (a number, `null`, a list, an object
   or a bool) is `invalid_op` / `bad_arg` at that id's own path (`/ops/k/id`, `/ops/k/anchor/to`,
@@ -196,6 +214,9 @@ store and the lock are Slice 3.
   `summary`, `group_id`, and undo/redo's `op_id`/`group_id` (strings, exactly one of them).
   A null `op_id` or `group_id` is `bad_arg` at its path, never "missing", and a null group
   never matches the ungrouped entries.
+- `timeline_apply` with `group_id: null` is `bad_arg` at `/group_id` (Ada's ruling), fresh or
+  on a cached key. Leave the field out for an ungrouped entry; the entry and result then carry
+  `group_id: null`.
 - The **tool** is always part of "same call", even when a `summary` is given. The dedupe
   table records which tool made each entry. After `load`, the tool comes from the line: an
   apply has no `undoes`, and an undo of a group or of a normal entry is `history_undo`. The
@@ -217,11 +238,22 @@ store and the lock are Slice 3.
     - `base_version`, `summary` and `group_id` are equal;
     - the ops, re-run on the doc and retired ids as they were before that entry, produce exactly
       the logged ops. So leaving out an id the engine picked, or naming that same id, both match.
+      The doc and retired ids are kept as a checkpoint after every 16th entry (live and after
+      `load`), so a retry re-runs at most 15 entries from the nearest one instead of the whole
+      log. The result is the same as re-running from `base`.
   - `history_undo` / `history_redo`:
     - the target is the same (`op_id`, or `group_id` for an undo);
     - `summary` is the same; without one, the line's summary must be that tool's default
       (`Undo: …` / `Redo: …`), which is how an undo and a redo of the same entry differ;
     - `base_version`, if given, equals the line's.
+  - "Equal" means equal as canonical JSON (sorted keys, `(',', ':')`, UTF-8 as is, no NaN), the
+    same encoding as the log line and `canonical_hash`. There's no numeric or Unicode folding, so
+    `1`, `1.0` and `true` are three different values, and an NFC string and its NFD form are
+    different strings, exactly as they'd give different hashes. A fresh call can't carry those
+    values anyway (no floats in a doc; `not_integer_ticks`, `not_nfc`, `wrong_type`, or `bad_arg`
+    for `base_version`/`summary`), so on a cached key a retry that differs only that way is
+    `client_op_id_mismatch` (or the same `bad_arg`, for the top-level fields, since shape checks
+    come first), never the cached result.
 
 ## `media.proxy` and the hash
 

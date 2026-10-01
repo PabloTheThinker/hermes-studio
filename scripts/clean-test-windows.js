@@ -76,7 +76,7 @@ function onPath(tool) {
     const id = r.job.id;
     for (let i = 0; i < 300; i++) {
       const j = ((await api("/api/jobs")).jobs || []).find((x) => x.id === id);
-      if (j && (j.status === "completed" || j.status === "failed")) {
+      if (j && (j.status === "completed" || j.status === "failed" || j.status === "cancelled")) {
         log(`${label}: ${j.status}${j.error ? " — " + j.error : ""} | clips: ${(j.clips || []).length}`);
         if (j.status !== "completed") throw new Error(label + " failed: " + j.error);
         return j;

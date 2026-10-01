@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import json
 import random
+import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -696,7 +698,7 @@ def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
         for _ in range(rng.randrange(2, 7)):
             ops = [_random_op(rng, log.doc) for _ in range(rng.randrange(1, 3))]
             try:
-                apply(log, rng.choice([HUMAN, hermes()]), *ops, group_id="g" if rng.random() < 0.3 else None)
+                apply(log, rng.choice([HUMAN, hermes()]), *ops, **({"group_id": "g"} if rng.random() < 0.3 else {}))
             except O.OplogError as e:
                 assert e.code in ("invalid_op", "not_found") and h(log) == hashes[-1]
                 continue
@@ -1070,7 +1072,7 @@ APPLY = {
         {"ops": [{"op": "add_marker", "at": 0, "label": "x"}, {"op": "set_fade", "id": "c1", "fade_in": 0}]},
         {"ops": [{"op": "add_marker", "at": 0, "label": "x", "id": "z9"}]},
         {"summary": "other"},
-        {"group_id": None},
+        {"group_id": "h"},
         {"base_version": 1},
     ],
     ids=["op-arg", "extra-op", "other-explicit-id", "summary", "group", "base_version"],
@@ -1540,3 +1542,248 @@ def test_random_ripple_trims_with_crossfades_cover_changed_ids_and_round_trip_ov
     # crossfade-free join is the usual overlap
     assert set(rules) <= {"transition_too_long", "overlap"}, rules
     assert done > 300 and rules.get("transition_too_long", 0) >= 5
+
+
+# --------------------------------------------------------------------------- follow-ups after S2
+
+
+@pytest.mark.parametrize("junk", [7, None, 1.5, (1, 2), True, frozenset({1})], ids=repr)
+def test_a_non_string_arg_name_is_unknown_arg_not_a_crash(junk):
+    log = new_log()
+    op = {"op": "set_fade", "id": "c1", "fade_in": 0, junk: 1}
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, op)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "unknown_arg", f"/ops/0/{junk}")
+    mixed = {"op": "set_fade", "id": "c1", "fade_in": 0, junk: 1, "zz": 2}  # mixed key types sort without TypeError
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, mixed)
+    assert e.value.extra["rule"] == "unknown_arg"
+    for tool in ("timeline_apply", "history_undo", "history_redo"):
+        with pytest.raises(O.OplogError) as e:
+            log.call(
+                HUMAN,
+                tool,
+                {
+                    "client_op_id": "k1",
+                    junk: 1,
+                    "zz": 2,
+                    "base_version": 0,
+                    "summary": "s",
+                    "ops": [{"op": "add_marker", "at": 0, "label": "x"}],
+                },
+            )
+        assert (e.value.code, e.value.extra["rule"]) == ("invalid_op", "unknown_arg")
+    assert log.history_list() == [] and log.version == 0
+
+
+_NFC = "caf\u00e9"
+_NFD = "cafe\u0301"
+
+
+@pytest.mark.parametrize(
+    "first, retry",
+    [
+        (S, float(S)),
+        (S, S + 0.0),
+        (1, True),
+        (0, False),
+    ],
+    ids=["ticks-vs-float", "ticks-vs-float-sum", "1-vs-true", "0-vs-false"],
+)
+def test_same_call_does_not_fold_numbers(first, retry):
+    log = new_log()
+    ok = {**APPLY, "ops": [{"op": "add_marker", "at": first, "label": "x"}]}
+    r = log.call(HUMAN, "timeline_apply", ok)
+    assert log.call(HUMAN, "timeline_apply", ok)["op_id"] == r["op_id"]
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": retry, "label": "x"}]})
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": float("nan"), "label": "x"}]})
+
+
+def test_same_call_does_not_fold_unicode():
+    assert _NFC != _NFD and unicodedata.normalize("NFC", _NFD) == _NFC
+    log = new_log()
+    ok = {**APPLY, "ops": [{"op": "add_marker", "at": 0, "label": _NFC}], "summary": _NFC}
+    r = log.call(HUMAN, "timeline_apply", ok)
+    assert log.call(HUMAN, "timeline_apply", ok)["op_id"] == r["op_id"]
+    _mismatch(log, HUMAN, "timeline_apply", {**ok, "ops": [{"op": "add_marker", "at": 0, "label": _NFD}]})
+    _bad_arg(log, "timeline_apply", {**ok, "summary": _NFD}, "/summary")  # shape check first, as for a fresh call
+    _bad_arg(log, "timeline_apply", {**ok, "base_version": 0.0}, "/base_version")
+    # a fresh call carrying the NFD form is rejected outright, so it can never be logged
+    fresh = {**ok, "client_op_id": "fresh", "base_version": log.version, "ops": [{"op": "add_marker", "at": S, "label": _NFD}]}
+    with pytest.raises(O.OplogError) as e:
+        log.call(HUMAN, "timeline_apply", fresh)
+    assert e.value.extra["rule"] == "not_nfc"
+
+
+def test_the_log_line_and_same_call_share_one_encoding(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    log.call(HUMAN, "timeline_apply", {**APPLY, "summary": _NFC})
+    line = p.read_text(encoding="utf-8").splitlines()[0]
+    assert line == O._canon(json.loads(line)) and _NFC in line
+
+
+def _replayed_states(entries: list[dict]) -> list[tuple[str, set[str]]]:
+    """(hash, retired ids) after each prefix of ``entries``, from base, the way load and the old
+    same-call check worked them out."""
+    then = O.Oplog(base())
+    out = [(then.doc["hash"], set(then._retired))]
+    for e in entries:
+        new, _, _ = then._run(e["ops"], internal=True)
+        then._retire(new)
+        then._doc = new
+        out.append((new["hash"], set(then._retired)))
+    return out
+
+
+def _busy_log(seed: int, n: int, **kw) -> O.Oplog:
+    rng = random.Random(seed)
+    log = new_log(**kw)
+    k = 0
+    while len(log.history_list()) < n:
+        k += 1
+        entries = log.history_list()
+        if entries and rng.random() < 0.15:
+            try:
+                tool = rng.choice(["history_undo", "history_redo"])
+                log.call(HUMAN, tool, {"op_id": rng.choice(entries)["op_id"], "client_op_id": f"u{k}"})
+            except O.OplogError:
+                pass
+            continue
+        ops = [_random_op(rng, log.doc) for _ in range(rng.randrange(1, 3))]
+        try:
+            log.call(HUMAN, "timeline_apply", {"base_version": log.version, "ops": ops, "summary": "s", "client_op_id": f"k{k}"})
+        except O.OplogError:
+            pass
+    return log
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_same_call_checkpoints_equal_a_full_replay(seed, monkeypatch, tmp_path):
+    monkeypatch.setattr(O, "CHECKPOINT_EVERY", 3)
+    p = tmp_path / "oplog.jsonl"
+    log = _busy_log(seed, 30, path=p)
+    states = _replayed_states(log.history_list())
+    assert sorted(log._checkpoints) == list(range(0, 31, 3))
+    for again in (log, O.Oplog.load(base(), p)):
+        assert sorted(again._checkpoints) == sorted(log._checkpoints)
+        for n, (doc, retired) in again._checkpoints.items():
+            assert (doc["hash"], set(retired)) == states[n], n
+
+
+def test_an_identical_retry_reruns_at_most_one_checkpoint_span(monkeypatch):
+    log = new_log()
+    for i in range(3 * O.CHECKPOINT_EVERY + 5):
+        log.call(
+            HUMAN,
+            "timeline_apply",
+            {**APPLY, "base_version": log.version, "client_op_id": f"k{i}", "ops": [{"op": "add_marker", "at": i, "label": "x"}]},
+        )
+    runs = []
+    real = O.Oplog._run
+    monkeypatch.setattr(O.Oplog, "_run", lambda self, *a, **kw: runs.append(1) or real(self, *a, **kw))
+    for i, e in enumerate(log.history_list()):
+        runs.clear()
+        retry = {
+            **APPLY,
+            "base_version": e["base_version"],
+            "client_op_id": f"k{i}",
+            "ops": [{"op": "add_marker", "at": i, "label": "x"}],
+        }
+        assert log.call(HUMAN, "timeline_apply", retry)["op_id"] == e["op_id"]
+        assert len(runs) == (e["seq"] - 1) % O.CHECKPOINT_EVERY + 1  # the entries since the checkpoint, plus the retry itself
+        _mismatch(log, HUMAN, "timeline_apply", {**retry, "ops": [{"op": "add_marker", "at": i + 1, "label": "x"}]})
+
+
+def test_retries_at_every_seq_still_match_after_load_with_engine_picked_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(O, "CHECKPOINT_EVERY", 4)
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    for i in range(11):  # every call lets the engine pick the marker id
+        log.call(
+            HUMAN,
+            "timeline_apply",
+            {**APPLY, "base_version": log.version, "client_op_id": f"k{i}", "ops": [{"op": "add_marker", "at": i, "label": "x"}]},
+        )
+    again = O.Oplog.load(base(), p)
+    for i, e in enumerate(log.history_list()):
+        omitted = {
+            **APPLY,
+            "base_version": e["base_version"],
+            "client_op_id": f"k{i}",
+            "ops": [{"op": "add_marker", "at": i, "label": "x"}],
+        }
+        named = {**omitted, "ops": [{**omitted["ops"][0], "id": e["ops"][0]["id"]}]}
+        for which in (log, again):
+            assert which.call(HUMAN, "timeline_apply", omitted)["op_id"] == e["op_id"]
+            assert which.call(HUMAN, "timeline_apply", named)["op_id"] == e["op_id"]
+            _mismatch(which, HUMAN, "timeline_apply", {**omitted, "ops": [{**omitted["ops"][0], "id": "zz9"}]})
+
+
+@pytest.mark.parametrize("media", ["nope", "", 7, None, ["m1"], {"id": "m1"}, True, "M1", "m1 "], ids=repr)
+def test_insert_clip_with_junk_media_is_unknown_media_at_the_op_arg(media):
+    log = new_log()
+    ops = [
+        {"op": "add_marker", "at": 0, "label": "x"},
+        {"op": "insert_clip", "track": "V1", "media": media, "src": [0, S], "at": 20 * S},
+    ]
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, *ops)
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "unknown_media", "/ops/1/media", 1)
+    assert "id" not in x and log.version == 0 and log.history_list() == []
+    assert apply(log, HUMAN, {**ops[1], "media": "m1"})["new_version"] == 1  # a real media id still works
+
+
+def test_timeline_apply_with_a_null_group_id_is_bad_arg_and_omitting_it_is_no_group():
+    log = new_log()
+    _bad_arg(log, "timeline_apply", {**APPLY, "group_id": None}, "/group_id")  # fresh
+    ungrouped = {k: v for k, v in APPLY.items() if k != "group_id"}
+    r = log.call(HUMAN, "timeline_apply", ungrouped)
+    assert r["group_id"] is None and log.history_list()[0]["group_id"] is None
+    _bad_arg(log, "timeline_apply", {**ungrouped, "group_id": None}, "/group_id")  # a cached key: shape first
+    assert log.call(HUMAN, "timeline_apply", ungrouped)["op_id"] == r["op_id"]
+    _bad_arg(log, "timeline_apply", {**ungrouped, "client_op_id": "n2", "base_version": 1, "group_id": None}, "/group_id")
+
+
+# --------------------------------------------------------------------------- Ada's doc-only rulings, pinned
+
+
+@pytest.mark.parametrize("op", [{"src_out": 0}, {"src_in": 4 * S}], ids=["src_out-0", "src_in-at-end"])
+def test_transition_too_long_is_checked_before_empty_range(op):
+    op = {"op": "trim_clip", "id": "c1", "ripple": True, **op}
+    log = xfade_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, op)
+    assert (e.value.extra["rule"], e.value.extra["path"], e.value.extra["id"]) == ("transition_too_long", "/ops/0", "t12")
+    plain = new_log()  # no crossfade: the validator's empty_range, as before
+    with pytest.raises(O.OplogError) as e:
+        apply(plain, HUMAN, op)
+    assert (e.value.extra["rule"], e.value.extra["id"]) == ("empty_range", "c1")
+
+
+def test_a_ripple_trim_never_moves_a_neighbour_that_only_overlaps_the_clip():
+    d = base()
+    music = next(t for t in d["tracks"] if t["role"] == "music")
+    music["items"] += [
+        {"id": "ma", "type": "clip", "media": "m2", "src": [0, 8 * S], "at": 40 * S, "fade_in": 0, "fade_out": 0},
+        {"id": "m0", "type": "clip", "media": "m2", "src": [0, S], "at": 40 * S, "fade_in": 0, "fade_out": 0},  # only overlaps ma
+        {"id": "mb", "type": "clip", "media": "m2", "src": [10 * S, 16 * S], "at": 47 * S, "fade_in": 0, "fade_out": 0},
+        {"id": "tab", "type": "transition", "kind": "xfade", "between": ["ma", "mb"], "dur": S},
+    ]
+    assert T.validate(d) == []
+    log = O.Oplog(d)
+    h0 = h(log)
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2, "ripple": True})
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["id"]) == ("invalid_op", "transition_overlap_mismatch", "tab")  # the existing rule
+    assert h(log) == h0 and log.history_list() == []
+    apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2})  # without ripple it's fine
+
+
+def test_rule_counts_stay_17_op_level_and_36_validator():
+    text = (Path(__file__).resolve().parent.parent / "docs" / "oplog.md").read_text(encoding="utf-8")
+    listed = text.split("Op-level `rule`s (17):")[1].split("plus every timeline rule")[0]
+    assert len(listed.split("`")[1::2]) == 17
+    assert len(T.RULES) == 36 and "transition_too_long" not in T.RULES

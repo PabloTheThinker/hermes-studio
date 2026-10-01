@@ -132,6 +132,15 @@ class OplogError(HermesStudioError):
         return d
 
 
+CHECKPOINT_EVERY = 16  # an identical retry re-runs at most this many - 1 entries (see _same_call)
+
+
+def _canon(x: Any) -> str:
+    """Canonical JSON, as for the log line and ``canonical_json``: sorted keys, (',', ':'),
+    UTF-8 as is, no NaN or infinity."""
+    return json.dumps(x, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+
 class _OpError(Exception):
     def __init__(
         self,
@@ -314,6 +323,9 @@ def _timed(a: dict, item: dict) -> None:
 
 def op_insert_clip(ctx: _Ctx, a: dict) -> list[dict]:
     _, tr = _track(ctx.doc, a["track"])
+    m = a["media"]
+    if not (isinstance(m, str) and m in ctx.doc.get("media", {})):  # the op's own arg, not the doc path
+        raise _OpError("unknown_media", f"no media {m!r}", "media")
     iid = _new_id(ctx, a, "c")
     it = {
         "id": iid,
@@ -732,9 +744,9 @@ def _apply_one(ctx: _Ctx, op: Any, internal: bool) -> tuple[dict, list[dict]]:
         raise _OpError("unknown_op", f"unknown op {op['op']!r}", "op")
     fn, req, opt = table[op["op"]]
     a = copy.deepcopy(op)
-    for k in sorted(set(a) - req - opt - {"op"}):
-        raise _OpError("unknown_arg", f"{op['op']} takes no '{k}'", k)
-    for k in sorted(req - set(a)):
+    for k in sorted(set(a) - req - opt - {"op"}, key=repr):  # keys may not be strings
+        raise _OpError("unknown_arg", f"{op['op']} takes no {k!r}", (k,))
+    for k in sorted(req - set(a), key=repr):
         raise _OpError("missing_arg", f"{op['op']} needs '{k}'", k)
     if op["op"] in PUBLIC_OPS:
         _check_refs(a)
@@ -773,6 +785,10 @@ class Oplog:
         self._tools: dict[tuple[str, str, str], str | None] = {}
         self._retired: set[str] = set(T._all_ids(self._doc))
         self._batch_ids: set[str] = set()
+        # (doc, retired ids) after every CHECKPOINT_EVERY-th entry, so _same_call re-runs at most
+        # CHECKPOINT_EVERY - 1 entries instead of the whole log. Docs are never changed in place
+        # (_run works on a deep copy), so holding a reference is enough.
+        self._checkpoints: dict[int, tuple[dict, frozenset[str]]] = {0: (self._base, frozenset(self._retired))}
         self._path = os.fspath(path) if path is not None else None
         self._new_op_id = new_op_id or (lambda: "op-" + secrets.token_hex(8))
 
@@ -819,7 +835,7 @@ class Oplog:
     def _check_args(self, args: dict, required: set[str], optional: set[str]) -> None:
         for k in sorted(set(args) - required - optional, key=repr):
             raise OplogError("invalid_op", f"unknown argument '{k}'", rule="unknown_arg", path=T._j("", k))
-        for k in sorted(required - set(args)):
+        for k in sorted(required - set(args), key=repr):
             raise OplogError("invalid_op", f"'{k}' is required", rule="missing_arg", path=T._j("", k))
         cid = args["client_op_id"]
         if not (isinstance(cid, str) and CLIENT_ID_RE.fullmatch(cid)):
@@ -921,8 +937,11 @@ class Oplog:
         the default one for that tool), and base_version, if given, equal to the line's."""
 
         def same(x: Any, y: Any) -> bool:
+            # Byte-for-byte canonical JSON, the encoding the hash and the log line use: no numeric
+            # or Unicode folding, so 1 != 1.0 != true and NFC != NFD. Anything canonical JSON
+            # can't encode (NaN, a non-string key, an object) is never the same as anything.
             try:
-                return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
+                return _canon(x) == _canon(y)
             except (TypeError, ValueError):
                 return False
 
@@ -930,7 +949,11 @@ class Oplog:
             if e["undoes"] is not None or not all(same(args.get(k), e[k]) for k in ("base_version", "summary", "group_id")):
                 return False
             then = Oplog(self._base)
-            for prev in self._entries[: e["seq"] - 1]:
+            n = e["seq"] - 1
+            done = max(k for k in self._checkpoints if k <= n)
+            then._doc, retired = self._checkpoints[done]
+            then._retired = set(retired)
+            for prev in self._entries[done:n]:
                 new, _, _ = then._run(prev["ops"], internal=True)
                 then._retire(new)
                 then._doc = new
@@ -999,6 +1022,11 @@ class Oplog:
         new, _ = T.stamp_hash(new)
         return new, logged, inverse
 
+    def _checkpoint(self) -> None:
+        n = len(self._entries)
+        if n % CHECKPOINT_EVERY == 0:
+            self._checkpoints[n] = (self._doc, frozenset(self._retired))
+
     def _retire(self, new: dict) -> None:
         """An id that existed at any point (or was handed out) in the last batch is never handed
         out again, even if the batch removed it. _commit, load and replay all call this."""
@@ -1047,7 +1075,7 @@ class Oplog:
         if step is not None:
             entry["step"] = step
         if self._path is not None:
-            line = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+            line = _canon(entry)
             with open(self._path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
                 f.flush()
@@ -1055,6 +1083,7 @@ class Oplog:
         self._entries.append(entry)
         self._retire(new)
         self._doc = new
+        self._checkpoint()
         result = _result(entry, warnings)
         self._results[(session.actor.kind, session.actor.id, args["client_op_id"])] = result
         self._tools[(session.actor.kind, session.actor.id, args["client_op_id"])] = tool
@@ -1062,6 +1091,8 @@ class Oplog:
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
         self._check_args(args, {"base_version", "ops", "summary", "client_op_id"}, {"project_id", "group_id"})
+        if "group_id" in args and args["group_id"] is None:  # Ada: omit it for no group; null is junk
+            raise OplogError("invalid_op", "group_id must be a string; omit it for no group", rule="bad_arg", path="/group_id")
         self._base_version_type(args)  # every shape check runs before dedupe
         self._ops_shape(args["ops"])
         done = self._replayed(session, "timeline_apply", args)
@@ -1183,6 +1214,7 @@ class Oplog:
             log._entries.append(e)
             log._retire(new)
             log._doc = new
+            log._checkpoint()
             key = (e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])
             log._results[key] = _result(e, [])
             log._tools[key] = _tool_of(e, log._entries)
