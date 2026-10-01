@@ -1,14 +1,18 @@
-# Third-party sources of the FFmpeg, PyAV and OpenCV builds (and the LGPL/GPL runtime libraries
+# Third-party sources of the FFmpeg, PyAV, OpenCV and Electron FFmpeg builds (and the LGPL/GPL runtime libraries
 # the engine's wheels bundle) shipped in the desktop app. Every release attaches them, packed
 # into the source bundles listed in packaging/SOURCES-SHA256SUMS (scripts/mirror-sources.py; NOTICE).
 # Regenerate when FFMPEG_*_URL in .github/workflows/desktop.yml or packaging/engine-constraints.txt change:
 #   packaging/resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION \
-#     OPENCV_VERSION
+#     OPENCV_VERSION ELECTRON_VERSION
 #   scripts/mirror-sources.py --out DIR --bundles BDIR --update
+# kind git = git init; git fetch --depth=1 --no-tags SOURCE REV;
+#   git -c tar.umask=0022 archive --format=tar --prefix=<filename without .tar>/ -o FILENAME FETCH_HEAD
+#   (uncompressed tar, so no gzip implementation is involved)
 # btbn-tag: autobuild-2026-09-30-13-08
 # ffmpeg-commit: 2a571b606854520cf89804d8030c8b328e621689
 # av: 18.1.0
 # opencv-python-headless: 5.0.0.93
+# electron: 44.5.1
 # pyav-ffmpeg-tag: 8.1.2-1
 # columns (tab-separated): component version used_by filename sha256 size kind source rev
 ffmpeg	2a571b606854520cf89804d8030c8b328e621689	ffmpeg-linux64,ffmpeg-win64	ffmpeg-2a571b606854520cf89804d8030c8b328e621689.tar.gz	f02fc0809a13f37e3d4e1f74254d07e035a5ef01a6d91e727b915b1764d97540	17336083	url	https://github.com/FFmpeg/FFmpeg/archive/2a571b606854520cf89804d8030c8b328e621689.tar.gz	2a571b606854520cf89804d8030c8b328e621689
@@ -190,3 +194,4 @@ opencv-videoio-ffmpeg	a0a660fcb1e58a295e6caa6aee64ed4d369b0181	opencv-win	opencv
 opencv-win-ffmpeg	n7.1	opencv-win	opencv-win-ffmpeg-b08d7969c550a804a59511c7b83f2dd8cc0499b8.tar.gz	02fa6d9827da3b6786e4df821218cc036db2b4481e7f48267c2dcda695633afc	15900622	url	https://github.com/FFmpeg/FFmpeg/archive/b08d7969c550a804a59511c7b83f2dd8cc0499b8.tar.gz	b08d7969c550a804a59511c7b83f2dd8cc0499b8
 opencv-win-aom	v3.14.1	opencv-win	opencv-win-aom-03087864cf4bea6abb0d28f95cf7843511413d8f.tar	b2293997d7871bd9fadc6a43ae230b2a1ab62794c6d6a42ae4ed04c516349c54	37365760	git	https://aomedia.googlesource.com/aom	03087864cf4bea6abb0d28f95cf7843511413d8f
 opencv-win-openh264	2.5.0	opencv-win	opencv-win-openh264-v2.5.0.tar.gz	94c8ca364db990047ec4ec3481b04ce0d791e62561ef5601443011bdc00825e3	60301431	url	https://github.com/cisco/openh264/archive/refs/tags/v2.5.0.tar.gz	-
+chromium-ffmpeg	152.0.7977.130	electron-linux,electron-win	chromium-ffmpeg-2b68d2babae73714846961fb0ee47e3b3d2e39a9.tar	0374fc3f14e241c0861603e60a889b989cf7fe6e1ec5e27af500a8f92836523f	106076160	git	https://chromium.googlesource.com/chromium/third_party/ffmpeg	2b68d2babae73714846961fb0ee47e3b3d2e39a9

@@ -429,3 +429,31 @@ def test_every_other_wheel_library_is_mirrored_or_named(plat):
             assert any(u.endswith(f"-{plat}") for u in BY_COMPONENT[comp]["used_by"].split(",")), f"{lib}: {comp}"
     for comp in ("opencv-python-headless", "opencv-python-build"):
         assert f"opencv-{plat}" in BY_COMPONENT[comp]["used_by"]
+
+
+def test_electron_ffmpeg_is_mirrored_at_the_locked_electron():
+    lock = json.loads((ROOT / "package-lock.json").read_text())
+    electron = lock["packages"]["node_modules/electron"]["version"]
+    assert PINS["electron"] == electron, "Electron changed: regenerate packaging/third-party-sources.txt"
+    row = BY_COMPONENT["chromium-ffmpeg"]
+    assert row["kind"] == "git" and row["source"] == "https://chromium.googlesource.com/chromium/third_party/ffmpeg"
+    assert row["filename"] == f"chromium-ffmpeg-{row['rev']}.tar"  # uncompressed git archive
+    assert set(row["used_by"].split(",")) == {"electron-linux", "electron-win"}
+    assert MIRROR.bundle_of(SOURCES)[row["filename"]] == "sources-common.tar"
+    assert f"Electron {electron} builds Chromium {row['version']}" in NOTICE
+    assert f"{row['rev']} (ffmpeg_revision)" in NOTICE
+
+
+def test_appimage_leaves_out_unused_indicator_and_notification_libs():
+    cfg = json.loads((ROOT / "electron-builder.json").read_text())
+    assert cfg["beforePack"] == "./scripts/electron-builder-before-pack.js"
+    hook = (ROOT / "scripts/electron-builder-before-pack.js").read_text()
+    excluded = ["libappindicator.so.1", "libindicator.so.7", "libgconf-2.so.4", "libnotify.so.4"]
+    check = (ROOT / "scripts/check-appimage-libs.sh").read_text()
+    for lib in excluded:
+        assert f'"{lib}"' in hook and lib in check
+    # They back Tray / Notification / badges / app indicators, which the app does not use.
+    for f in (ROOT / "desktop").rglob("*.js"):
+        assert not re.search(r"\b(Tray|Notification|setBadge\w*|appIndicator)\b", f.read_text()), f
+    assert "bash /work/check-appimage-libs.sh" in (ROOT / "scripts/clean-test-linux.sh").read_text()
+    assert "cp scripts/clean-test-linux.sh scripts/check-appimage-libs.sh work/" in DESKTOP_YML

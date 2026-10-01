@@ -178,6 +178,22 @@ libquadmath files on Linux (numpy.libs/). Starting with v0.5.3, every release
 also attaches the source of all of the above that is LGPL- or GPL-licensed, at
 the exact versions used. See "Mirrored source archives" below.
 
+================================================================================
+Electron's FFmpeg (libffmpeg.so on Linux, ffmpeg.dll on Windows)
+================================================================================
+The app runs on Electron 44.5.1 (MIT; LICENSE.electron.txt and
+LICENSES.chromium.html ship next to the app executable). Electron's media stack
+loads Chromium's FFmpeg build, libffmpeg.so / ffmpeg.dll, which reports
+"LGPL version 2.1 or later" (LGPL-2.1-or-later; licenses/LGPL-2.1.txt) and
+"FFmpeg version git-2026-07-15-db0156ccfb".
+  Electron 44.5.1 builds Chromium 152.0.7977.130 (electron/electron DEPS,
+  chromium_version), whose DEPS pin src/third_party/ffmpeg at commit
+  2b68d2babae73714846961fb0ee47e3b3d2e39a9 (ffmpeg_revision) of
+  https://chromium.googlesource.com/chromium/third_party/ffmpeg
+  Starting with v0.5.3, every release attaches that commit's source (an
+  uncompressed `git archive --format=tar`, bundle sources-common). See
+  "Mirrored source archives" below.
+
 The versions of PyAV and opencv-python-headless above are pinned for the app
 build in packaging/engine-constraints.txt. Change this NOTICE whenever that file or the
 FFMPEG_* pins in .github/workflows/desktop.yml change; tests/test_notices.py
@@ -214,10 +230,14 @@ libraries bundled in the app, at the exact versions used:
     wrapper it compiles), FFmpeg n7.1, libaom v3.14.1, libvpx v1.16.0 and
     OpenH264 v2.5.0.
 
+  * electron-linux / electron-win: Chromium's third_party/ffmpeg at the commit
+    Electron 44.5.1's Chromium 152.0.7977.130 pins (libffmpeg.so, ffmpeg.dll).
+
 Bundles: sources-ffmpeg-linux64, sources-ffmpeg-win64, sources-pyav and
 sources-opencv hold the archives only that group uses; sources-ffmpeg holds
 those both FFmpeg builds share; sources-common holds those shared across
-groups. A group over the size limit is split into numbered parts.
+groups and Electron's FFmpeg. A group over the size limit is split into
+numbered parts.
 
 The list is in packaging/third-party-sources.txt. scripts/mirror-sources.py
 rebuilds and verifies every archive and rebuilds the bundles byte for byte
@@ -1157,4 +1177,9 @@ opencv-win-openh264 2.5.0  [opencv-win]
   source: https://github.com/cisco/openh264/archive/refs/tags/v2.5.0.tar.gz
   sha256: 94c8ca364db990047ec4ec3481b04ce0d791e62561ef5601443011bdc00825e3
   bundle: sources-opencv.tar
+chromium-ffmpeg 152.0.7977.130  [electron-linux, electron-win]
+  file:   chromium-ffmpeg-2b68d2babae73714846961fb0ee47e3b3d2e39a9.tar
+  source: git archive of commit 2b68d2babae73714846961fb0ee47e3b3d2e39a9 from https://chromium.googlesource.com/chromium/third_party/ffmpeg
+  sha256: 0374fc3f14e241c0861603e60a889b989cf7fe6e1ec5e27af500a8f92836523f
+  bundle: sources-common.tar
 --- end mirrored source archives ---

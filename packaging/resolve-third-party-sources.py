@@ -8,11 +8,13 @@ Reads the exact pins from
   * opencv-python at the tag of the pinned opencv-python-headless wheel (the Linux wheel's
     docker/manylinux_2_28 recipe) and the opencv_3rdparty commit its OpenCV pins for the
     Windows opencv_videoio_ffmpeg DLL (3rdparty/ffmpeg/ffmpeg.cmake, ffmpeg/download_src.sh),
+  * Electron's DEPS (chromium_version) at the pinned Electron version, then that Chromium tag's
+    DEPS (ffmpeg_revision): the Chromium FFmpeg in Electron's libffmpeg.so / ffmpeg.dll,
 and prints manifest rows (without sha256) for packaging/third-party-sources.txt.
 `scripts/mirror-sources.py --update` then fills in the sha256 column.
 
 Usage: resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION \\
-         OPENCV_VERSION
+         OPENCV_VERSION ELECTRON_VERSION
 
 Submodules that are only tests, fuzz corpora or demos are left out (TEST_ONLY below):
 they are fetched by the build scripts but never compiled into the shipped binaries.
@@ -38,6 +40,7 @@ TEST_ONLY = {
 BOTH = {"ffmpeg-linux64", "ffmpeg-win64"}
 PYAV = {"pyav-linux", "pyav-win"}
 OPENCV = {"opencv-linux", "opencv-win"}
+ELECTRON = {"electron-linux", "electron-win"}
 
 ENUM = r"""
 set +e
@@ -124,6 +127,38 @@ def shaderc_deps(rev: str) -> list[tuple[str, str, str]]:
     return out
 
 
+SUBMODULE_PATH = re.compile(r"[\w./-]+/[\w./-]+")
+
+
+def submodule_paths(dl: str) -> list[str] | None:
+    """The submodule paths a `git submodule update ... a/b c/d;` command limits itself to.
+
+    These are the path-like words (containing a "/") that end the command, right before the first
+    ";" after "submodule update"; None when the command names no such paths (all submodules).
+    Linear time: the text is split on whitespace and each word is matched on its own.
+    """
+    key = "submodule update"
+    pos = dl.find(key)
+    while pos >= 0:
+        seg = dl[pos + len(key):]
+        end = seg.find(";")
+        if end < 0:
+            return None
+        seg = seg[:end]
+        words = seg.split()
+        run: list[str] = []
+        for word in reversed(words):
+            if not SUBMODULE_PATH.fullmatch(word):
+                break
+            run.append(word)
+        if run and len(run) == len(words) and not seg[:1].isspace():
+            run.pop()  # the first word is glued to "submodule update", not a separate argument
+        if run and not seg[-1:].isspace():
+            return run[::-1]
+        pos = dl.find(key, pos + 1)
+    return None
+
+
 def btbn(btbn_dir: str) -> dict[tuple[str, str], dict]:
     found: dict[tuple[str, str], dict] = {}
 
@@ -146,9 +181,8 @@ def btbn(btbn_dir: str) -> dict[tuple[str, str], dict]:
                 name = stage if i == 0 else Path(repo).name.removesuffix(".git")
                 add(name, repo, rev, target)
                 if "submodule update" in dl and i == 0:
-                    only = re.search(r"submodule update[^;]*?((?:\s+[\w./-]+/[\w./-]+)+);", dl)
                     skip = TEST_ONLY.get(stage, TEST_ONLY["*"])
-                    for path, url, c in submodules(repo, resolve_rev(repo, rev), only.group(1).split() if only else None):
+                    for path, url, c in submodules(repo, resolve_rev(repo, rev), submodule_paths(dl)):
                         if skip == "*" or Path(path).name in skip:
                             continue
                         add(f"{stage}--{Path(path).name}", url, c, target, via=f"{stage} submodule {path}")
@@ -283,8 +317,33 @@ def opencv(version: str, pyav_vpx: str) -> list[str]:
     ]
 
 
+def chromium_ffmpeg(electron_version: str) -> tuple[str, str]:
+    """(Chromium version, third_party/ffmpeg commit) that Electron ELECTRON_VERSION builds."""
+    import base64
+    import urllib.request
+    deps = urllib.request.urlopen(
+        f"https://raw.githubusercontent.com/electron/electron/v{electron_version}/DEPS").read().decode()
+    chromium = re.search(r"'chromium_version':\s*'([\d.]+)'", deps).group(1)
+    cdeps = base64.b64decode(urllib.request.urlopen(
+        f"https://chromium.googlesource.com/chromium/src/+/refs/tags/{chromium}/DEPS?format=TEXT").read()).decode()
+    rev = re.search(r"'ffmpeg_revision':\s*'([0-9a-f]{40})'", cdeps).group(1)
+    if "/chromium/third_party/ffmpeg.git' + '@' + Var('ffmpeg_revision')" not in cdeps:
+        raise SystemExit("Chromium DEPS no longer pins src/third_party/ffmpeg by ffmpeg_revision")
+    return chromium, rev
+
+
+def electron(electron_version: str) -> list[str]:
+    """Electron's libffmpeg.so / ffmpeg.dll (LGPL-2.1-or-later): Chromium's FFmpeg fork at the
+    commit the Chromium version of that Electron pins. `git archive --format=tar` of the commit
+    (uncompressed; gitiles +archive tarballs are not byte-stable)."""
+    chromium, rev = chromium_ffmpeg(electron_version)
+    return [row("chromium-ffmpeg", chromium, ELECTRON, f"chromium-ffmpeg-{rev}.tar", "git",
+                "https://chromium.googlesource.com/chromium/third_party/ffmpeg", rev)]
+
+
 def main() -> None:
-    btbn_dir, btbn_tag, ffmpeg_commit, pyav_dir, pyav_tag, av_version, opencv_version = sys.argv[1:8]
+    (btbn_dir, btbn_tag, ffmpeg_commit, pyav_dir, pyav_tag, av_version, opencv_version,
+     electron_version) = sys.argv[1:9]
     rows = [row(c, v, u, f, "url", s, r, sha) for c, v, u, f, s, r, sha in
             extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version)]
     for e in sorted(btbn(btbn_dir).values(), key=lambda e: e["name"]):
@@ -318,6 +377,7 @@ def main() -> None:
         rows.append(row(f"pyav-{name}", version, used, f"pyav-{fname}", "url", url, "-", sha))
     vpx = next(r.split("\t")[1] for r in rows if r.startswith("pyav-vpx\t"))
     rows += opencv(opencv_version, vpx)
+    rows += electron(electron_version)
     print("\n".join(rows))
 
 

@@ -8,6 +8,7 @@
     "desktop/**",
     "resources/icon.png"
   ],
+  "beforePack": "./scripts/electron-builder-before-pack.js",
   "linux": {
     "target": [
       "AppImage"

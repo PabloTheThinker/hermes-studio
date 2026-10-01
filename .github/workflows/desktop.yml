@@ -49,7 +49,7 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then printf 'app=true\nsources=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           files=$(git diff --name-only "$BASE" "$HEAD")
           echo "$files"
-          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|\.github/workflows/desktop\.yml$)'; then
+          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|check-appimage-|electron-builder-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|\.github/workflows/desktop\.yml$)'; then
             echo "app=true" >> "$GITHUB_OUTPUT"
           else
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -61,8 +61,8 @@ jobs:
           fi
 
   # The third-party source archives every release attaches (NOTICE, packaging/third-party-sources.txt):
-  # the list must match the pins at the BtbN, pyav-ffmpeg and opencv-python tags, every archive must
-  # rebuild to its recorded sha256, and the bundles must rebuild to packaging/SOURCES-SHA256SUMS.
+  # the list must match the pins at the BtbN, pyav-ffmpeg and opencv-python tags and in Electron's DEPS,
+  # every archive must rebuild to its recorded sha256, and the bundles must rebuild to packaging/SOURCES-SHA256SUMS.
   # The bundles are uploaded as run artifacts (one per bundle, plus SOURCES-SHA256SUMS) so they can be
   # checked before a tag; on a tag the release job attaches these exact files.
   sources:
@@ -84,7 +84,7 @@ jobs:
           curl -fsSL "https://github.com/BtbN/FFmpeg-Builds/archive/refs/tags/$btbn.tar.gz" | tar -xz -C /tmp/pins
           curl -fsSL "https://github.com/PyAV-Org/pyav-ffmpeg/archive/refs/tags/$pyav_tag.tar.gz" | tar -xz -C /tmp/pins
           python3 packaging/resolve-third-party-sources.py "/tmp/pins/FFmpeg-Builds-$btbn" "$btbn" "$(pin ffmpeg-commit)" \
-            "/tmp/pins/pyav-ffmpeg-$pyav_tag" "$pyav_tag" "$(pin av)" "$(pin opencv-python-headless)" \
+            "/tmp/pins/pyav-ffmpeg-$pyav_tag" "$pyav_tag" "$(pin av)" "$(pin opencv-python-headless)" "$(pin electron)" \
             | cut -f1-4,7- > /tmp/pins/want.txt
           grep -v '^#' "$m" | cut -f1-4,7- > /tmp/pins/have.txt
           diff /tmp/pins/want.txt /tmp/pins/have.txt
@@ -195,7 +195,7 @@ jobs:
           mkdir -p work/out
           cp dist/Hermes-Studio-*.AppImage work/HermesStudio.AppImage
           cp site/assets/demo-src.mp4 work/sample.mp4
-          cp scripts/clean-test-linux.sh work/
+          cp scripts/clean-test-linux.sh scripts/check-appimage-libs.sh work/
           docker run --rm -v "$PWD/work:/work" ubuntu:24.04 bash /work/clean-test-linux.sh 2>&1 \
             | grep -vE "^(debconf|dpkg)" | tee work/out/test.log
           grep -q "LINUX CLEAN TEST PASSED" work/out/test.log

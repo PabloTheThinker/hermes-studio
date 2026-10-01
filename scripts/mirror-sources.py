@@ -56,6 +56,9 @@ BUNDLE_GROUPS = {
     "opencv-linux": "opencv",
     "opencv-win": "opencv",
     "numpy-linux": "numpy",
+    # Electron's own FFmpeg (one archive for both platforms) goes with the shared archives.
+    "electron-linux": "common",
+    "electron-win": "common",
 }
 # GitHub refuses release assets of 2 GiB or more; stay well under it.
 BUNDLE_LIMIT = 2_000_000_000
