@@ -121,7 +121,11 @@ item whose own id is malformed or duplicated anywhere in the doc leaves `id` off
 
 `seconds_to_ticks(x)` is exact for int, `Fraction`, `Decimal` and str (`"19.15"`, `"1001/30000"`)
 and raises if the value is not a whole number of ticks; a float is taken at its exact binary
-value and rounded half to even. `ticks_to_seconds(t)` returns a `Fraction`. `ticks_per_frame`,
+value and rounded half to even. `seconds_to_ticks_nearest(x)` is the rounding one: it takes int,
+`Fraction`, `Decimal` or float (never a str, not even `"1"`), rounds to the nearest tick with
+exact halves going to even, passes negative values through, and returns `(ticks, seconds_used)`
+with `seconds_used = Fraction(ticks, 705600000)`. It raises `TypeError` for a bool, a str or any
+other non-number, and `ValueError` for NaN and ±infinity. `ticks_to_seconds(t)` returns a `Fraction`. `ticks_per_frame`,
 `frames_to_ticks`, `ticks_to_frames` are exact at 24000/1001, 24, 25, 30000/1001, 30, 60 fps and
 48 kHz, and raise for rates that are not.
 

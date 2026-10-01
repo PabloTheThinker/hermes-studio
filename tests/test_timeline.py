@@ -400,6 +400,39 @@ def test_seconds_to_ticks():
     assert T.seconds_to_ticks(T.ticks_to_seconds(123456789)) == 123456789
 
 
+def test_seconds_to_ticks_stays_strict_between_two_ticks():
+    for x in (Fraction(1, 2 * S), Fraction(3, 2 * S), Decimal(1) / Decimal(2 * S), "0.0000000000001", Fraction(-1, 3 * S)):
+        with pytest.raises(ValueError):
+            T.seconds_to_ticks(x)
+
+
+def test_seconds_to_ticks_nearest_rounds_half_to_even_and_reports_the_seconds_used():
+    assert T.seconds_to_ticks_nearest(Fraction(1, 2 * S)) == (0, Fraction(0))  # 0.5 tick -> 0
+    assert T.seconds_to_ticks_nearest(Fraction(3, 2 * S)) == (2, Fraction(2, S))  # 1.5 -> 2
+    assert T.seconds_to_ticks_nearest(Fraction(5, 2 * S)) == (2, Fraction(2, S))  # 2.5 -> 2
+    assert T.seconds_to_ticks_nearest(Fraction(-3, 2 * S)) == (-2, Fraction(-2, S))
+    assert T.seconds_to_ticks_nearest(Decimal("0.0000003125"))[0] == 220  # exactly 220.5 ticks
+    assert T.seconds_to_ticks_nearest(Decimal("0.0000009375"))[0] == 662  # exactly 661.5 ticks
+    assert T.seconds_to_ticks_nearest(2.5 / S)[0] == 2 and T.seconds_to_ticks_nearest(3.5 / S)[0] == 4
+    assert T.seconds_to_ticks_nearest(-0.5) == (-S // 2, Fraction(-1, 2))  # negatives pass through
+    assert T.seconds_to_ticks_nearest(1) == (S, Fraction(1))
+    t, used = T.seconds_to_ticks_nearest(Fraction(1, 3 * S) + Fraction(1, 7))
+    assert used == Fraction(t, S) and used != Fraction(1, 3 * S) + Fraction(1, 7)  # what was actually used
+    t, used = T.seconds_to_ticks_nearest(0.1 + 0.2)
+    assert (t, used) == (211680000, Fraction(3, 10))
+
+
+@pytest.mark.parametrize("x, err", [
+    (float("nan"), ValueError), (float("inf"), ValueError), (float("-inf"), ValueError),
+    (Decimal("NaN"), ValueError), (Decimal("Infinity"), ValueError), (Decimal("-Infinity"), ValueError),
+    (True, TypeError), (False, TypeError), ("1", TypeError), ("0.5", TypeError), (None, TypeError),
+    ([1], TypeError), (1j, TypeError),
+])
+def test_seconds_to_ticks_nearest_rejects(x, err):
+    with pytest.raises(err):
+        T.seconds_to_ticks_nearest(x)
+
+
 def test_frame_helpers_refuse_inexact_rates():
     with pytest.raises(ValueError):
         T.ticks_per_frame(11)
@@ -595,9 +628,9 @@ def test_the_documented_example_is_valid():
 
 
 def test_public_api_is_importable():
-    from hermes_studio.timeline import canonical_hash, seconds_to_ticks, to_otio, validate
+    from hermes_studio.timeline import canonical_hash, seconds_to_ticks, seconds_to_ticks_nearest, to_otio, validate
 
-    assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks))
+    assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks, seconds_to_ticks_nearest))
     assert T.ROLE_ORDER == ("text", "main", "voice", "music")
     assert T.new_timeline("p")["schema_version"] == "hs.timeline/1" and "schema" not in T.new_timeline("p")
 

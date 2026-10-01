@@ -154,6 +154,19 @@ def seconds_to_ticks(x: int | Fraction | Decimal | str | float) -> int:
     return int(t)
 
 
+def seconds_to_ticks_nearest(x: int | Fraction | Decimal | float) -> tuple[int, Fraction]:
+    """The nearest tick to ``x`` seconds, rounding an exact half to even, and the seconds that tick
+    stands for: ``(ticks, Fraction(ticks, TICK_RATE))``. Takes int, Fraction, Decimal and float
+    (a float at its exact binary value); negative values pass through. Raises TypeError for a
+    bool, a str (even ``"1"``) or any other non-number, and ValueError for NaN or +-infinity."""
+    if isinstance(x, bool) or not isinstance(x, (int, Fraction, Decimal, float)):
+        raise TypeError(f"seconds must be an int, Fraction, Decimal or float, not {type(x).__name__}")
+    if isinstance(x, (float, Decimal)) and not (math.isfinite(x) if isinstance(x, float) else x.is_finite()):
+        raise ValueError("seconds must be finite")
+    t = round(Fraction(x) * TICK_RATE)  # Fraction.__round__ rounds half to even
+    return t, Fraction(t, TICK_RATE)
+
+
 def ticks_to_seconds(t: int) -> Fraction:
     return Fraction(t, TICK_RATE)
 
