@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -106,18 +107,54 @@ def _write_atomic(path: Path, text: str) -> None:
 
     A plain write_text truncates the file first: list_jobs() polling at that instant
     reads "" or partial JSON, drops the job, and the newest job vanishes from the list.
+    The temp file is flushed and fsynced before the rename (and the folder after it,
+    on POSIX), and removed on every path where the rename did not happen.
     """
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
-    tmp.write_text(text)
-    for attempt in range(20):
-        try:
-            os.replace(tmp, path)
-            return
-        except PermissionError:  # Windows: a reader has job.json open for a moment
-            if attempt == 19:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")  # unique per save
+    created = replaced = False
+    try:
+        # "x": create exclusively (O_CREAT|O_EXCL) with the umask default mode, like write_text did.
+        with open(tmp, "x", encoding="utf-8") as f:
+            created = True
+            if os.name != "nt":
+                try:
+                    os.chmod(f.fileno(), stat.S_IMODE(path.stat().st_mode))  # keep an existing job.json's mode
+                except FileNotFoundError:
+                    pass  # new job.json: umask default (0644 under umask 022)
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        for attempt in range(20):  # bounded: 19 x 10 ms, about 0.2 s
+            try:
+                os.replace(tmp, path)
+                replaced = True
+                break
+            except PermissionError:  # Windows: a reader has job.json open for a moment
+                if attempt == 19:
+                    raise
+                time.sleep(0.01)
+    finally:
+        if created and not replaced:  # never remove a file this call did not create
+            try:
                 tmp.unlink(missing_ok=True)
-                raise
-            time.sleep(0.01)
+            except OSError:
+                pass  # never mask the original error
+    if os.name != "nt":
+        _fsync_dir(path.parent)
+
+
+def _fsync_dir(folder: Path) -> None:
+    """Best effort: make the rename itself durable (POSIX only)."""
+    try:
+        fd = os.open(folder, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 def job_from_dict(data: dict) -> Job:
