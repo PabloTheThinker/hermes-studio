@@ -203,6 +203,11 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
 
 ## Undo and redo
 
+**`undo_blocked` `op_ids` depends on `reason`:**
+- `actor`: the target entries made by someone else (the ones this agent may not undo).
+- `dependents`: the blocking later entries, the same list as `blocking_op_ids`, by `seq`.
+- `inverse_invalid`: the entries being undone (the target, or every live entry of the group).
+
 `history_undo{op_id | group_id, client_op_id, summary?, base_version?}` appends a new entry whose
 `ops` are the target's `inverse` (a group: every live entry of the group, newest first, as one
 entry). `history_redo{op_id}` takes an undo entry and undoes it. History is never rewritten.

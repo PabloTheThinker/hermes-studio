@@ -2016,6 +2016,14 @@ def test_an_agent_cannot_undo_a_humans_edit_text():
     assert (e.value.extra["reason"], e.value.extra["op_ids"]) == ("actor", [a["op_id"]])
 
 
+def test_the_docs_say_what_undo_blocked_op_ids_means_for_each_reason():
+    text = (Path(__file__).resolve().parent.parent / "docs" / "oplog.md").read_text(encoding="utf-8")
+    note = text.split("**`undo_blocked` `op_ids` depends on `reason`:**")[1].split("\n\n")[0]
+    for reason in ("actor", "dependents", "inverse_invalid"):
+        assert f"- `{reason}`:" in note
+    assert "blocking_op_ids" in note
+
+
 _STRINGS = ["", "a", "Hola", "caf\u00e9", "\U0001f600", "\u65e5\u672c", "x\ny", "bold", "pop", "Big Title"]
 
 
