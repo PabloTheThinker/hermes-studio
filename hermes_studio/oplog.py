@@ -847,7 +847,7 @@ class Oplog:
                 dependents.append(e["op_id"])
         if dependents:
             raise OplogError("undo_blocked", "later entries changed the same items", reason="dependents",
-                             op_ids=dependents, hint="Undo those first, or restore to before this step.")
+                             blocking_op_ids=dependents, op_ids=dependents, hint="Undo those first, or restore to before this step.")
         ops = [op for e in sorted(group, key=lambda e: -e["seq"]) for op in e["inverse"]]
         try:
             new, logged, inverse = self._run(ops, internal=True)

@@ -48,7 +48,7 @@ before the entry takes effect; a failed write changes nothing):
 | `hash` | `canonical_hash` of the new doc |
 | `ops` | the ops as applied: forged fields dropped, engine-assigned ids filled in |
 | `inverse` | ops that undo this entry, computed at apply time |
-| `changed_ids` | sorted ids added, removed or changed (media, tracks, items, markers) |
+| `changed_ids` | sorted ids added, removed or changed (media, tracks, items, markers), worked out by diffing the doc before and after, so side effects count: items a delete turns from `anchor` into `at`, and items a split re-anchors to a piece. An undo entry lists the same ids |
 | `undoes` | `null`, or the list of `op_id`s this entry undoes (one for an op, all of a group's newest first) |
 
 `undoes` is a list so a group undo is one entry that names every entry it reverses.
@@ -97,10 +97,12 @@ Decisions:
 - **Split.** Pieces get `split_from: <old id>`. The first piece keeps `fade_in`, the second
   `fade_out` (each clamped to its piece). A transition into the clip moves to the first piece, one
   out of it to the second. An item anchored to the clip moves to the piece its start falls in,
-  with its offset adjusted so it doesn't move. At speed ≠ 1 a cut whose source point isn't whole
+  with its offset adjusted so it doesn't move; its id is in the entry's `changed_ids` (and in the
+  undo entry's, which re-anchors it to the old id). At speed ≠ 1 a cut whose source point isn't whole
   ticks is `invalid_op` / `non_integer_duration`; the engine never rounds.
 - **Delete.** Transitions touching the item go with it. Items anchored to it keep their place as
-  an absolute `at` (never an `anchor_target_missing` doc). With `ripple`, items on the same track
+  an absolute `at` (never an `anchor_target_missing` doc); their ids are in the entry's
+  `changed_ids`, and in the undo entry's, which anchors them again. With `ripple`, items on the same track
   starting at or after its end shift left by its duration minus any transition overlaps, so the
   neighbours abut.
 - **Trim.** Without `ripple`, trimming the start keeps the rest of the clip where it is (`at`, or
@@ -116,7 +118,7 @@ Decisions:
 | `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
 | `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, `op_index` / `id` |
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
-| `undo_blocked` | see below | `reason`, `op_ids` |
+| `undo_blocked` | see below | `reason`, `op_ids`; with `reason: "dependents"` also `blocking_op_ids` (by `seq`) |
 
 Op-level `rule`s: `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
 `not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `bad_track_role`,
@@ -136,7 +138,8 @@ entry). `history_redo{op_id}` takes an undo entry and undoes it. History is neve
 - **Dependents:** a later live entry blocks the undo when it changed one of the target's
   `changed_ids` or its ops refer to one (an anchor, a transition end, a target id). An
   undo/redo pair after the target cancels out and doesn't count. Result: `undo_blocked`,
-  `reason: "dependents"`, `op_ids` = those entries (Glyph's "Restore to before this step").
+  `reason: "dependents"` and `blocking_op_ids` = those entries' `op_id`s, ordered by `seq`
+  (Glyph's "Restore to before this step"; `op_ids` carries the same list).
 - If the inverse still fails to validate: `undo_blocked`, `reason: "inverse_invalid"`, with the
   validator `problems`.
 

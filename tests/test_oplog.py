@@ -373,6 +373,62 @@ def test_deleting_a_clip_frees_its_anchored_items_and_undo_reanchors_them():
     assert T.validate(d) == []  # never an anchor_target_missing doc
 
 
+def test_freed_anchored_items_are_in_changed_ids_of_the_delete_and_its_undo():
+    log = new_log()
+    apply(log, HUMAN, {"op": "add_text", "id": "x9", "dur": S, "text": "b", "style": "pop",
+                       "anchor": {"to": "c2", "offset": 0}})
+    r = apply(log, HUMAN, {"op": "delete_clip", "id": "c2"})
+    assert r["changed_ids"] == ["c2", "x1", "x9"] == log.history_list()[-1]["changed_ids"]
+    assert {o["id"] for o in log.history_list()[-1]["inverse"] if o["op"] == "set_fields"} == {"x1", "x9"}
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert u["changed_ids"] == ["c2", "x1", "x9"] == log.history_list()[-1]["changed_ids"]
+    assert item(log.doc, "x1")["anchor"] == {"to": "c2", "offset": S} and "at" not in item(log.doc, "x9")
+    rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "rd-del"})
+    assert rd["changed_ids"] == ["c2", "x1", "x9"]
+
+
+def test_re_anchored_items_are_in_changed_ids_of_the_split_and_its_undo():
+    log = new_log()
+    r = apply(log, HUMAN, {"op": "split_clip", "id": "c1", "at": S, "ids": ["p1", "p2"]})
+    assert item(log.doc, "mu1")["anchor"] == {"to": "p1", "offset": 0}  # music anchored to c1 moved to p1
+    assert r["changed_ids"] == ["c1", "mu1", "p1", "p2"] == log.history_list()[-1]["changed_ids"]
+    (inv,) = log.history_list()[-1]["inverse"]
+    assert inv["op"] == "join_clips" and inv["anchors"] == {"mu1": {"to": "c1", "offset": 0}}
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert u["changed_ids"] == ["c1", "mu1", "p1", "p2"] and item(log.doc, "mu1")["anchor"]["to"] == "c1"
+    r2 = apply(log, HUMAN, {"op": "split_clip", "id": "c2", "at": 5 * S, "ids": ["q1", "q2"]})
+    assert "x1" in r2["changed_ids"] and item(log.doc, "x1")["anchor"] == {"to": "q2", "offset": 0}
+    assert "x1" in undo(log, HUMAN, op_id=r2["op_id"])["changed_ids"]
+
+
+def test_dependents_come_back_as_blocking_op_ids_in_seq_order():
+    log = new_log()
+    a = apply(log, hermes(), {"op": "move_clip", "id": "c3", "at": 12 * S})
+    b = apply(log, HUMAN, {"op": "set_fade", "id": "c3", "fade_in": S})
+    apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "unrelated"})
+    c = apply(log, HUMAN, {"op": "add_text", "dur": S, "text": "t", "style": "pop", "anchor": {"to": "c3", "offset": 0}})
+    d = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 13 * S})
+    before = h(log)
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, op_id=a["op_id"])
+    out = e.value.as_dict()
+    assert out["code"] == "undo_blocked" and out["reason"] == "dependents"
+    assert out["blocking_op_ids"] == [b["op_id"], c["op_id"], d["op_id"]]  # by seq; the marker entry doesn't block
+    assert h(log) == before
+    undo(log, HUMAN, op_id=d["op_id"])
+    with pytest.raises(O.OplogError) as e:  # an undone blocker drops out
+        undo(log, HUMAN, op_id=a["op_id"])
+    assert e.value.extra["blocking_op_ids"] == [b["op_id"], c["op_id"]]
+
+
+def test_an_actor_block_has_no_blocking_op_ids():
+    log = new_log()
+    hu = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 12 * S})
+    with pytest.raises(O.OplogError) as e:
+        undo(log, hermes(), op_id=hu["op_id"])
+    assert e.value.extra["reason"] == "actor" and "blocking_op_ids" not in e.value.extra
+
+
 def test_ripple_delete_closes_the_hole_and_takes_transitions_along():
     log = new_log()
     apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 8 * S - S // 4},
@@ -556,6 +612,9 @@ def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
                 assert h(log) == hashes[-1]
             except O.OplogError as e:
                 assert e.code == "undo_blocked" and e.extra["reason"] == "dependents"
+                blockers = e.extra["blocking_op_ids"]
+                seqs = {x["op_id"]: x["seq"] for x in log.history_list()}
+                assert blockers and [seqs[b] for b in blockers] == sorted(seqs[b] for b in blockers)
         # undo-all, newest first, as a human: every step lands on the previous hash
         live = [e for e in log.history_list() if not e["undoes"]]
         for e, want in zip(reversed(live), reversed(hashes[:-1]), strict=True):
