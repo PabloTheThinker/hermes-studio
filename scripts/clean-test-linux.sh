@@ -47,28 +47,43 @@ import -window root /work/out/clean-01-open.png
 echo "== tools the engine sees =="
 curl -s "http://127.0.0.1:$PORT/api/tools" | head -c 160; echo
 
+# >>> job helpers (POSIX sh; tests/test_clean_test_script.py runs this block) >>>
+# Each job is tracked by the id its own submit returned, never by list order.
+API="http://127.0.0.1:$PORT"
+POLL_SLEEP="${POLL_SLEEP:-2}"
+POLL_FILE="$HOME/.clean-test-poll.json"
+submit_job() { # $1 = JSON body, $2 = label; sets JOB_ID
+  R=$(curl -s -X POST -H "Content-Type: application/json" -H "Origin: $API" "$API/api/jobs" -d "$1" || true)
+  printf "%s" "$R" | head -c 300; echo
+  JOB_ID=$(printf "%s" "$R" | grep -oE "\"id\": ?\"[A-Za-z0-9_-]+\"" | head -1 | grep -oE "[A-Za-z0-9_-]+\"$" | tr -d "\"" || true)
+  [ -n "$JOB_ID" ] || { echo "FAIL: $2 job: submit returned no job id"; exit 1; }
+  echo "$2 job id: $JOB_ID"
+}
+wait_job() { # $1 = job id, $2 = max polls, $3 = label
+  n=0; S=""; CODE=""
+  while [ "$n" -lt "$2" ]; do
+    n=$((n + 1))
+    CODE=$(curl -s -o "$POLL_FILE" -w "%{http_code}" "$API/api/jobs/$1" || true)
+    if [ "$CODE" = "404" ]; then echo "FAIL: $3 job $1 is missing (GET /api/jobs/$1 returned 404)"; exit 1; fi
+    if [ "$CODE" = "200" ]; then
+      S=$(grep -oE "\"status\": ?\"[a-z]+\"" "$POLL_FILE" | head -1 | grep -oE "[a-z]+\"$" | tr -d "\"" || true)
+      case "$S" in
+        completed) echo "$3 job $1: completed"; return 0;;
+        failed) echo "FAIL: $3 job $1 failed: $(grep -oE "\"error\": ?\"[^\"]*\"" "$POLL_FILE" | head -1 || true)"; exit 1;;
+      esac
+    fi
+    sleep "$POLL_SLEEP"
+  done
+  echo "FAIL: $3 job $1 did not finish after $2 polls (last status: ${S:-none}, last HTTP: ${CODE:-none})"; exit 1
+}
+# <<< job helpers <<<
+
 echo "== real clip job (local file) =="
-curl -s -X POST -H "Content-Type: application/json" -H "Origin: http://127.0.0.1:$PORT" \
-  "http://127.0.0.1:$PORT/api/jobs" \
-  -d "{\"src\":\"$HOME/sample.mp4\",\"mode\":\"captions\",\"whisper\":\"tiny\",\"aspect\":\"9:16\"}" | head -c 300; echo
-for i in $(seq 1 240); do
-  S=$(curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"status\": ?\"[a-z]+\"" | head -1 || true)
-  case "$S" in *completed*|*failed*) break;; esac
-  sleep 2
-done
-echo "job: $S"
-case "$S" in *completed*) ;; *) echo "FAIL: captions job did not complete"; curl -s "http://127.0.0.1:$PORT/api/jobs" | head -c 600; echo; exit 1;; esac
+submit_job "{\"src\":\"$HOME/sample.mp4\",\"mode\":\"captions\",\"whisper\":\"tiny\",\"aspect\":\"9:16\"}" captions
+wait_job "$JOB_ID" 240 captions
 echo "== real CLIP job (find moments + captions) =="
-curl -s -X POST -H "Content-Type: application/json" -H "Origin: http://127.0.0.1:$PORT" \
-  "http://127.0.0.1:$PORT/api/jobs" \
-  -d "{\"src\":\"$HOME/sample.mp4\",\"mode\":\"clip\",\"whisper\":\"tiny\",\"aspect\":\"9:16\",\"max_clips\":2,\"min_sec\":12,\"max_sec\":25}" | head -c 120; echo
-for i in $(seq 1 300); do
-  S=$(curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"status\": ?\"[a-z]+\"" | head -1 || true)
-  case "$S" in *completed*|*failed*) break;; esac
-  sleep 2
-done
-echo "clip job: $S"
-case "$S" in *completed*) ;; *) echo "FAIL: clip job did not complete"; curl -s "http://127.0.0.1:$PORT/api/jobs" | grep -oE "\"error\": ?[^,]+" | head -1; exit 1;; esac
+submit_job "{\"src\":\"$HOME/sample.mp4\",\"mode\":\"clip\",\"whisper\":\"tiny\",\"aspect\":\"9:16\",\"max_clips\":2,\"min_sec\":12,\"max_sec\":25}" clip
+wait_job "$JOB_ID" 300 clip
 echo "== outputs =="
 N=$(find "$HOME/.hermes/clips/library" -name "clip-*.mp4" 2>/dev/null | wc -l)
 find "$HOME/.hermes/clips/library" -name "*.mp4" 2>/dev/null | head -8
