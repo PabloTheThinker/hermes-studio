@@ -55,7 +55,11 @@ and `version` all fail as `out_of_range` above 2⁵³. So no value that big ever
 `canonical_hash()` or `to_otio()`. Other fractions are reduced `[num, den]` pairs
 (`volume` 0–4, `speed` 1/10–10, `crop` `{x, y, w, h}` in 0–1 inside the frame). Every string must
 be NFC-normalized (`not_nfc`) and encodable as UTF-8: a lone surrogate such as JSON `"\ud800"`
-fails as `wrong_type`. A value of the wrong type anywhere (a list or object as a track `role`, a
+fails as `wrong_type`. The exception is a field that is checked against a fixed set or against
+other ids: there, a lone surrogate gets that field's own rule id instead, because it can't match
+anything. That means `schema_version` (`bad_schema`), a track `role` (`bad_track_role`), an item's
+`media` (`unknown_media`), and a transition's `kind` or `between` (`bad_transition`; for
+`between`, the two clips it joined then also report `overlap`). A value of the wrong type anywhere (a list or object as a track `role`, a
 non-string key) is reported as a problem, never raised: `validate()` always returns a list, and
 `canonical_hash()` / `stamp_hash()` raise only `TimelineError`. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
 (media, tracks, items and markers).
@@ -149,6 +153,18 @@ on the top-level stack. Fades, props, anchors, `split_from` and the media table 
 `--verify-ranges`, `--inspect` and `-o` phases work. `--stats` and `--list-markers` print SMPTE
 timecode, which OTIO 0.18 only formats at standard frame rates, so they stop with "SMPTE timecode
 does not support this rate" at the tick rate.
+
+Open questions (Slice 2 notes):
+
+- **otiotool `--stats` / `--list-markers`** fail at 705600000/s, as above. The other otiotool
+  commands pass.
+- **Frame-rate export:** exporting at the timeline's frame rate would make `--stats` work, but it
+  would not round-trip exactly. That's still to be decided.
+- **Large values in `.otio` files:** OpenTimelineIO 0.18.1's JSON reader misreads values above
+  about 7×10¹⁵ ticks (about 118 days) when a `.otio` file is read back. Odd values come back about
+  1 tick off; for example, 9007198549140991 reads as …990. The in-memory `to_otio` / `from_otio`
+  round trip is exact up to 2⁵³. This is OTIO's own behaviour, so export will **warn** about such
+  values, not fix them.
 
 ## Rule ids
 
