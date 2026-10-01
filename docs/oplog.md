@@ -140,17 +140,31 @@ entry). `history_redo{op_id}` takes an undo entry and undoes it. History is neve
   undo/redo pair after the target cancels out and doesn't count. Result: `undo_blocked`,
   `reason: "dependents"` and `blocking_op_ids` = those entries' `op_id`s, ordered by `seq`
   (Glyph's "Restore to before this step"; `op_ids` carries the same list).
-- If the inverse still fails to validate: `undo_blocked`, `reason: "inverse_invalid"`, with the
-  validator `problems`.
+- **Fallback only:** if the actor and dependents checks pass but the inverse still fails to
+  validate, the result is `undo_blocked`, `reason: "inverse_invalid"`, with the validator's
+  `problems`.
 
 ## Replay
 
 `Oplog.load(base, path)` re-applies every line and checks its sequence, versions, hash and
-inverse; `replay(base, entries)` re-applies and checks each hash. On load the dedupe table is rebuilt from the lines (retried results then carry no
-warnings). Snapshots, the project store and the lock are Slice 3.
+inverse. `replay(base, entries)` re-applies them and checks each hash. Snapshots, the project
+store and the lock are Slice 3.
+
+### Dedupe and stale retries
+
+- A retry with the same `(actor, client_op_id)` returns the original result, even when its
+  `base_version` is now stale. It doesn't raise `conflict` and doesn't append a line.
+- `load` rebuilds the dedupe table from the log. A rebuilt entry doesn't carry the original
+  `warnings` (for example `ignored_field`), because warnings aren't logged.
+
+## `media.proxy` and the hash
+
+`media.proxy` is currently part of the hashed doc. Ada has ruled that it must not be, because a
+background job must never change the hash without an op. It moves to media state outside the doc
+in S4. S2 leaves it as it is.
 
 ## Not in this slice
 
 The project folder, `.lock`, snapshots and the event bus (S3); the mode gate (S8); editing a
-text item's `text`/`style` (no op in PLAN §4.5); `run_id` in lines (Wire's `history_list` lists
-it, but it isn't in the locked line fields).
+text item's `text`/`style` (no op in PLAN §4.5); `run_id` in lines (it stays out of the log line;
+Wire's `history_list` lists it, but it isn't in the locked line fields).
