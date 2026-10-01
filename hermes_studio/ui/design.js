@@ -181,7 +181,7 @@
       o.setControlsVisibility({ mt: false, mb: false });
     } else if (L.type === "image") {
       o = await f.FabricImage.fromURL(assetUrl(L.src));
-      o.hs = { type: "image", src: L.src, radius: L.radius || 0, fit: L.fit || "cover", shadow: L.shadow || null };
+      o.hs = { type: "image", src: L.src, radius: L.radius || 0, fit: L.fit || "cover", shadow: L.shadow || null, adjust: L.adjust || null };
       o.set(Object.assign({}, base, { left: L.x, top: L.y, flipX: !!L.flip }));
       if (L.fit === "contain") {
         const el = o.getElement(), s = Math.min(L.w / (el.naturalWidth || el.width), L.h / (el.naturalHeight || el.height));
@@ -191,9 +191,22 @@
     if (L.name) o.hs.name = L.name;
     if (L.locked) o.set({ lockMovementX: true, lockMovementY: true, lockScalingX: true, lockScalingY: true, lockRotation: true, hasControls: false });
     if (L.group) o.hs.group = L.group;
+    if (L.blend) { o.hs.blend = L.blend; o.globalCompositeOperation = { multiply: "multiply", screen: "screen", overlay: "overlay", softlight: "soft-light" }[L.blend]; }
     if (L.angle) o.rotate(L.angle);
     paintEffect(o);
+    paintAdjust(o);
     return o;
+  }
+
+  function paintAdjust(o) {
+    if (!o || !o.hs || o.hs.type !== "image") return;
+    const a = o.hs.adjust || {};
+    const f = F().filters, filters = [];
+    if (a.brightness) filters.push(new f.Brightness({ brightness: a.brightness / 100 }));
+    if (a.contrast) filters.push(new f.Contrast({ contrast: a.contrast / 100 }));
+    if (a.saturation) filters.push(new f.Saturation({ saturation: a.saturation / 100 }));
+    if (a.blur) filters.push(new f.Blur({ blur: a.blur / 40 }));
+    o.filters = filters; o.applyFilters();
   }
 
   function paintEffect(o) {
@@ -230,10 +243,12 @@
     } else if (t === "image") {
       Object.assign(L, { type: "image", src: o.hs.src, h, fit: o.hs.fit === "contain" ? "contain" : "cover", radius: o.hs.radius || 0, flip: !!o.flipX });
       if (o.hs.shadow) L.shadow = o.hs.shadow;
+      if (o.hs.adjust) L.adjust = o.hs.adjust;
       if (L.fit === "contain") L.fit = "cover"; // contain is baked into the box on first edit
     } else return null;
     if (o.lockMovementX) L.locked = true;
     if (o.hs.group) L.group = o.hs.group;
+    if (o.hs.blend) L.blend = o.hs.blend;
     for (const k of ["x", "y", "w", "h"]) if (typeof L[k] === "number") L[k] = +L[k].toFixed(2);
     return L;
   }
@@ -404,7 +419,21 @@
       e.preventDefault(); const d = e.shiftKey ? 10 : 1;
       o.set({ left: o.left + (k === "arrowleft" ? -d : k === "arrowright" ? d : 0), top: o.top + (k === "arrowup" ? -d : k === "arrowdown" ? d : 0) }); o.setCoords(); S.canvas.requestRenderAll(); commitSoon(); return;
     }
+    if (mod && k === "g") { e.preventDefault(); e.shiftKey ? ungroupSel() : groupSel(); return; }
+    if (mod && k === "]") { e.preventDefault(); arrange(e.shiftKey || e.altKey ? "front" : "up"); return; }
+    if (mod && k === "[") { e.preventDefault(); arrange(e.shiftKey || e.altKey ? "back" : "down"); return; }
     if (!mod && k === "t") { e.preventDefault(); addText("body"); }
+    if (!mod && k === "r") { e.preventDefault(); addShape("rect"); }
+    if (!mod && k === "c") { e.preventDefault(); addShape("circle"); }
+    if (!mod && k === "l") { e.preventDefault(); addShape("line"); }
+    if (!mod && k === "?") { e.preventDefault(); showShortcuts(); }
+  }
+  function groupSel() { const sel = selected(); if (sel.length < 2) return; const id = "g" + Math.random().toString(36).slice(2, 8); sel.forEach(o => { o.hs.group = id; }); commit(); selectionBar(); }
+  function ungroupSel() { selected().forEach(o => { if (o.hs) delete o.hs.group; }); commit(); selectionBar(); }
+  function showShortcuts() {
+    const P = $("#ed-props"); if (!P) return;
+    P.innerHTML = `<p class="ed-h">Shortcuts</p><div class="ed-keys">${
+      [["T", "Text"], ["R", "Rectangle"], ["C", "Circle"], ["L", "Line"], ["Ctrl D", "Duplicate"], ["Ctrl G", "Group"], ["Ctrl Shift G", "Ungroup"], ["Ctrl ]", "Forward"], ["Ctrl [", "Backward"], ["Arrows", "Nudge"], ["Shift arrows", "Nudge 10"], ["Del", "Delete"], ["Ctrl Z", "Undo"], ["?", "This list"]].map(([k, v]) => `<div><span class="mono">${esc(k)}</span><span>${esc(v)}</span></div>`).join("")}</div>`;
   }
   function wireKeys() { document.addEventListener("keydown", onKey); }
   let _cs = 0; function commitSoon() { clearTimeout(_cs); _cs = setTimeout(() => { _cs = 0; commit(); }, 300); }
@@ -732,7 +761,10 @@
         ${colorRow("Colour", "fill", "")}<p class="ed-h">Align to page</p>${alignBtns()}<p class="ed-h">Distribute</p><div class="ed-btns"><button class="btn sm" data-align="dist-h">Horizontal</button><button class="btn sm" data-align="dist-v">Vertical</button></div>`;
     } else {
       const t = o.hs.type;
+      const BLEND_OPTS = ["", "multiply", "screen", "overlay", "softlight"];
       let h = `<p class="ed-h">${{ text: "Text", rect: "Shape", ellipse: "Shape", line: "Line", image: "Photo" }[t]}</p>`;
+      h += `<label class="f">Blend</label><select data-blend="1">${BLEND_OPTS.map(k => `<option value="${k}" ${(o.hs.blend || "") === k ? "selected" : ""}>${esc(k || "Normal")}</option>`).join("")}</select>`;
+      h += `<div class="ed-btns" style="margin:.5rem 0"><button class="btn sm" data-style="copy">Copy style</button><button class="btn sm" data-style="paste">Paste style</button></div>`;
       if (t === "text") {
         h += `<label class="f">Font</label><select data-k="font">${Object.entries(FONTS).map(([k, l]) => `<option value="${esc(k)}" ${o.hs.font === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
           <div class="ed-two"><div><label class="f">Size</label><input type="number" data-k="fontSize" data-num="1" min="6" max="600" value="${n0(Math.round(o.fontSize))}"></div>
@@ -756,6 +788,12 @@
         if (t === "rect") h += num("Corner radius", "radius", Math.round(o.rx || 0), 0, Math.round(Math.min(o.width, o.height) / 2), 1);
       }
       h += num("Opacity", "opacity", (+o.opacity).toFixed(2), 0, 1, .02);
+      if (t === "image") {
+        const a = o.hs.adjust || {};
+        h += `<p class="ed-h">Adjust</p>` + ["brightness","contrast","saturation","warmth"].map(k =>
+          `<label class="f">${esc(k[0].toUpperCase()+k.slice(1))} <span class="mono">${n0(a[k]||0)}</span></label><input type="range" data-adj="${esc(k)}" min="-100" max="100" value="${n0(a[k]||0)}">`).join("")
+          + `<div class="ed-btns" style="margin-top:.4rem"><button class="btn sm" data-adj="auto">Auto</button><button class="btn sm" data-adj="reset">Reset</button></div>`;
+      }
       h += `<p class="ed-h">Arrange</p><div class="ed-btns"><button class="btn sm" data-arr="front">Front</button><button class="btn sm" data-arr="up">Forward</button><button class="btn sm" data-arr="down">Backward</button><button class="btn sm" data-arr="back">Back</button></div>
         <p class="ed-h">Align to page</p>${alignBtns()}<p class="ed-h">Distribute</p><div class="ed-btns"><button class="btn sm" data-align="dist-h">Horizontal</button><button class="btn sm" data-align="dist-v">Vertical</button></div>
         <div class="ed-btns" style="margin-top:.8rem"><button class="btn sm" data-act="dup">Duplicate</button><button class="btn sm" data-act="del">Delete</button></div>`;
@@ -765,11 +803,31 @@
   }
   const alignBtns = () => `<div class="ed-btns">${[["left", "Left"], ["center", "Centre"], ["right", "Right"], ["top", "Top"], ["middle", "Middle"], ["bottom", "Bottom"]].map(([k, l]) => `<button class="btn sm" data-al="${k}">${l}</button>`).join("")}</div>`;
 
+  let _style = null;
+  function styleAct(how) {
+    const o = selected()[0]; if (!o) return;
+    if (how === "copy") { _style = { fill: o.fill, font: o.hs.font, weight: o.fontWeight, effect: o.hs.effect, blend: o.hs.blend, opacity: o.opacity }; return; }
+    if (!_style) return;
+    if (_style.fill && o.hs.type !== "image") o.set("fill", _style.fill);
+    if (_style.font && o.hs.type === "text") { o.hs.font = _style.font; o.set("fontFamily", fam(_style.font)); o.set("fontWeight", _style.weight); o.hs.effect = _style.effect; paintEffect(o); }
+    if (_style.blend) { o.hs.blend = _style.blend; o.globalCompositeOperation = { multiply: "multiply", screen: "screen", overlay: "overlay", softlight: "soft-light" }[_style.blend] || "source-over"; }
+    o.set("opacity", _style.opacity); S.canvas.requestRenderAll(); commit(); drawProps();
+  }
+  function adjustAct(how) {
+    const o = selected()[0]; if (!o || o.hs.type !== "image") return;
+    o.hs.adjust = how === "reset" ? null : { brightness: 8, contrast: 12, saturation: 10, warmth: 0 };
+    paintAdjust(o); S.canvas.requestRenderAll(); commit(); drawProps();
+  }
+
   function bindProps(P, sel, o) {
     P.querySelectorAll("[data-act]").forEach(b => b.onclick = () => ({ dup: duplicateSel, del: removeSel, fill: fillPage })[b.dataset.act]());
     P.querySelectorAll("[data-arr]").forEach(b => b.onclick = () => arrange(b.dataset.arr));
     P.querySelectorAll("[data-al]").forEach(b => b.onclick = () => align(b.dataset.al));
     P.querySelectorAll("[data-align]").forEach(b => b.onclick = () => alignSel(b.dataset.align));
+    P.querySelectorAll("[data-blend]").forEach(sel => sel.onchange = () => { const o = selected()[0]; if (!o) return; o.hs.blend = sel.value || ""; o.globalCompositeOperation = { multiply: "multiply", screen: "screen", overlay: "overlay", softlight: "soft-light" }[sel.value] || "source-over"; S.canvas.requestRenderAll(); commit(); });
+    P.querySelectorAll("[data-adj]").forEach(inp => { if (inp.tagName !== "INPUT") return; inp.oninput = () => { const o = selected()[0]; if (!o) return; o.hs.adjust = Object.assign({}, o.hs.adjust, { [inp.dataset.adj]: +inp.value }); paintAdjust(o); S.canvas.requestRenderAll(); }; inp.onchange = () => commit(); });
+    P.querySelectorAll("button[data-adj]").forEach(b => b.onclick = () => adjustAct(b.dataset.adj));
+    P.querySelectorAll("[data-style]").forEach(b => b.onclick = () => styleAct(b.dataset.style));
     P.querySelectorAll("[data-photo]").forEach(b => b.onclick = () => photoOp(b.dataset.photo, b.dataset.look));
     const apply = (key, raw, live) => {
       if (key === "bg") { S.canvas.backgroundColor = raw || "#0b0b0c"; S.canvas.requestRenderAll(); if (!live) { commit(); drawProps(); } return; }
