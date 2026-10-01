@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import random
 
 import pytest
 
@@ -492,3 +493,74 @@ def test_a_failed_write_to_the_log_changes_nothing(tmp_path):
     with pytest.raises(OSError):
         apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x"})
     assert log.doc == before and log.history_list() == []
+
+
+# --------------------------------------------------------------------------- C2: 1,000 seeded random runs
+
+
+def _random_op(rng: random.Random, d: dict) -> dict:
+    clips = [i for i in T.normalize(d)["tracks"][1]["items"] if i["type"] == "clip"]
+    texts = [i for t in d["tracks"] if t["role"] == "text" for i in t["items"]]
+    c = rng.choice(clips) if clips else None
+    k = rng.randrange(12)
+    sec = lambda lo, hi: rng.randrange(lo, hi) * S // 4  # noqa: E731
+    if k == 0 or c is None:
+        return {"op": "insert_clip", "track": "V1", "media": "m1", "src": [sec(0, 40), sec(41, 60)], "at": sec(0, 200)}
+    if k == 1:
+        return {"op": "move_clip", "id": c["id"], "at": sec(0, 200)}
+    if k == 2:
+        return {"op": "trim_clip", "id": c["id"], "src_out": c["src"][1] - S // 4, "ripple": rng.random() < .5}
+    if k == 3:
+        return {"op": "split_clip", "id": c["id"], "at": c["at"] + S // 4}
+    if k == 4:
+        return {"op": "delete_clip", "id": c["id"], "ripple": rng.random() < .5}
+    if k == 5:
+        return {"op": "set_props", "id": c["id"], "props": {"volume": [rng.randrange(1, 4), 2]}}
+    if k == 6:
+        return {"op": "set_fade", "id": c["id"], "fade_in": sec(0, 3)}
+    if k == 7:
+        return {"op": "add_text", "dur": S, "text": "t", "style": "pop", "anchor": {"to": c["id"], "offset": 0}}
+    if k == 8 and texts:
+        return {"op": "set_anchor", "id": rng.choice(texts)["id"], "anchor": None, "at": sec(0, 40)}
+    if k == 9:
+        return {"op": "add_marker", "at": sec(0, 100), "label": "m"}
+    if k == 10 and d["markers"]:
+        return {"op": "remove_marker", "id": rng.choice(d["markers"])["id"]}
+    return {"op": "add_track", "role": rng.choice(["text", "voice", "music"])}
+
+
+def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
+    applied = undone_groups = 0
+    for seed in range(1000):
+        rng = random.Random(seed)
+        log = new_log()
+        hashes = [h(log)]
+        for _ in range(rng.randrange(2, 7)):
+            ops = [_random_op(rng, log.doc) for _ in range(rng.randrange(1, 3))]
+            try:
+                apply(log, rng.choice([HUMAN, hermes()]), *ops, group_id="g" if rng.random() < .3 else None)
+            except O.OplogError as e:
+                assert e.code in ("invalid_op", "not_found") and h(log) == hashes[-1]
+                continue
+            hashes.append(h(log))
+            applied += 1
+        n = len(log.history_list())
+        assert len(hashes) == n + 1
+        if n and rng.random() < .3 and any(e["group_id"] == "g" for e in log.history_list()):
+            # a group undo is one entry
+            try:
+                undo(log, HUMAN, group_id="g")
+                undone_groups += 1
+                assert len(log.history_list()) == n + 1
+                undo(log, HUMAN, op_id=log.history_list()[-1]["op_id"])  # undo the undo
+                assert h(log) == hashes[-1]
+            except O.OplogError as e:
+                assert e.code == "undo_blocked" and e.extra["reason"] == "dependents"
+        # undo-all, newest first, as a human: every step lands on the previous hash
+        live = [e for e in log.history_list() if not e["undoes"]]
+        for e, want in zip(reversed(live), reversed(hashes[:-1]), strict=True):
+            undo(log, HUMAN, op_id=e["op_id"])
+            assert h(log) == want
+        assert h(log) == hashes[0]
+        assert T.canonical_hash(O.replay(base(), log.history_list())) == hashes[0]
+    assert applied > 2000 and undone_groups > 50
