@@ -10,6 +10,12 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+env:
+  # The same BtbN static FFmpeg the desktop app ships (desktop.yml FFMPEG_LINUX_*). Keep them in
+  # sync; tests/test_ci_ffmpeg_pin.py fails if they drift.
+  FFMPEG_LINUX_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
+  FFMPEG_LINUX_SHA256: 68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269
+  FFMPEG_VERSION: n9.0.2-17-g2a571b6068
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,15 +27,74 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: FFmpeg cache
+        id: ffmpeg-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ffmpeg-dl
+          # version and sha both in the key: a bump never restores the old archive
+          key: ffmpeg-linux64-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_LINUX_SHA256 }}
+      # No apt mirrors: a cache hit makes no network call; a miss is one GitHub download. The
+      # sha256 and version are checked on a hit too, so a bad cache entry fails here. Only an
+      # unreachable download (not a bad file) hands over to the apt fallback below.
+      - name: FFmpeg (pinned, sha256-verified)
+        id: ffmpeg
+        timeout-minutes: 3
+        env:
+          CACHE_HIT: ${{ steps.ffmpeg-cache.outputs.cache-hit }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
-          python -m pip install -q --upgrade pip
-          python -m pip install -q -e ".[reframe,dev]"
+          set -euo pipefail
+          echo "start: $(date -u +%FT%TZ)"
+          f="$HOME/.cache/ffmpeg-dl/ffmpeg.tar.xz"
+          mkdir -p "$(dirname "$f")" "$RUNNER_TEMP/ffmpeg"
+          if [ "$CACHE_HIT" = "true" ] && [ -f "$f" ]; then
+            echo "ffmpeg: cache hit, using cached archive"
+          else
+            echo "ffmpeg: cache miss, downloading $FFMPEG_LINUX_URL"
+            if ! curl -fsSL --connect-timeout 15 --max-time 45 --retry 3 --retry-all-errors --retry-max-time 100 \
+              --speed-limit 200000 --speed-time 20 -o "$f" "$FFMPEG_LINUX_URL"; then
+              rm -f "$f"
+              echo "::warning::pinned FFmpeg download failed; falling back to apt"
+              echo "fallback=true" >> "$GITHUB_OUTPUT"
+              echo "end: $(date -u +%FT%TZ)"
+              exit 0
+            fi
+          fi
+          echo "$FFMPEG_LINUX_SHA256  $f" | sha256sum -c - || { echo "::error::ffmpeg archive sha256 mismatch (bad download or cache entry)"; exit 1; }
+          tar -xJf "$f" -C "$RUNNER_TEMP/ffmpeg" --strip-components=2 --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
+          echo "$RUNNER_TEMP/ffmpeg" >> "$GITHUB_PATH"
+          v="$("$RUNNER_TEMP/ffmpeg/ffmpeg" -hide_banner -version)"
+          echo "${v%%$'\n'*}"
+          [[ "$v" == "ffmpeg version $FFMPEG_VERSION"* ]] || { echo "::error::unexpected ffmpeg version"; exit 1; }
+          grep -qE '^ \S+ ass ' <<<"$("$RUNNER_TEMP/ffmpeg/ffmpeg" -hide_banner -filters)" || { echo "::error::ffmpeg lacks libass"; exit 1; }
+          echo "ffmpeg: libass ok"
+          echo "end: $(date -u +%FT%TZ)"
+      - name: FFmpeg (apt fallback, only if the pinned download was unreachable)
+        if: steps.ffmpeg.outputs.fallback == 'true'
+        timeout-minutes: 4
+        run: |
+          echo "start: $(date -u +%FT%TZ)"
+          o="-o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Dpkg::Use-Pty=0"
+          for i in 1 2 3; do
+            echo "apt attempt $i: $(date -u +%FT%TZ)"
+            timeout 90 sudo apt-get $o update -q && timeout 150 sudo apt-get $o install -y --no-install-recommends ffmpeg && break
+            echo "apt attempt $i failed or stalled; retrying"; sleep 10
+          done
+          ffmpeg -hide_banner -version | head -1
+          echo "end: $(date -u +%FT%TZ)"
+      - name: Python deps
+        timeout-minutes: 6
+        run: |
+          echo "start: $(date -u +%FT%TZ)"
+          python -m pip install --progress-bar off --timeout 30 --retries 5 --upgrade pip
+          python -m pip install --progress-bar off --timeout 30 --retries 5 -e ".[reframe,dev]"
+          echo "end: $(date -u +%FT%TZ)"
       - name: Lint (bugs, imports, security)
         run: ruff check hermes_studio tests hermes_plugin
       - name: Tests
-        run: pytest -q
+        run: pytest -q -rs
   secrets:
     runs-on: ubuntu-latest
     timeout-minutes: 10
