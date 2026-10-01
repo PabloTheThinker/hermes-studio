@@ -316,7 +316,7 @@ def op_insert_marker(ctx: _Ctx, a: dict) -> list[dict]:
 
 def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
     role = a["role"]
-    if role not in T.ROLES:
+    if not isinstance(role, str) or role not in T.ROLES:  # S1's role rule: a non-string is bad_track_role
         raise _OpError("bad_track_role", f"role must be one of {', '.join(T.ROLE_ORDER)}", "role")
     letter = T.ROLES[role][0]
     if "id" in a:
@@ -324,8 +324,7 @@ def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
         if tid in ctx.taken(ctx.doc):
             raise _OpError("duplicate_id", f"id {tid!r} is already used", "id")
     else:
-        nums = [int(t["id"][1:]) for t in ctx.doc["tracks"] if t["id"][:1] == letter and t["id"][1:].isdigit()]
-        tid = a["id"] = f"{letter}{max(nums, default=0) + 1}"
+        tid = a["id"] = ctx.fresh(letter)  # first free, never an id that ever existed in the log
     ts = ctx.doc["tracks"]
     new = {"id": tid, "role": role, "items": []}
     try:

@@ -699,3 +699,41 @@ def test_changed_ids_cover_every_item_whose_resolved_span_changed_over_300_seede
             u = undo(log, HUMAN, op_id=e["op_id"])
             assert _spans_changed(before, log.doc) <= set(u["changed_ids"])
     assert checked > 500
+
+
+# --------------------------------------------------------------------------- add_track ids and roles
+
+
+def test_add_track_never_reuses_a_track_id_that_existed_in_the_log(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    n = iter(range(1, 10**9))
+    log = O.Oplog(base(), path=p, new_op_id=lambda: f"op{next(n)}")
+    a = apply(log, HUMAN, {"op": "add_track", "role": "music"})
+    assert "A3" in a["changed_ids"] and log.history_list()[-1]["ops"][0]["id"] == "A3"  # picked id is logged
+    apply(log, HUMAN, {"op": "remove_track", "id": "A3"})
+    b = apply(log, HUMAN, {"op": "add_track", "role": "music"})
+    assert "A4" in b["changed_ids"] and "A3" not in b["changed_ids"]
+    assert log.history_list()[-1]["ops"][0]["id"] == "A4"
+    apply(log, HUMAN, {"op": "remove_track", "id": "A4"})
+    again = O.Oplog.load(base(), p, new_op_id=lambda: f"op{next(n)}")
+    assert T.canonical_hash(again.doc) == h(log)
+    c = apply(again, HUMAN, {"op": "add_track", "role": "voice"})
+    assert "A5" in c["changed_ids"]  # A3 and A4 are retired after load too
+    assert again.history_list()[-1]["ops"][0]["id"] == "A5"
+
+
+def test_add_track_takes_the_first_free_id_never_seen():
+    log = new_log()
+    apply(log, HUMAN, {"op": "remove_track", "id": "A1"})  # A1 existed: retired, not handed out
+    r = apply(log, HUMAN, {"op": "add_track", "role": "voice"})
+    assert "A3" in r["changed_ids"]
+
+
+@pytest.mark.parametrize("role", [[], {}, ["main"], 1, None, True])
+def test_add_track_with_a_non_string_role_is_bad_track_role(role):
+    log = new_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "add_track", "role": role})
+    x = e.value.extra
+    assert e.value.code == "invalid_op" and x["rule"] == "bad_track_role" and x["path"] == "/ops/0/role"
+    assert log.version == 0 and log.history_list() == []
