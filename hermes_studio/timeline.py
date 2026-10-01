@@ -267,7 +267,41 @@ class _Checker:
 
 
 def _problems(doc: Any, *, check_hash: bool = True) -> list[Problem]:
-    """Every rule the document breaks (an empty list means it is valid)."""
+    """Every rule the document breaks (an empty list means it is valid). A problem keeps its
+    ``id`` only when that id names exactly one valid item: never for bad_id / duplicate_id
+    (they rely on ``path``), nor for an item whose id is malformed or used twice in the doc."""
+    found = _collect(doc, check_hash=check_hash)
+    if not any(p.id is not None for p in found):
+        return found
+    seen: dict[str, int] = {}
+    for i in _all_ids(doc):
+        seen[i] = seen.get(i, 0) + 1
+
+    def names_one(i: str) -> bool:
+        return seen.get(i) == 1 and bool(ID_RE.fullmatch(i)) and unicodedata.normalize("NFC", i) == i
+
+    return [p if p.id is None or (p.rule not in ("bad_id", "duplicate_id") and names_one(p.id))
+            else Problem(p.rule, p.path, p.message) for p in found]
+
+
+def _all_ids(doc: dict) -> list[str]:
+    """Every id string in the doc: media keys, track ids, item ids, marker ids."""
+    out: list[str] = []
+    if isinstance(doc.get("media"), dict):
+        out += [k for k in doc["media"] if isinstance(k, str)]
+    for tr in doc.get("tracks") if isinstance(doc.get("tracks"), list) else []:
+        if isinstance(tr, dict):
+            out += [tr["id"]] if isinstance(tr.get("id"), str) else []
+            for it in tr.get("items") if isinstance(tr.get("items"), list) else []:
+                if isinstance(it, dict) and isinstance(it.get("id"), str):
+                    out.append(it["id"])
+    for mk in doc.get("markers") if isinstance(doc.get("markers"), list) else []:
+        if isinstance(mk, dict) and isinstance(mk.get("id"), str):
+            out.append(mk["id"])
+    return out
+
+
+def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     c = _Checker()
     if not isinstance(doc, dict):
         c.bad("not_object", "", "a timeline must be a JSON object")

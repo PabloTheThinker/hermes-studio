@@ -91,8 +91,11 @@ track with another id (or V1 with another role) is `bad_track_id`, and a second 
 `/tracks/0/items/2/fade_in`, with `~` written `~0` and `/` written `~1`. Valid ids can't contain
 `/` or `~`, so escaping only shows up in paths for invalid keys (a media key `m/1` fails as
 `bad_id` at `/media/m~11`). For a missing field the pointer names the field that should be there.
-`id` is set when the problem is in a track item or marker (or inside one) and names it; it is
-omitted otherwise.
+`id` is present only when it names exactly one valid item: the problem is in a track item or
+marker (or inside one) whose id is well-formed and used once in the whole doc. `bad_id` and
+`duplicate_id` never carry `id` (they rely on `path`; the message quotes the raw id), and a
+`duplicate_id` path points at the second and later copies, not the first. Any other problem on an
+item whose own id is malformed or duplicated anywhere in the doc leaves `id` off too.
 
 ## Canonical hash
 

@@ -551,7 +551,7 @@ def test_media_key_with_slash_or_tilde_is_a_bad_id_at_an_escaped_path(key, ptr):
     (lambda d: item(d, "mu1").update(fade_in=40 * S), "fade_too_long", "/tracks/4/items/0", "mu1"),
     (lambda d: item(d, "a1").update(colour=1), "unknown_field", "/tracks/3/items/0/colour", "a1"),
     (lambda d: d["markers"][0].update(at=1.0), "not_integer_ticks", "/markers/0/at", "k2"),
-    (lambda d: d["markers"][1].update(id="k2"), "duplicate_id", "/markers/1", "k2"),
+    (lambda d: d["markers"][1].update(id="k2"), "duplicate_id", "/markers/1", None),
     (lambda d: d["media"]["m1"].update(dur=0), "empty_range", "/media/m1/dur", None),
     (lambda d: d["tracks"][0].update(role="b-roll"), "bad_track_role", "/tracks/0/role", None),
     (lambda d: d.update(fps=[11, 1]), "bad_fps", "/fps", None),
@@ -574,3 +574,43 @@ def test_exactly_one_main_track_surfaces_as_three_rules():
     d = doc()
     d["tracks"].insert(2, {"id": "V1", "role": "main", "items": []})
     assert "duplicate_id" in rules(d)
+
+
+def test_bad_id_never_carries_an_id():
+    d = doc()
+    item(d, "c2")["id"] = "c 2"
+    p = next(p for p in T.validate(d) if p["rule"] == "bad_id")
+    assert p["path"] == "/tracks/2/items/1/id" and "id" not in p and "'c 2'" in p["message"]
+
+
+def test_duplicate_id_has_no_id_and_points_at_the_second_copy():
+    d = doc()
+    track(d, "A1")["items"].append({"id": "c2", "type": "clip", "media": "m1", "src": [0, S], "at": 100 * S,
+                                    "fade_in": 0, "fade_out": 0})
+    dup = [p for p in T.validate(d) if p["rule"] == "duplicate_id"]
+    assert len(dup) == 1 and dup[0]["path"] == "/tracks/3/items/1" and "id" not in dup[0]
+    assert "'c2'" in dup[0]["message"] and "/tracks/2/items/1" in dup[0]["message"]  # names the first copy
+
+
+def test_other_problems_on_a_duplicated_or_malformed_id_carry_no_id():
+    d = doc()
+    track(d, "A1")["items"].append({"id": "c2", "type": "clip", "media": "m1", "src": [0, S], "at": 100 * S,
+                                    "fade_in": S, "fade_out": S})  # duplicated id, and fades > 1 s
+    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    assert fade["path"] == "/tracks/3/items/1" and "id" not in fade
+    d = doc()
+    item(d, "a1").update(id="a 1", fade_in=9 * S)  # malformed id
+    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    assert "id" not in fade
+    d = doc()
+    d["media"]["a1"] = {"path": "x", "dur": S, "fps": None}  # an item id that clashes with a media key
+    item(d, "a1")["fade_in"] = 9 * S
+    assert "id" not in next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+
+
+def test_a_fade_error_on_a_normal_item_keeps_its_id():
+    d = doc()
+    item(d, "a1")["fade_in"] = 9 * S
+    fade = next(p for p in T.validate(d) if p["rule"] == "fade_too_long")
+    assert fade == {"rule": "fade_too_long", "path": "/tracks/3/items/0", "id": "a1",
+                    "message": "fade_in + fade_out must not exceed the item's duration"}
