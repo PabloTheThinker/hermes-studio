@@ -1,0 +1,153 @@
+# Op log (`hermes_studio/oplog.py`)
+
+Slice 2 of the editor. The op log is the only way a timeline changes. It sits on the Slice 1
+timeline API (`validate`, `canonical_hash`, `stamp_hash`; see [timeline.md](timeline.md)).
+
+## One entry point
+
+```python
+log = Oplog(base_doc, path="projects/<id>/oplog.jsonl")
+result = log.call(session, tool, args)  # tool: timeline_apply | history_undo | history_redo
+```
+
+MCP, HTTP and ACP each resolve their bearer token to a `Session` and call `Oplog.call`. Nothing
+else writes. The public surface of `Oplog` is `call`, the reads `doc`, `version`,
+`history_list(since_version)` and `history_diff(since_version)`, and `Oplog.load(base, path)`.
+
+```python
+Session(actor=Actor(kind="human" | "agent", id="pablo"), plan=PlanContext(step=3) | None)
+```
+
+### Actor and step come from the session only
+
+- `actor` in a log line is `session.actor` as `{"kind", "id"}`. It is never read from the args.
+- `step` is in a line only when the session is an **agent** with a `PlanContext` whose `step` is
+  set (an integer ≥ 1, kept up to date by the session layer as Hermes works through its plan).
+  A human op never gets `step`, even when its session carries a plan context.
+- An `actor` or `step` key in the call's args, or in any op, is **dropped** before anything else
+  happens. Each dropped key adds a warning to the result:
+  `{"code": "ignored_field", "path": "/actor" | "/ops/<k>/step" | …, "message": …}`.
+  The same rule holds for `timeline_apply`, `history_undo` and `history_redo`.
+- Dedupe keys on the session's actor, so a forged actor can't hit another actor's retry slot.
+
+## Log lines
+
+One JSON object per line in `oplog.jsonl` (sorted keys, compact, UTF-8, flushed and fsynced
+before the entry takes effect; a failed write changes nothing):
+
+| Field | |
+|---|---|
+| `seq` | 1, 2, 3 … with no gaps |
+| `op_id` | engine-made (`op-<16 hex>`) |
+| `client_op_id` | from the caller; `(actor, client_op_id)` is unique |
+| `group_id` | from the caller, or `null` |
+| `actor` | `{"kind": "human" \| "agent", "id": …}` from the session |
+| `step` | optional: agent ops with a plan step only |
+| `summary` | from the caller (undo/redo default to `Undo: …` / `Redo: …`) |
+| `base_version` → `new_version` | `new_version = base_version + 1`; the doc's `version` |
+| `hash` | `canonical_hash` of the new doc |
+| `ops` | the ops as applied: forged fields dropped, engine-assigned ids filled in |
+| `inverse` | ops that undo this entry, computed at apply time |
+| `changed_ids` | sorted ids added, removed or changed (media, tracks, items, markers) |
+| `undoes` | `null`, or the list of `op_id`s this entry undoes (one for an op, all of a group's newest first) |
+
+`undoes` is a list so a group undo is one entry that names every entry it reverses.
+
+## timeline_apply
+
+Args: `base_version`, `ops` (1–500), `summary` (non-empty NFC, ≤ 200 chars), `client_op_id`
+(`[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}`), optional `group_id`, optional `project_id` (must be this
+timeline's `id`). Anything else is `invalid_op` / `unknown_arg`.
+
+Order of checks: args → dedupe (a retry returns the original result, even with a now-stale
+`base_version`) → `base_version` (`conflict`) → ops → validate.
+
+A batch is atomic: the ops run on a copy, the copy must pass `validate()`, then it gets
+`version + 1` and `stamp_hash`. Any failure leaves the doc and the log as they were.
+
+Result: `ok, op_id, group_id, seq, new_version, hash, tick_rate, summary, changed_ids, undoes,
+before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
+
+### Ops (times in integer ticks; the tool layer converts seconds once)
+
+| Op | Args | Inverse |
+|---|---|---|
+| `insert_clip` | `track, media, src, at \| anchor, id?, fade_in?=0, fade_out?=0, props?` | `delete_item{id}` |
+| `add_text` | `dur, text, style, at \| anchor, id?, track?=first text track, fade_in?, fade_out?` | `delete_item{id}` |
+| `add_transition` | `between, dur, id?, track?=V1, kind?=xfade` | `delete_item{id}` |
+| `add_marker` / `remove_marker` | `at, label, id?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
+| `add_track` / `remove_track` | `role, id?` / `id` | `remove_track` / `insert_track{index, track}` |
+| `move_clip` | `id, at` (items with their own `at`) | `move_clip` with the old `at` |
+| `trim_clip` | `id, src_in? src_out?` (clip) or `dur` (text), `ripple?` | `set_fields` with the old values (+ `shift_items` back) |
+| `split_clip` | `id, at` (strictly inside), `ids?` | `join_clips`, which restores the old id |
+| `delete_clip` | `id, ripple?` | `insert_item` at the old index (+ `shift_items`, re-anchoring) |
+| `set_props` | `id, props` (merged into the clip's props) | `set_fields` with the old `props` |
+| `set_fade` | `id, fade_in?, fade_out?` (clips and text) | `set_fields` with the old values |
+| `set_anchor` | `id, anchor` or `anchor: null, at` | `set_fields` with the old `at`/`anchor` |
+
+Internal ops (`set_fields`, `shift_items`, `delete_item`, `insert_item`, `insert_marker`,
+`insert_track`, `join_clips`) only appear in inverses and undo entries; a caller sending one gets
+`unknown_op`.
+
+Decisions:
+
+- **Ids.** Without an `id`, the engine picks the first free `c<n>` (clips), `x<n>` (text),
+  `tr<n>` (transitions), `mk<n>` (markers), `T<n>`/`A<n>` (tracks). An id that ever existed in
+  this log is never handed out again. The id goes into the logged op, so replay is exact.
+- **Split.** Pieces get `split_from: <old id>`. The first piece keeps `fade_in`, the second
+  `fade_out` (each clamped to its piece). A transition into the clip moves to the first piece, one
+  out of it to the second. An item anchored to the clip moves to the piece its start falls in,
+  with its offset adjusted so it doesn't move. At speed ≠ 1 a cut whose source point isn't whole
+  ticks is `invalid_op` / `non_integer_duration`; the engine never rounds.
+- **Delete.** Transitions touching the item go with it. Items anchored to it keep their place as
+  an absolute `at` (never an `anchor_target_missing` doc). With `ripple`, items on the same track
+  starting at or after its end shift left by its duration minus any transition overlaps, so the
+  neighbours abut.
+- **Trim.** Without `ripple`, trimming the start keeps the rest of the clip where it is (`at`, or
+  an anchor's offset, moves by `Δin / speed`). With `ripple`, the start stays and later items on
+  the track shift by the change in duration.
+
+### Errors
+
+`OplogError` (a `HermesStudioError`); `as_dict()` adds the extra fields.
+
+| `code` | When | Extra |
+|---|---|---|
+| `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
+| `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, `op_index` / `id` |
+| `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
+| `undo_blocked` | see below | `reason`, `op_ids` |
+
+Op-level `rule`s: `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
+`not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `bad_track_role`,
+`non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, plus every timeline rule.
+
+## Undo and redo
+
+`history_undo{op_id | group_id, client_op_id, summary?, base_version?}` appends a new entry whose
+`ops` are the target's `inverse` (a group: every live entry of the group, newest first, as one
+entry). `history_redo{op_id}` takes an undo entry and undoes it. History is never rewritten.
+
+- An entry is **live** unless a live undo entry undoes it (so an undone undo cancels nothing).
+  Undoing a non-live entry is `invalid_op` / `already_undone`.
+- **Actor rule:** an agent may undo only entries with its own actor; anything else is
+  `undo_blocked` with `reason: "actor"` and `op_ids` = the entries it doesn't own. A human may
+  undo anyone's.
+- **Dependents:** a later live entry blocks the undo when it changed one of the target's
+  `changed_ids` or its ops refer to one (an anchor, a transition end, a target id). An
+  undo/redo pair after the target cancels out and doesn't count. Result: `undo_blocked`,
+  `reason: "dependents"`, `op_ids` = those entries (Glyph's "Restore to before this step").
+- If the inverse still fails to validate: `undo_blocked`, `reason: "inverse_invalid"`, with the
+  validator `problems`.
+
+## Replay
+
+`Oplog.load(base, path)` re-applies every line and checks its sequence, versions, hash and
+inverse; `replay(base, entries)` re-applies and checks each hash. On load the dedupe table is rebuilt from the lines (retried results then carry no
+warnings). Snapshots, the project store and the lock are Slice 3.
+
+## Not in this slice
+
+The project folder, `.lock`, snapshots and the event bus (S3); the mode gate (S8); editing a
+text item's `text`/`style` (no op in PLAN §4.5); `run_id` in lines (Wire's `history_list` lists
+it, but it isn't in the locked line fields).
