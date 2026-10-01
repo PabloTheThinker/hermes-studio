@@ -777,3 +777,18 @@ def test_actor_and_dependents_blocks_carry_path_and_id_too():
     with pytest.raises(O.OplogError) as e:
         undo(log, HUMAN, op_id=r["op_id"])
     assert e.value.extra["reason"] == "dependents" and e.value.extra["path"] == "/op_id" and e.value.extra["id"] == r["op_id"]
+
+
+@pytest.mark.parametrize("op, path, missing", [
+    ({"op": "move_clip", "id": "nope", "at": 0}, "/ops/1/id", "nope"),
+    ({"op": "add_text", "track": "T9", "at": 0, "dur": S, "text": "a", "style": "pop"}, "/ops/1/track", "T9"),
+    ({"op": "remove_marker", "id": "k9"}, "/ops/1/id", "k9"),
+    ({"op": "remove_track", "id": "A9"}, "/ops/1/id", "A9"),
+])
+def test_an_op_level_not_found_carries_the_missing_id(op, path, missing):
+    log = new_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "set_fade", "id": "c1", "fade_in": 0}, op)
+    x = e.value.extra
+    assert e.value.code == "not_found" and x["rule"] == "not_found" and x["op_index"] == 1
+    assert x["path"] == path and x["id"] == missing and log.history_list() == []

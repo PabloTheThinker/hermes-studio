@@ -120,9 +120,11 @@ class OplogError(HermesStudioError):
 
 
 class _OpError(Exception):
-    def __init__(self, rule: str, message: str, key: str | None = None, *, code: str = "invalid_op") -> None:
+    def __init__(self, rule: str, message: str, key: str | None = None, *, code: str = "invalid_op",
+                 ident: Any = None) -> None:
         super().__init__(message)
         self.rule, self.message, self.key, self.code = rule, message, key, code
+        self.ident = ident  # for not_found: the id that wasn't there
 
 
 # --------------------------------------------------------------------------- doc helpers
@@ -133,14 +135,14 @@ def _find(d: dict, iid: Any) -> tuple[dict, int, dict]:
         for i, it in enumerate(tr["items"]):
             if it.get("id") == iid:
                 return tr, i, it
-    raise _OpError("not_found", f"no item {iid!r}", "id", code="not_found")
+    raise _OpError("not_found", f"no item {iid!r}", "id", code="not_found", ident=iid)
 
 
-def _track(d: dict, tid: Any) -> tuple[int, dict]:
+def _track(d: dict, tid: Any, key: str = "track") -> tuple[int, dict]:
     for i, tr in enumerate(d["tracks"]):
         if tr["id"] == tid:
             return i, tr
-    raise _OpError("not_found", f"no track {tid!r}", "track", code="not_found")
+    raise _OpError("not_found", f"no track {tid!r}", key, code="not_found", ident=tid)
 
 
 def _start(d: dict, it: dict) -> int:
@@ -306,7 +308,7 @@ def op_remove_marker(ctx: _Ctx, a: dict) -> list[dict]:
         if mk["id"] == a["id"]:
             del ms[i]
             return [{"op": "insert_marker", "index": i, "marker": mk}]
-    raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found")
+    raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found", ident=a["id"])
 
 
 def op_insert_marker(ctx: _Ctx, a: dict) -> list[dict]:
@@ -337,7 +339,7 @@ def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
 
 
 def op_remove_track(ctx: _Ctx, a: dict) -> list[dict]:
-    i, tr = _track(ctx.doc, a["id"])
+    i, tr = _track(ctx.doc, a["id"], "id")
     del ctx.doc["tracks"][i]
     return [{"op": "insert_track", "index": i, "track": tr}]
 
@@ -736,8 +738,9 @@ class Oplog:
             try:
                 a, inv = _apply_one(ctx, op, internal)
             except _OpError as e:
+                found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
                 raise OplogError(e.code, f"op {k}: {e.message}", rule=e.rule, op_index=k,
-                                 path=T._j("", "ops", k, *([e.key] if e.key else []))) from None
+                                 path=T._j("", "ops", k, *([e.key] if e.key else [])), **found_id) from None
             logged.append(a)
             inverse = inv + inverse
         new = ctx.doc

@@ -116,7 +116,7 @@ Decisions:
 | `code` | When | Extra |
 |---|---|---|
 | `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
-| `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, `op_index` / `id` |
+| `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, and `id` (the id that wasn't found); op-level ones also `op_index` |
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
 | `undo_blocked` | see below | `reason`, `op_ids`, `path` (`/op_id` or `/group_id`) and `id` (the op_id or group_id asked for); with `reason: "dependents"` also `blocking_op_ids` (by `seq`); with `reason: "inverse_invalid"` also `rule` and `problems` |
 
