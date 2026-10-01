@@ -73,7 +73,9 @@ T1, V1, A1, A2.
 **Timing.** A clip lasts `(out − in) / speed` ticks, which must be whole. Fades are plain ticks:
 `fade_in`, `fade_out` ≥ 0 and `fade_in + fade_out` ≤ the item's duration. Gaps are implied by `at`;
 there is no gap object. On main and voice tracks nothing may overlap, except two
-consecutive clips joined by an `xfade` whose `dur` equals their overlap exactly. Text and music
+consecutive clips joined by an `xfade` whose `dur` equals their overlap exactly. (A transition has no `at`
+of its own: it starts where its second clip starts, so it moves with that clip. A ripple trim in
+the op log uses this to keep an outgoing crossfade on the cut; see `docs/oplog.md`.) Text and music
 tracks may overlap (their items can be anchored and move with V1).
 
 **Anchors.** A text item, or a clip on a music track, may give `anchor: {to, offset}` instead of

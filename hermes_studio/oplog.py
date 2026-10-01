@@ -480,8 +480,26 @@ def op_trim_clip(ctx: _Ctx, a: dict) -> list[dict]:
     elif move:
         sets["anchor"] = {**it["anchor"], "offset": it["anchor"]["offset"] + move}
     inv: list[dict] = []
+    xin = next((x for x in tr["items"] if x["type"] == "transition" and x["between"][1] == it["id"]), None)
+    xout = next((x for x in tr["items"] if x["type"] == "transition" and x["between"][0] == it["id"]), None)
+    if ripple and (xin or xout):
+        din, dout = (xin["dur"] if xin else 0), (xout["dur"] if xout else 0)
+        # Each crossfade must fit inside the clip and leave the clips in order (longer than
+        # each one), and the two must not overlap each other (at least their sum).
+        if not (new_dur >= din + dout and new_dur > max(din, dout)):
+            k = "dur" if "dur" in a else "src_out" if "src_out" in a else "src_in"
+            raise _OpError(
+                "transition_overlap_mismatch",
+                f"the trim leaves {it['id']!r} {new_dur} ticks long; its crossfades need more than "
+                f"{max(din, dout)} and at least {din + dout}",
+                k,
+            )
     if ripple and new_dur != old_dur:
-        ids = _later(ctx.doc, tr, start + old_dur, it["id"])
+        # The cut is where the next clip starts: with an outgoing crossfade that's the start of
+        # the overlap, so the next clip, the crossfade (it follows that clip) and everything
+        # after it shift together, and the crossfade keeps its dur on the same pair.
+        cut = start + old_dur - (xout["dur"] if xout else 0)
+        ids = _later(ctx.doc, tr, cut, it["id"])
         if ids:
             _shift(ctx.doc, ids, new_dur - old_dur)
             inv.append({"op": "shift_items", "ids": ids, "by": old_dur - new_dur})

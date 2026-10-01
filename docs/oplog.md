@@ -111,6 +111,22 @@ Decisions:
 - **Trim.** Without `ripple`, trimming the start keeps the rest of the clip where it is (`at`, or
   an anchor's offset, moves by `Δin / speed`). With `ripple`, the start stays and later items on
   the track shift by the change in duration.
+- **Ripple trim and crossfades** (Glyph's rule, ruled by Ada: the crossfade stays with the cut).
+  - With `ripple` the start stays, so a trim of either end (`src_in` or `src_out`) moves the
+    clip's **end**.
+  - An **outgoing** crossfade moves with that end. The ripple point is the start of the overlap
+    (the next clip's start), not the old end, so the next clip, the crossfade and everything
+    after them shift together by the change in duration. The crossfade keeps its `dur` and its
+    `between` pair.
+  - An **incoming** crossfade stays at the clip's start, unchanged.
+  - **Too short:** the trimmed clip must be longer than each of its crossfades and at least as
+    long as both together, so the previous and next clips can abut but never overlap. Anything
+    shorter is `invalid_op` / `transition_overlap_mismatch` at the trim field
+    (`/ops/k/src_out`, `/ops/k/src_in` or `/ops/k/dur`). It's checked before anything moves.
+  - **Without `ripple`:** nothing shifts. An end trim of a clip with an outgoing crossfade still
+    fails validation with `transition_overlap_mismatch`, as before.
+  - `changed_ids` comes from the resolved diff, so it lists the trimmed clip, the shifted items,
+    the moved crossfade and anything anchored to a shifted clip. Markers don't move.
 
 ### Errors
 
