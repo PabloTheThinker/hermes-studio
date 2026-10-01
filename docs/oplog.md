@@ -93,7 +93,10 @@ Decisions:
 
 - **Ids.** Without an `id`, the engine picks the first free `c<n>` (clips), `x<n>` (text),
   `tr<n>` (transitions), `mk<n>` (markers), `T<n>`/`A<n>` (tracks). An id that ever existed in
-  this log is never handed out again. The id goes into the logged op, so replay is exact.
+  this log is never handed out again, and that includes an id that existed only inside one batch
+  (created and removed by the same call). `_commit`, `load` and `replay` all retire every id handed
+  out or present at any point during a batch. The id goes into the logged op, so replay is exact.
+  A caller can't name a retired id either (`id_reused`).
 - **Split.** Pieces get `split_from: <old id>`. The first piece keeps `fade_in`, the second
   `fade_out` (each clamped to its piece). A transition into the clip moves to the first piece, one
   out of it to the second. An item anchored to the clip moves to the piece its start falls in,
@@ -120,9 +123,21 @@ Decisions:
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
 | `undo_blocked` | see below | `reason`, `op_ids`, `path` (`/op_id` or `/group_id`) and `id` (the op_id or group_id asked for); with `reason: "dependents"` also `blocking_op_ids` (by `seq`); with `reason: "inverse_invalid"` also `rule` and `problems` |
 
-Op-level `rule`s: `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
-`not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `bad_track_role`,
-`non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, plus every timeline rule.
+Op-level `rule`s (16): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
+`not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `id_reused`, `bad_track_role`,
+`non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
+plus every timeline rule.
+
+- **Id types:** every id an op names must be a string. That covers `id`, `track`, each entry
+  of `between` and `ids`, and `anchor.to`. Anything else (a number, `null`, a list, an object
+  or a bool) is `invalid_op` / `bad_arg` at that id's own path (`/ops/k/id`, `/ops/k/anchor/to`,
+  `/ops/k/between/1`). This is checked before any lookup, so it's never a `not_found`. It
+  matches what `history_undo` does with a non-string `op_id`.
+- `id_reused`: a caller named an id that is in the doc's past but not in the doc now. It existed
+  earlier in the log, or earlier in the same batch (including an id the engine handed out and the
+  batch then removed). The path is at that id (`/ops/k/id`, `/ops/k/ids/i`). An id that's in the
+  doc now is still `duplicate_id`. Inverses (undo, redo, `load`, `replay`) restore old ids on
+  purpose and skip this check.
 
 ## Undo and redo
 
@@ -156,6 +171,21 @@ store and the lock are Slice 3.
   `base_version` is now stale. It doesn't raise `conflict` and doesn't append a line.
 - `load` rebuilds the dedupe table from the log. A rebuilt entry doesn't carry the original
   `warnings` (for example `ignored_field`), because warnings aren't logged.
+- The retry must be the **same call**. Otherwise it's `invalid_op` / `client_op_id_mismatch` at
+  `/client_op_id` (with `op_ids` = the cached entry), and nothing is applied. Forged fields
+  (`actor`, `step`) are stripped first, so a retry that differs only in them is still the same
+  call. One key (actor, `client_op_id`) covers all three tools, so an undo or redo that reuses an
+  apply's `client_op_id`, or the other way round, is a mismatch. "Same" is decided from the log
+  line alone, so it holds after `load` exactly as it does live:
+  - `timeline_apply`:
+    - `base_version`, `summary` and `group_id` are equal;
+    - the ops, re-run on the doc and retired ids as they were before that entry, produce exactly
+      the logged ops. So leaving out an id the engine picked, or naming that same id, both match.
+  - `history_undo` / `history_redo`:
+    - the target is the same (`op_id`, or `group_id` for an undo);
+    - `summary` is the same; without one, the line's summary must be that tool's default
+      (`Undo: …` / `Redo: …`), which is how an undo and a redo of the same entry differ;
+    - `base_version`, if given, equals the line's.
 
 ## `media.proxy` and the hash
 

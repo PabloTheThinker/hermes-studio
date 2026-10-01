@@ -551,9 +551,13 @@ def test_the_log_file_replays_to_the_live_hash(tmp_path):
     assert all(set(e) <= set(O.LINE_FIELDS) | {"step"} for e in lines)
     again = O.Oplog.load(base(), p)
     assert again.doc == log.doc and T.canonical_hash(O.replay(base(), lines)) == h(log)
-    retry = again.call(hermes(4), "timeline_apply", {"base_version": 0, "ops": [], "summary": "s",
-                                                     "client_op_id": log.history_list()[0]["client_op_id"]})
+    first = {"base_version": 0, "ops": [{"op": "split_clip", "id": "c2", "at": 5 * S}], "summary": "edit",
+             "group_id": "g", "client_op_id": log.history_list()[0]["client_op_id"]}
+    retry = again.call(hermes(4), "timeline_apply", first)
     assert retry["op_id"] == r["op_id"] and again.version == log.version  # dedupe survives a reload
+    with pytest.raises(O.OplogError) as e:  # and so does the mismatch check
+        again.call(hermes(4), "timeline_apply", {**first, "ops": [], "summary": "s"})
+    assert e.value.extra["rule"] == "client_op_id_mismatch"
     lines[1]["hash"] = "sha256:" + "0" * 64
     with pytest.raises(ValueError):
         O.replay(base(), lines)
@@ -792,3 +796,214 @@ def test_an_op_level_not_found_carries_the_missing_id(op, path, missing):
     x = e.value.extra
     assert e.value.code == "not_found" and x["rule"] == "not_found" and x["op_index"] == 1
     assert x["path"] == path and x["id"] == missing and log.history_list() == []
+
+
+# --------------------------------------------------------------------------- ids that existed only inside a batch (Prove F1)
+
+
+def _picked(log: O.Oplog, k: int = 0) -> str:
+    return log.history_list()[-1]["ops"][k]["id"]
+
+
+@pytest.mark.parametrize("make, remove, again", [
+    ({"op": "add_marker", "at": 0, "label": "t"}, lambda i: {"op": "remove_marker", "id": i},
+     {"op": "add_marker", "at": S, "label": "u"}),
+    ({"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S},
+     lambda i: {"op": "delete_clip", "id": i}, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 30 * S}),
+    ({"op": "add_track", "role": "music"}, lambda i: {"op": "remove_track", "id": i}, {"op": "add_track", "role": "music"}),
+])
+def test_an_id_created_and_removed_in_one_batch_is_never_handed_out_again(tmp_path, make, remove, again):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    probe = new_log()  # what the first op alone would pick
+    apply(probe, HUMAN, make)
+    gone = _picked(probe)
+    apply(log, HUMAN, make, remove(gone))
+    assert log.history_list()[-1]["ops"][0]["id"] == gone and gone not in T._all_ids(log.doc)
+    lines = log.history_list()
+    p2 = tmp_path / "after-batch.jsonl"
+    p2.write_bytes(p.read_bytes())
+    apply(log, HUMAN, again)
+    assert _picked(log) != gone
+    loaded = O.Oplog.load(base(), p2)  # after load: the same
+    apply(loaded, HUMAN, again)
+    assert _picked(loaded) != gone
+    # replay retires the same way (it shares _retire with _commit and load) and reproduces the hash
+    assert T.canonical_hash(O.replay(base(), lines)) == T.canonical_hash(O.replay(base(), loaded.history_list()[:1]))
+
+
+# --------------------------------------------------------------------------- id types are checked up front (Prove F2)
+
+_REF_CASES = [
+    ({"op": "move_clip", "id": "@", "at": 0}, "/ops/0/id"),
+    ({"op": "delete_clip", "id": "@"}, "/ops/0/id"),
+    ({"op": "set_fade", "id": "@", "fade_in": 0}, "/ops/0/id"),
+    ({"op": "set_props", "id": "@", "props": {}}, "/ops/0/id"),
+    ({"op": "trim_clip", "id": "@", "dur": S}, "/ops/0/id"),
+    ({"op": "split_clip", "id": "@", "at": 5 * S}, "/ops/0/id"),
+    ({"op": "split_clip", "id": "c2", "at": 5 * S, "ids": ["n1", "@"]}, "/ops/0/ids/1"),
+    ({"op": "set_anchor", "id": "@", "anchor": None, "at": 0}, "/ops/0/id"),
+    ({"op": "set_anchor", "id": "x1", "anchor": {"to": "@", "offset": 0}}, "/ops/0/anchor/to"),
+    ({"op": "remove_marker", "id": "@"}, "/ops/0/id"),
+    ({"op": "remove_track", "id": "@"}, "/ops/0/id"),
+    ({"op": "insert_clip", "track": "@", "media": "m1", "src": [0, S], "at": 20 * S}, "/ops/0/track"),
+    ({"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S, "id": "@"}, "/ops/0/id"),
+    ({"op": "add_text", "track": "@", "at": 0, "dur": S, "text": "a", "style": "pop"}, "/ops/0/track"),
+    ({"op": "add_text", "dur": S, "text": "a", "style": "pop", "anchor": {"to": "@", "offset": 0}}, "/ops/0/anchor/to"),
+    ({"op": "add_text", "at": 0, "dur": S, "text": "a", "style": "pop", "id": "@"}, "/ops/0/id"),
+    ({"op": "add_transition", "between": ["c1", "@"], "dur": S // 2}, "/ops/0/between/1"),
+    ({"op": "add_transition", "between": ["c1", "c2"], "dur": S // 2, "track": "@"}, "/ops/0/track"),
+    ({"op": "add_marker", "at": 0, "label": "m", "id": "@"}, "/ops/0/id"),
+    ({"op": "add_track", "role": "voice", "id": "@"}, "/ops/0/id"),
+]
+
+
+def _put(op: object, v: object) -> object:
+    if op == "@":
+        return v
+    if isinstance(op, dict):
+        return {k: _put(x, v) for k, x in op.items()}
+    if isinstance(op, list):
+        return [_put(x, v) for x in op]
+    return op
+
+
+@pytest.mark.parametrize("bad", [7, None, [], {}, True], ids=["int", "None", "list", "dict", "bool"])
+@pytest.mark.parametrize("op, path", _REF_CASES, ids=[f"{c[0]['op']}{c[1]}" for c in _REF_CASES])
+def test_a_non_string_id_is_bad_arg_at_its_path_not_not_found(op, path, bad):
+    log = new_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, _put(op, bad))
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "bad_arg", path, 0)
+    assert log.history_list() == [] and log.version == 0
+
+
+# --------------------------------------------------------------------------- id_reused (Ada)
+
+
+def _reused(log: O.Oplog, *ops: dict, path: str) -> None:
+    v, n = log.version, len(log.history_list())
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, *ops)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "id_reused", path)
+    assert log.version == v and len(log.history_list()) == n
+
+
+def test_an_explicit_retired_marker_clip_or_track_id_is_id_reused():
+    log = new_log()
+    apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "t"})
+    mk = _picked(log)
+    apply(log, HUMAN, {"op": "remove_marker", "id": mk})
+    _reused(log, {"op": "add_marker", "at": 0, "label": "t", "id": mk}, path="/ops/0/id")
+    apply(log, HUMAN, {"op": "delete_clip", "id": "c3"})
+    _reused(log, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S, "id": "c3"},
+            path="/ops/0/id")
+    _reused(log, {"op": "split_clip", "id": "c2", "at": 5 * S, "ids": ["n1", "c3"]}, path="/ops/0/ids/1")
+    apply(log, HUMAN, {"op": "remove_track", "id": "A1"})
+    _reused(log, {"op": "set_fade", "id": "c1", "fade_in": 0}, {"op": "add_track", "role": "voice", "id": "A1"},
+            path="/ops/1/id")
+    # an id that's in the doc now is still duplicate_id
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "t", "id": "k1"})
+    assert e.value.extra["rule"] == "duplicate_id"
+
+
+def test_an_id_from_earlier_in_the_same_batch_is_id_reused():
+    log = new_log()
+    _reused(log, {"op": "add_marker", "at": 0, "label": "a", "id": "z1"}, {"op": "remove_marker", "id": "z1"},
+            {"op": "add_marker", "at": 0, "label": "b", "id": "z1"}, path="/ops/2/id")
+    probe = new_log()
+    apply(probe, HUMAN, {"op": "add_marker", "at": 0, "label": "a"})
+    handed = _picked(probe)  # handed out by the engine, then removed, in one batch
+    _reused(log, {"op": "add_marker", "at": 0, "label": "a"}, {"op": "remove_marker", "id": handed},
+            {"op": "add_marker", "at": 0, "label": "b", "id": handed}, path="/ops/2/id")
+
+
+def test_id_reused_holds_after_load_and_undo_redo_still_restore_old_ids(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "a", "id": "z1"}, {"op": "remove_marker", "id": "z1"})
+    d = apply(log, HUMAN, {"op": "delete_clip", "id": "c3"})
+    u = undo(log, HUMAN, op_id=d["op_id"])  # an inverse restores c3: allowed
+    log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "redo-1"})
+    assert "c3" not in ids(log.doc)
+    again = O.Oplog.load(base(), p)
+    assert T.canonical_hash(O.replay(base(), log.history_list())) == h(log) == h(again)
+    _reused(again, {"op": "add_marker", "at": 0, "label": "b", "id": "z1"}, path="/ops/0/id")
+    _reused(again, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S, "id": "c3"},
+            path="/ops/0/id")
+
+
+# --------------------------------------------------------------------------- client_op_id_mismatch (Ada)
+
+
+def _mismatch(log: O.Oplog, session: O.Session, tool: str, args: dict) -> None:
+    v, n = log.version, len(log.history_list())
+    with pytest.raises(O.OplogError) as e:
+        log.call(session, tool, args)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "client_op_id_mismatch",
+                                                                             "/client_op_id")
+    assert log.version == v and len(log.history_list()) == n
+
+
+APPLY = {"base_version": 0, "ops": [{"op": "add_marker", "at": 0, "label": "x"}], "summary": "s",
+         "client_op_id": "same", "group_id": "g"}
+
+
+@pytest.mark.parametrize("change", [
+    {"ops": [{"op": "add_marker", "at": S, "label": "x"}]},
+    {"ops": [{"op": "add_marker", "at": 0, "label": "x"}, {"op": "set_fade", "id": "c1", "fade_in": 0}]},
+    {"ops": [{"op": "add_marker", "at": 0, "label": "x", "id": "z9"}]},
+    {"summary": "other"},
+    {"group_id": None},
+    {"base_version": 1},
+], ids=["op-arg", "extra-op", "other-explicit-id", "summary", "group", "base_version"])
+def test_a_retry_with_different_args_is_client_op_id_mismatch(change):
+    log = new_log()
+    log.call(HUMAN, "timeline_apply", APPLY)
+    _mismatch(log, HUMAN, "timeline_apply", {**APPLY, **change})
+
+
+def test_an_identical_retry_still_returns_the_cached_result_even_with_forged_fields():
+    log = new_log()
+    r = log.call(hermes(2), "timeline_apply", APPLY)
+    forged = {**APPLY, "actor": {"kind": "human", "id": "pablo"}, "step": 9,
+              "ops": [{**APPLY["ops"][0], "step": 1, "actor": "x"}]}
+    again = log.call(hermes(2), "timeline_apply", forged)
+    assert again["op_id"] == r["op_id"] and len(log.history_list()) == 1
+    picked = {**APPLY, "ops": [{**APPLY["ops"][0], "id": _picked(log)}]}  # naming the id the engine picked
+    assert log.call(hermes(2), "timeline_apply", picked)["op_id"] == r["op_id"]
+
+
+def test_undo_or_redo_reusing_an_apply_client_op_id_is_a_mismatch_and_vice_versa():
+    log = new_log()
+    a = log.call(HUMAN, "timeline_apply", APPLY)
+    _mismatch(log, HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "same"})
+    _mismatch(log, HUMAN, "history_redo", {"op_id": a["op_id"], "client_op_id": "same"})
+    u = log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1"})
+    assert log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1"})["op_id"] == u["op_id"]
+    _mismatch(log, HUMAN, "timeline_apply", {**APPLY, "base_version": log.version, "client_op_id": "u1"})
+    _mismatch(log, HUMAN, "history_undo", {"group_id": "g", "client_op_id": "u1"})
+    _mismatch(log, HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1", "summary": "other"})
+    _mismatch(log, HUMAN, "history_redo", {"op_id": a["op_id"], "client_op_id": "u1"})
+    r = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "r1"})
+    assert log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "r1", "step": 3})["op_id"] == r["op_id"]
+    _mismatch(log, HUMAN, "history_undo", {"op_id": u["op_id"], "client_op_id": "r1"})  # undo vs redo: other summary
+
+
+def test_the_mismatch_check_survives_load(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    a = log.call(HUMAN, "timeline_apply", {**APPLY, "ops": [{"op": "insert_clip", "track": "V1", "media": "m1",
+                                                              "src": [0, S], "at": 20 * S}]})
+    u = log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1"})
+    again = O.Oplog.load(base(), p)
+    first = {**APPLY, "ops": [{"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S}]}
+    assert again.call(HUMAN, "timeline_apply", first)["op_id"] == a["op_id"]
+    assert again.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "u1"})["op_id"] == u["op_id"]
+    _mismatch(again, HUMAN, "timeline_apply", {**first, "summary": "t"})
+    _mismatch(again, HUMAN, "timeline_apply", {**APPLY})  # other ops
+    _mismatch(again, HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "same"})
+    _mismatch(again, HUMAN, "history_undo", {"group_id": "g", "client_op_id": "u1"})
+    assert T.canonical_hash(O.replay(base(), again.history_list())) == h(again)

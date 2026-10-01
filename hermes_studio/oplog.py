@@ -120,7 +120,7 @@ class OplogError(HermesStudioError):
 
 
 class _OpError(Exception):
-    def __init__(self, rule: str, message: str, key: str | None = None, *, code: str = "invalid_op",
+    def __init__(self, rule: str, message: str, key: str | tuple | None = None, *, code: str = "invalid_op",
                  ident: Any = None) -> None:
         super().__init__(message)
         self.rule, self.message, self.key, self.code = rule, message, key, code
@@ -237,6 +237,34 @@ def _need_id(a: dict, k: str) -> str:
     return v
 
 
+def _key_parts(key: str | tuple | None) -> tuple:
+    return () if key is None else key if isinstance(key, tuple) else (key,)
+
+
+_ID_REFS = ("id", "track")  # public-op args that hold one id
+_ID_LISTS = ("between", "ids")  # public-op args that hold a list of ids
+
+
+def _check_refs(a: dict) -> None:
+    """Every id a public op names must be a string before any lookup, so a wrong type is
+    ``bad_arg`` at the id's own path (like ``history_undo``'s ``op_id``), never ``not_found``."""
+
+    def bad(*key: Any) -> _OpError:
+        return _OpError("bad_arg", f"'{T._j('', *key)[1:]}' must be an id string", key if len(key) > 1 else key[0])
+
+    for k in _ID_REFS:
+        if k in a and not isinstance(a[k], str):
+            raise bad(k)
+    for k in _ID_LISTS:
+        if isinstance(a.get(k), list):
+            for i, v in enumerate(a[k]):
+                if not isinstance(v, str):
+                    raise bad(k, i)
+    anchor = a.get("anchor")
+    if isinstance(anchor, dict) and "to" in anchor and not isinstance(anchor["to"], str):
+        raise bad("anchor", "to")
+
+
 def _need_bool(a: dict, k: str) -> bool:
     v = a.get(k, False)
     if not isinstance(v, bool):
@@ -249,6 +277,7 @@ def _new_id(ctx: _Ctx, a: dict, prefix: str) -> str:
         iid = _need_id(a, "id")
         if iid in ctx.taken(ctx.doc):
             raise _OpError("duplicate_id", f"id {iid!r} is already used", "id")
+        ctx.not_reused(iid, "id")
         return iid
     a["id"] = ctx.fresh(prefix)
     return a["id"]
@@ -325,6 +354,7 @@ def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
         tid = _need_id(a, "id")
         if tid in ctx.taken(ctx.doc):
             raise _OpError("duplicate_id", f"id {tid!r} is already used", "id")
+        ctx.not_reused(tid, "id")
     else:
         tid = a["id"] = ctx.fresh(letter)  # first free, never an id that ever existed in the log
     ts = ctx.doc["tracks"]
@@ -447,6 +477,8 @@ def op_split_clip(ctx: _Ctx, a: dict) -> list[dict]:
         taken = ctx.taken(ctx.doc)
         if any(x in taken for x in ids):
             raise _OpError("duplicate_id", "a piece id is already used", "ids")
+        for i, x in enumerate(ids):
+            ctx.not_reused(x, ("ids", i))
     else:
         ida = ctx.fresh("c" if it["type"] == "clip" else "x")
         ids = a["ids"] = [ida, ctx.fresh("c" if it["type"] == "clip" else "x", also=(ida,))]
@@ -584,13 +616,21 @@ INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
 
 
 class _Ctx:
-    def __init__(self, doc: dict, retired: set[str]) -> None:
+    def __init__(self, doc: dict, retired: set[str], *, public: bool = False) -> None:
         self.doc = doc
         self.retired = retired  # ids used earlier in the log: never handed out again
+        self.public = public  # a caller's batch (not an inverse, load or replay)
         self._handed: set[str] = set()
+        self.seen: set[str] = set(T._all_ids(doc))  # every id present at any point in the batch
 
     def taken(self, d: dict) -> set[str]:
         return set(T._all_ids(d))
+
+    def not_reused(self, iid: str, key: str | tuple) -> None:
+        """A caller may not name an id that existed earlier in the log or earlier in this batch.
+        Inverses (undo/redo, load, replay) restore old ids on purpose and skip this."""
+        if self.public and iid in (self.retired | self.seen | self._handed):
+            raise _OpError("id_reused", f"id {iid!r} existed earlier in this log and can't be used again", key)
 
     def fresh(self, prefix: str, also: tuple[str, ...] = ()) -> str:
         used = self.taken(self.doc) | self.retired | self._handed | set(also)
@@ -613,6 +653,8 @@ def _apply_one(ctx: _Ctx, op: Any, internal: bool) -> tuple[dict, list[dict]]:
         raise _OpError("unknown_arg", f"{op['op']} takes no '{k}'", k)
     for k in sorted(req - set(a)):
         raise _OpError("missing_arg", f"{op['op']} needs '{k}'", k)
+    if op["op"] in PUBLIC_OPS:
+        _check_refs(a)
     try:
         inv = fn(ctx, a)
     except _OpError:
@@ -645,6 +687,7 @@ class Oplog:
         self._entries: list[dict] = []
         self._results: dict[tuple[str, str, str], dict] = {}
         self._retired: set[str] = set(T._all_ids(self._doc))
+        self._batch_ids: set[str] = set()
         self._path = os.fspath(path) if path is not None else None
         self._new_op_id = new_op_id or (lambda: "op-" + secrets.token_hex(8))
 
@@ -724,14 +767,65 @@ class Oplog:
                              hint="Read the history_diff, then retry against current_version.",
                              current_version=self.version, history_diff=self.history_diff(min(bv, self.version)))
 
-    def _replayed(self, session: Session, args: dict) -> dict | None:
-        r = self._results.get((session.actor.kind, session.actor.id, args["client_op_id"]))
-        return copy.deepcopy(r) if r is not None else None
+    def _replayed(self, session: Session, tool: str, args: dict) -> dict | None:
+        """The cached result of an identical earlier call with this (actor, client_op_id), or
+        None. A different call under the same key is ``client_op_id_mismatch``."""
+        key = (session.actor.kind, session.actor.id, args["client_op_id"])
+        r = self._results.get(key)
+        if r is None:
+            return None
+        entry = next(e for e in self._entries if e["op_id"] == r["op_id"])
+        if not self._same_call(tool, args, entry):
+            raise OplogError("invalid_op", "this client_op_id was already used for a different call",
+                             rule="client_op_id_mismatch", path="/client_op_id", op_ids=[entry["op_id"]],
+                             hint="Use a new client_op_id for a new call.")
+        return copy.deepcopy(r)
+
+    def _same_call(self, tool: str, args: dict, e: dict) -> bool:
+        """Whether ``args`` (forged fields already stripped) is the call that made entry ``e``.
+        Everything is derived from the log line, so the check is the same after ``load``.
+        timeline_apply: same base_version, summary and group_id, and the ops give exactly the
+        logged ops when re-run on the doc and retired ids as they were before ``e`` (so an id the
+        engine picked matches an omitted id). history_undo/redo: same target, same summary (or
+        the default one for that tool), and base_version, if given, equal to the line's."""
+
+        def same(x: Any, y: Any) -> bool:
+            return json.dumps(x, sort_keys=True, ensure_ascii=False) == json.dumps(y, sort_keys=True, ensure_ascii=False)
+
+        if tool == "timeline_apply":
+            if e["undoes"] is not None or not all(
+                same(args.get(k), e[k]) for k in ("base_version", "summary", "group_id")
+            ):
+                return False
+            then = Oplog(self._base)
+            for prev in self._entries[: e["seq"] - 1]:
+                new, _, _ = then._run(prev["ops"], internal=True)
+                then._retire(new)
+                then._doc = new
+            try:
+                _, logged, _ = then._run(args["ops"], internal=False)
+            except OplogError:
+                return False
+            return same(logged, e["ops"])
+        if e["undoes"] is None:
+            return False
+        if "base_version" in args and not same(args["base_version"], e["base_version"]):
+            return False
+        if "group_id" in args:
+            if tool != "history_undo" or not same(args["group_id"], e["group_id"]):
+                return False
+        elif e["group_id"] is not None or e["undoes"] != [args.get("op_id")]:
+            return False
+        if "summary" in args:
+            return same(args["summary"], e["summary"])
+        by_id = {x["op_id"]: x for x in self._entries}
+        last = max((by_id[t] for t in e["undoes"]), key=lambda x: x["seq"])
+        return e["summary"] == ((("Redo: " if tool == "history_redo" else "Undo: ") + last["summary"])[:SUMMARY_MAX])
 
     def _run(self, ops: list, *, internal: bool, base: dict | None = None) -> tuple[dict, list[dict], list[dict]]:
         """Apply ``ops`` to a copy of the doc; return (new doc, logged ops, inverse) or raise."""
         start = base if base is not None else self._doc
-        ctx = _Ctx(copy.deepcopy(start), self._retired)
+        ctx = _Ctx(copy.deepcopy(start), self._retired, public=not internal)
         logged: list[dict] = []
         inverse: list[dict] = []
         for k, op in enumerate(ops):
@@ -740,9 +834,11 @@ class Oplog:
             except _OpError as e:
                 found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
                 raise OplogError(e.code, f"op {k}: {e.message}", rule=e.rule, op_index=k,
-                                 path=T._j("", "ops", k, *([e.key] if e.key else [])), **found_id) from None
+                                 path=T._j("", "ops", k, *_key_parts(e.key)), **found_id) from None
             logged.append(a)
             inverse = inv + inverse
+            ctx.seen |= set(T._all_ids(ctx.doc))
+        self._batch_ids = ctx.seen | ctx._handed  # retired by whoever commits this batch
         new = ctx.doc
         new["version"] = start["version"] + 1
         new.pop("hash", None)
@@ -755,9 +851,15 @@ class Oplog:
         new, _ = T.stamp_hash(new)
         return new, logged, inverse
 
+    def _retire(self, new: dict) -> None:
+        """An id that existed at any point (or was handed out) in the last batch is never handed
+        out again, even if the batch removed it. _commit, load and replay all call this."""
+        self._retired |= set(T._all_ids(new)) | self._batch_ids
+        self._batch_ids = set()
+
     def _first_bad(self, ops: list, internal: bool, start: dict) -> int:
         """The first op after which the doc stops validating (only worked out on failure)."""
-        ctx = _Ctx(copy.deepcopy(start), self._retired)
+        ctx = _Ctx(copy.deepcopy(start), self._retired, public=not internal)
         for k, op in enumerate(ops):
             _apply_one(ctx, op, internal)
             d = dict(ctx.doc)
@@ -784,7 +886,7 @@ class Oplog:
                 f.flush()
                 os.fsync(f.fileno())
         self._entries.append(entry)
-        self._retired |= set(T._all_ids(new))
+        self._retire(new)
         self._doc = new
         result = _result(entry, warnings)
         self._results[(session.actor.kind, session.actor.id, args["client_op_id"])] = result
@@ -792,7 +894,7 @@ class Oplog:
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
         self._check_args(args, {"base_version", "ops", "summary", "client_op_id"}, {"project_id", "group_id"})
-        done = self._replayed(session, args)
+        done = self._replayed(session, "timeline_apply", args)
         if done is not None:
             return done
         self._base_version(args, required=True)
@@ -813,7 +915,7 @@ class Oplog:
 
     def _undo(self, session: Session, args: dict, warnings: list[dict], *, redo: bool) -> dict:
         self._check_args(args, {"client_op_id"}, {"project_id", "op_id", "group_id", "summary", "base_version"})
-        done = self._replayed(session, args)
+        done = self._replayed(session, "history_redo" if redo else "history_undo", args)
         if done is not None:
             return done
         if ("op_id" in args) == ("group_id" in args) or (redo and "group_id" in args):
@@ -891,7 +993,7 @@ class Oplog:
             if new["hash"] != e["hash"] or new["version"] != e["new_version"] or inverse != e["inverse"]:
                 raise ValueError(f"oplog line {e['seq']}: replay does not reproduce the entry")
             log._entries.append(e)
-            log._retired |= set(T._all_ids(new))
+            log._retire(new)
             log._doc = new
             log._results[(e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])] = _result(e, [])
         log._path = os.fspath(path)
@@ -906,7 +1008,7 @@ def replay(base: dict, entries: list[dict]) -> dict:
         if new["hash"] != e["hash"]:
             raise ValueError(f"oplog line {e['seq']}: replay gives {new['hash']}, the log says {e['hash']}")
         log._entries.append(e)
-        log._retired |= set(T._all_ids(new))
+        log._retire(new)
         log._doc = new
     return log.doc
 
