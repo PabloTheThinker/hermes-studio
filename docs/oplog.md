@@ -172,6 +172,14 @@ store and the lock are Slice 3.
   `invalid_op` / `bad_arg` as a fresh call and never reaches the mismatch comparison. That covers
   `ops` (a list of 1–500 objects, each with a string `op`; `/ops` or `/ops/k`), `base_version`,
   `summary`, `group_id`, and undo/redo's `op_id`/`group_id` (strings, exactly one of them).
+  A null `op_id` or `group_id` is `bad_arg` at its path, never "missing", and a null group
+  never matches the ungrouped entries.
+- The **tool** is always part of "same call", even when a `summary` is given. The dedupe
+  table records which tool made each entry. After `load`, the tool comes from the line: an
+  apply has no `undoes`, and an undo of a group or of a normal entry is `history_undo`. The
+  only case the line can't settle is an undo of an *undo entry*, which `history_undo` and
+  `history_redo` both produce. There, a reloaded key accepts either tool, as long as every
+  other field matches.
 
 - A retry with the same `(actor, client_op_id)` returns the original result, even when its
   `base_version` is now stale. It doesn't raise `conflict` and doesn't append a line.

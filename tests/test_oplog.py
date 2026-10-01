@@ -1281,3 +1281,84 @@ def test_split_duplicate_piece_id_points_at_that_entry(ids, path):
     with pytest.raises(O.OplogError) as e:
         apply(log, HUMAN, {"op": "split_clip", "id": "c2", "at": 5 * S, "ids": ids})
     assert (e.value.extra["rule"], e.value.extra["path"]) == ("duplicate_id", path)
+
+
+# --------------------------------------------------------------------------- Prove C2 retry/target checks (R1-R4)
+
+
+@pytest.mark.parametrize("ops", [5, None, 1.5, True, -1], ids=["5", "null", "1.5", "True", "-1"])
+def test_r1_scalar_ops_on_a_cached_key_are_bad_arg(ops):
+    log, _, _ = _cached()
+    _bad_arg(log, "timeline_apply", {**APPLY, "ops": ops}, "/ops")
+
+
+@pytest.mark.parametrize("n", [0, O.MAX_OPS + 1])
+def test_the_ops_length_cap_runs_before_dedupe_and_any_replay(monkeypatch, n):
+    log, _, _ = _cached()
+    ops = [{"op": "add_marker", "at": 0, "label": "x"}] * n
+
+    def no_replay(*a, **k):
+        raise AssertionError("the log was replayed")
+
+    monkeypatch.setattr(O.Oplog, "_run", no_replay)
+    for key in ("same", "fresh"):  # cached and fresh: the same invalid_op
+        _bad_arg(log, "timeline_apply", {**APPLY, "ops": ops, "client_op_id": key}, "/ops")
+
+
+def test_r2_redo_reusing_an_undo_key_with_the_same_summary_and_op_id_is_a_mismatch(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = new_log(path=p)
+    a = log.call(HUMAN, "timeline_apply", APPLY)
+    u = log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "k", "summary": "S"})
+    _mismatch(log, HUMAN, "history_redo", {"op_id": a["op_id"], "client_op_id": "k", "summary": "S"})
+    assert log.call(HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "k", "summary": "S"})["op_id"] == u["op_id"]
+    # an undo of an undo entry vs a redo of it, same explicit summary: told apart by the tool
+    uu = log.call(HUMAN, "history_undo", {"op_id": u["op_id"], "client_op_id": "k2", "summary": "S2"})
+    _mismatch(log, HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "k2", "summary": "S2"})
+    assert log.call(HUMAN, "history_undo", {"op_id": u["op_id"], "client_op_id": "k2", "summary": "S2"})["op_id"] == uu["op_id"]
+    again = O.Oplog.load(base(), p)  # after load, the undo of a normal entry is still not a redo
+    _mismatch(again, HUMAN, "history_redo", {"op_id": a["op_id"], "client_op_id": "k", "summary": "S"})
+    _mismatch(again, HUMAN, "timeline_apply", {**APPLY, "client_op_id": "k"})
+
+
+def test_r2_an_apply_key_reused_by_undo_with_a_summary_is_a_mismatch():
+    log = new_log()
+    a = log.call(HUMAN, "timeline_apply", APPLY)
+    _mismatch(log, HUMAN, "history_undo", {"op_id": a["op_id"], "client_op_id": "same", "summary": "s"})
+
+
+@pytest.mark.parametrize(
+    "tool, args, path",
+    [
+        ("history_undo", {"op_id": None}, "/op_id"),
+        ("history_redo", {"op_id": None}, "/op_id"),
+        ("history_undo", {"group_id": None}, "/group_id"),
+        ("history_redo", {"group_id": None}, "/group_id"),
+        ("history_undo", {"op_id": "@a", "group_id": None}, "/group_id"),
+        ("history_redo", {"op_id": "@u", "group_id": None}, "/group_id"),
+        ("history_undo", {"op_id": None, "group_id": "g"}, "/op_id"),
+        ("history_undo", {}, ""),
+        ("history_redo", {}, ""),
+        ("history_undo", {"op_id": "@a", "group_id": "g"}, ""),
+    ],
+)
+def test_r3_null_or_missing_undo_redo_targets_are_bad_arg_before_dedupe(tool, args, path):
+    log, a, u = _cached()
+    args = {k: {"@a": a["op_id"], "@u": u["op_id"]}.get(v, v) for k, v in args.items()}
+    for key in ("u1", "same", "fresh"):  # the cached undo key, the cached apply key, a fresh key
+        _bad_arg(log, tool, {**args, "client_op_id": key}, path)
+
+
+def test_r4_undo_with_a_null_group_is_bad_arg_and_undoes_nothing(monkeypatch):
+    log = new_log()
+    apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "A"})
+    apply(log, HUMAN, {"op": "add_marker", "at": S, "label": "B"})
+    apply(log, HUMAN, {"op": "add_marker", "at": 2 * S, "label": "C"}, group_id="g1")
+    before = h(log)
+    _bad_arg(log, "history_undo", {"group_id": None, "client_op_id": "gnull"}, "/group_id")
+    assert h(log) == before and len(log.history_list()) == 3 and all(not e["undoes"] for e in log.history_list())
+    # with the shape check out of the way, the group match itself still never takes null as "ungrouped"
+    monkeypatch.setattr(O.Oplog, "_undo_shape", staticmethod(lambda args, redo: None))
+    with pytest.raises(O.OplogError) as e:
+        log.call(HUMAN, "history_undo", {"group_id": None, "client_op_id": "gnull2"})
+    assert e.value.code == "not_found" and h(log) == before and len(log.history_list()) == 3

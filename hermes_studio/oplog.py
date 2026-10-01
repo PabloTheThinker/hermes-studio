@@ -733,6 +733,9 @@ class Oplog:
         self._doc = copy.deepcopy(self._base)
         self._entries: list[dict] = []
         self._results: dict[tuple[str, str, str], dict] = {}
+        # which tool made each cached result; None after load when the line can't tell
+        # history_undo of an undo entry from history_redo of it
+        self._tools: dict[tuple[str, str, str], str | None] = {}
         self._retired: set[str] = set(T._all_ids(self._doc))
         self._batch_ids: set[str] = set()
         self._path = os.fspath(path) if path is not None else None
@@ -862,7 +865,8 @@ class Oplog:
         if r is None:
             return None
         entry = next(e for e in self._entries if e["op_id"] == r["op_id"])
-        if not self._same_call(tool, args, entry):
+        known = self._tools.get(key)
+        if (known is not None and known != tool) or not self._same_call(tool, args, entry):
             raise OplogError(
                 "invalid_op",
                 "this client_op_id was already used for a different call",
@@ -902,6 +906,9 @@ class Oplog:
             return same(logged, e["ops"])
         if e["undoes"] is None:
             return False
+        by_id = {x["op_id"]: x for x in self._entries}
+        if tool == "history_redo" and not all(by_id[t]["undoes"] for t in e["undoes"]):
+            return False  # it was an undo of a normal entry, so not a redo
         if "base_version" in args and not same(args["base_version"], e["base_version"]):
             return False
         if "group_id" in args:
@@ -911,7 +918,6 @@ class Oplog:
             return False
         if "summary" in args:
             return same(args["summary"], e["summary"])
-        by_id = {x["op_id"]: x for x in self._entries}
         last = max((by_id[t] for t in e["undoes"]), key=lambda x: x["seq"])
         return e["summary"] == ((("Redo: " if tool == "history_redo" else "Undo: ") + last["summary"])[:SUMMARY_MAX])
 
@@ -983,6 +989,7 @@ class Oplog:
         undoes: list[str] | None,
         summary: str,
         warnings: list[dict],
+        tool: str,
     ) -> dict:
         entry: dict[str, Any] = {
             "seq": len(self._entries) + 1,
@@ -1013,6 +1020,7 @@ class Oplog:
         self._doc = new
         result = _result(entry, warnings)
         self._results[(session.actor.kind, session.actor.id, args["client_op_id"])] = result
+        self._tools[(session.actor.kind, session.actor.id, args["client_op_id"])] = tool
         return copy.deepcopy(result)
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
@@ -1025,7 +1033,7 @@ class Oplog:
         self._base_version(args, required=True)
         ops = args["ops"]
         new, logged, inverse = self._run(ops, internal=False)
-        return self._commit(session, args, new, logged, inverse, None, args["summary"], warnings)
+        return self._commit(session, args, new, logged, inverse, None, args["summary"], warnings, "timeline_apply")
 
     def _cancelled(self) -> set[str]:
         """Entries whose effect a live undo entry has reversed (walking back, an undone undo
@@ -1053,7 +1061,8 @@ class Oplog:
                 raise OplogError("invalid_op", "history_redo takes the op_id of an undo entry", rule="not_an_undo", path="/op_id")
             group = [e for e in hit if e["op_id"] not in cancelled]
         else:
-            hit = [e for e in self._entries if e["group_id"] == args["group_id"]]
+            gid = args["group_id"]  # a null group never matches the ungrouped entries
+            hit = [e for e in self._entries if gid is not None and e["group_id"] == gid]
             if not hit:
                 raise OplogError(
                     "not_found", f"no group {args['group_id']!r}", rule="not_found", path="/group_id", id=args["group_id"]
@@ -1115,7 +1124,8 @@ class Oplog:
         last = max(group, key=lambda e: e["seq"])
         summary = args.get("summary") or (("Redo: " if redo else "Undo: ") + last["summary"])[:SUMMARY_MAX]
         undoes = [e["op_id"] for e in sorted(group, key=lambda e: -e["seq"])]
-        return self._commit(session, args, new, logged, inverse, undoes, summary, warnings)
+        tool = "history_redo" if redo else "history_undo"
+        return self._commit(session, args, new, logged, inverse, undoes, summary, warnings, tool)
 
     # ---- persistence
 
@@ -1136,9 +1146,23 @@ class Oplog:
             log._entries.append(e)
             log._retire(new)
             log._doc = new
-            log._results[(e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])] = _result(e, [])
+            key = (e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])
+            log._results[key] = _result(e, [])
+            log._tools[key] = _tool_of(e, log._entries)
         log._path = os.fspath(path)
         return log
+
+
+def _tool_of(e: dict, entries: list[dict]) -> str | None:
+    """The tool that wrote line ``e``, as far as the line tells: an apply has no ``undoes``; an
+    undo of a group, or of a normal entry, is history_undo; an undo of an undo entry could be
+    either history_undo or history_redo (None)."""
+    if e["undoes"] is None:
+        return "timeline_apply"
+    by_id = {x["op_id"]: x for x in entries}
+    if e["group_id"] is not None or not all(by_id[t]["undoes"] for t in e["undoes"]):
+        return "history_undo"
+    return None
 
 
 def replay(base: dict, entries: list[dict]) -> dict:
