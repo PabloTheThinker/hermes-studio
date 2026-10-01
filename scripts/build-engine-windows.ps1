@@ -72,6 +72,7 @@ foreach ($d in "Lib\test", "Lib\idlelib", "Lib\tkinter", "tcl") {
 # 6. Smoke test: imports, tools on PATH, and a real audio decode.
 $env:PATH = "$Out\bin;$Out\python;$env:SystemRoot\System32"
 $env:ENGINE_OUT = $Out
+$env:REPO_ROOT = $Root
 $smoke = @'
 import os, shutil, subprocess, sys, tempfile
 import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
@@ -95,6 +96,19 @@ assert f"FFmpeg {av.ffmpeg_version_info}" in notice, f"NOTICE does not name PyAV
 for lib, v in av.library_versions.items():
     assert f"{lib} {'.'.join(map(str, v))}" in notice, f"NOTICE does not list {lib} {v}"
 assert f"opencv-python-headless {version('opencv-python-headless')}" in notice, "NOTICE does not name the bundled OpenCV wheel"
+# Every library in the shipped ffmpeg and PyAV wheel must be the set NOTICE and
+# packaging/third-party-sources.txt cover (tests/test_notices.py maps them).
+pkg = os.path.join(os.environ["REPO_ROOT"], "packaging")
+def listed(name):
+    with open(os.path.join(pkg, name), encoding="utf-8") as f:
+        return {line.strip() for line in f if line.strip() and not line.startswith("#")}
+conf = subprocess.run(["ffmpeg", "-hide_banner", "-buildconf"], capture_output=True, text=True).stdout.split()
+conf = {t for t in conf if t.startswith(("--enable-", "--disable-"))}
+assert conf == listed('ffmpeg-buildconf-win64.txt'), f"ffmpeg -buildconf changed: {sorted(conf ^ listed('ffmpeg-buildconf-win64.txt'))}"
+libs_dir = os.path.join(os.path.dirname(os.path.dirname(av.__file__)), "av.libs")
+libs = {re.sub(r"-[0-9a-f]{32}(?=\.dll$)", "", re.sub(r"-[0-9a-f]{8}(?=\.so)", "", n)) for n in os.listdir(libs_dir)}
+assert libs == listed('pyav-wheel-libs-win.txt'), f"PyAV av.libs changed: {sorted(libs ^ listed('pyav-wheel-libs-win.txt'))}"
+print("libraries ok:", len(conf), "ffmpeg flags,", len(libs), "PyAV libraries")
 print("notices ok: ffmpeg", build, "| PyAV", av.__version__, "FFmpeg", av.ffmpeg_version_info)
 print("engine ok:", sys.version.split()[0])
 '@

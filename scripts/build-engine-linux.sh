@@ -80,7 +80,7 @@ rm -rf "$OUT/python/lib/python$PYVER/test" "$OUT/python/lib/python$PYVER/idlelib
 
 # 6. Smoke test: the packed engine imports, sees its tools, and can decode
 #    audio the way faster-whisper does (catches PyAV/faster-whisper API drift).
-ENGINE_OUT="$OUT" PATH="$OUT/bin:$OUT/python/bin:/usr/bin:/bin" "$PY" - <<'PY'
+ENGINE_OUT="$OUT" REPO_ROOT="$ROOT" PATH="$OUT/bin:$OUT/python/bin:/usr/bin:/bin" "$PY" - <<'PY'
 import os, shutil, subprocess, sys, tempfile
 import hermes_studio.studio, hermes_studio.pipeline, faster_whisper, yt_dlp  # noqa: F401
 from faster_whisper.audio import decode_audio
@@ -101,6 +101,19 @@ for lib, v in av.library_versions.items():
     assert f"{lib} {'.'.join(map(str, v))}" in notice, f"NOTICE does not list {lib} {v}"
 from importlib.metadata import version
 assert f"opencv-python-headless {version('opencv-python-headless')}" in notice, "NOTICE does not name the bundled OpenCV wheel"
+# Every library in the shipped ffmpeg and PyAV wheel must be the set NOTICE and
+# packaging/third-party-sources.txt cover (tests/test_notices.py maps them).
+pkg = os.path.join(os.environ["REPO_ROOT"], "packaging")
+def listed(name):
+    with open(os.path.join(pkg, name), encoding="utf-8") as f:
+        return {line.strip() for line in f if line.strip() and not line.startswith("#")}
+conf = subprocess.run(["ffmpeg", "-hide_banner", "-buildconf"], capture_output=True, text=True).stdout.split()
+conf = {t for t in conf if t.startswith(("--enable-", "--disable-"))}
+assert conf == listed('ffmpeg-buildconf-linux64.txt'), f"ffmpeg -buildconf changed: {sorted(conf ^ listed('ffmpeg-buildconf-linux64.txt'))}"
+libs_dir = os.path.join(os.path.dirname(os.path.dirname(av.__file__)), "av.libs")
+libs = {re.sub(r"-[0-9a-f]{32}(?=\.dll$)", "", re.sub(r"-[0-9a-f]{8}(?=\.so)", "", n)) for n in os.listdir(libs_dir)}
+assert libs == listed('pyav-wheel-libs-linux.txt'), f"PyAV av.libs changed: {sorted(libs ^ listed('pyav-wheel-libs-linux.txt'))}"
+print("libraries ok:", len(conf), "ffmpeg flags,", len(libs), "PyAV libraries")
 print("notices ok: ffmpeg", build, "| PyAV", av.__version__, "FFmpeg", av.ffmpeg_version_info)
 print("engine ok:", sys.version.split()[0])
 PY
