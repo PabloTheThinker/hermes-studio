@@ -182,8 +182,8 @@ Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg
     converted). No new rule id.
   - The inverse is `set_fields` with the old values of just the fields given, so undo and redo
     restore the hash exactly.
-  - `changed_ids` is `[id]` when something changed. An edit to the same values is still an entry
-    (a new version, the same hash, `changed_ids: []`), like `set_fade` with its current values.
+  - `changed_ids` is `[id]` when the value changes and `[]` for a no-op (same hash), same as `set_fade`; undo and redo list the same ids as the apply.
+    A no-op edit is still an entry (a new version, the same hash).
 - **Media:** `insert_clip`'s `media` must be the id of an entry in the doc's `media`. Anything
   else (an unknown or empty string, a number, `null`, a list, an object or a bool) is
   `invalid_op` / `unknown_media` at the op's own arg, `/ops/k/media`, with no `id`, checked

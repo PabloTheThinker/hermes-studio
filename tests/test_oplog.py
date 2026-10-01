@@ -2067,3 +2067,26 @@ def test_edited_text_survives_the_otio_round_trip():
     d = log.doc
     back = T.from_otio(T.to_otio(d))
     assert back == T.normalize(d) and item(back, "x1")["text"] == s and item(back, "x1")["style"] == "Big Title"
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "edit_text", "id": "x1", "text": "Hi", "style": "pop"},
+        {"op": "edit_text", "id": "x1", "text": "Hi"},
+        {"op": "edit_text", "id": "x1", "style": "pop"},
+        {"op": "set_fade", "id": "x1", "fade_in": 0},  # the behaviour edit_text matches
+    ],
+    ids=["edit_text-both", "edit_text-text", "edit_text-style", "set_fade"],
+)
+def test_a_noop_edit_text_has_empty_changed_ids_on_apply_undo_and_redo(op):
+    log = new_log()
+    assert {k: _text(log)[k] for k in op if k not in ("op", "id")} == {k: v for k, v in op.items() if k not in ("op", "id")}
+    h0 = h(log)
+    r = apply(log, HUMAN, op)
+    assert r["changed_ids"] == [] and h(log) == h0 and r["new_version"] == 1
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert u["changed_ids"] == [] and h(log) == h0
+    rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
+    assert rd["changed_ids"] == [] and h(log) == h0 and log.version == 3
+    assert [e["changed_ids"] for e in log.history_list()] == [[], [], []]
