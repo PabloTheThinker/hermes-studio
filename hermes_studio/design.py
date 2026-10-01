@@ -214,6 +214,12 @@ def clean_layer(layer: dict, w: int, h: int) -> dict | None:
             out["shadow"] = sh
     if layer.get("locked"):
         out["locked"] = True
+    if layer.get("blend") in BLENDS:
+        out["blend"] = layer["blend"]
+    if t == "image":
+        adj = clean_adjust(layer.get("adjust"))
+        if adj:
+            out["adjust"] = adj
     return out
 
 
@@ -642,6 +648,72 @@ def _apply_text_effect(tile, lay: dict):
     return tile
 
 
+
+BLENDS = ("multiply", "screen", "overlay", "softlight")
+
+
+def clean_adjust(adjust) -> dict | None:
+    """Photo adjustments, each -100..100 except blur 0..100. None when everything is neutral."""
+    if not isinstance(adjust, dict):
+        return None
+    out = {k: _num(adjust.get(k), 0, 100, 0) if k == "blur" else _num(adjust.get(k), -100, 100, 0)
+           for k in ("brightness", "contrast", "saturation", "warmth", "blur", "sharpen")}
+    return out if any(v for v in out.values()) else None
+
+
+def _apply_adjust(tile, adjust: dict):
+    """Brightness, contrast, saturation, warmth, blur and sharpen. Neutral values change nothing."""
+    from PIL import Image, ImageEnhance, ImageFilter
+
+    if adjust.get("brightness"):
+        tile = ImageEnhance.Brightness(tile).enhance(1 + adjust["brightness"] / 100)
+    if adjust.get("contrast"):
+        tile = ImageEnhance.Contrast(tile).enhance(1 + adjust["contrast"] / 100)
+    if adjust.get("saturation"):
+        tile = ImageEnhance.Color(tile).enhance(max(0, 1 + adjust["saturation"] / 100))
+    if adjust.get("warmth"):
+        r, g, b, a = tile.split()
+        w = adjust["warmth"] / 100
+        r = r.point(lambda v: min(255, max(0, v * (1 + 0.25 * w))))
+        b = b.point(lambda v: min(255, max(0, v * (1 - 0.25 * w))))
+        tile = Image.merge("RGBA", (r, g, b, a))
+    if adjust.get("blur"):
+        tile = tile.filter(ImageFilter.GaussianBlur(adjust["blur"] / 12))
+    if adjust.get("sharpen"):
+        tile = tile.filter(ImageFilter.UnsharpMask(radius=2, percent=int(adjust["sharpen"] * 2.5), threshold=2))
+    return tile
+
+
+def _blend(base, tile, x: float, y: float, mode: str) -> None:
+    """Composite a tile onto the page with a blend mode, clipped to the page."""
+    from PIL import Image, ImageChops
+
+    x, y = round(x), round(y)
+    region = (max(0, x), max(0, y), min(base.width, x + tile.width), min(base.height, y + tile.height))
+    if region[0] >= region[2] or region[1] >= region[3]:
+        return
+    crop = tile.crop((region[0] - x, region[1] - y, region[2] - x, region[3] - y))
+    dst = base.crop(region)
+    op = {"multiply": ImageChops.multiply, "screen": ImageChops.screen,
+          "overlay": ImageChops.overlay, "softlight": ImageChops.soft_light}[mode]
+    blended = op(dst.convert("RGBA"), Image.new("RGBA", crop.size, (0, 0, 0, 0)))
+    # blend the colour, then reveal it by the tile's own alpha
+    mixed = op(dst, crop)
+    mixed.putalpha(crop.getchannel("A"))
+    out = Image.new("RGBA", crop.size, (0, 0, 0, 0))
+    out.alpha_composite(dst)
+    out.alpha_composite(mixed)
+    base.paste(out, region[:2])
+    del blended
+
+def _place(base, tile, x: float, y: float, angle: float, blend: str = "") -> None:
+    """Paste a tile, rotated about its centre, with an optional blend mode."""
+    if blend in BLENDS and not angle:
+        _blend(base, tile, x, y, blend)
+        return
+    _paste_rotated(base, tile, x, y, angle)
+
+
 def _paste_rotated(base, tile, x: float, y: float, angle: float) -> None:
     """Paste RGBA tile with its top-left at (x, y), rotated about its centre."""
     from PIL import Image
@@ -691,11 +763,13 @@ def _draw_image(base, d: Path, lay: dict) -> None:
         tile.alpha_composite(src, ((w - src.width) // 2, (h - src.height) // 2))
     else:
         tile = ImageOps.fit(src, (w, h), Image.Resampling.LANCZOS)
+    if lay.get("adjust"):
+        tile = _apply_adjust(tile, lay["adjust"])
     if lay.get("radius"):
         tile.putalpha(ImageChops.multiply(tile.getchannel("A"), _rounded_mask(w, h, lay["radius"])))
     tile = _shadowed(tile, lay)
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
-                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
+    _place(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"], lay.get("blend", ""))
 
 
 def _draw_shape(base, lay: dict) -> None:
@@ -706,7 +780,7 @@ def _draw_shape(base, lay: dict) -> None:
     if lay["type"] == "line":
         th = max(1, round(sw))
         tile = Image.new("RGBA", (w, th), _rgba(lay["stroke"]))
-        _paste_rotated(base, _with_opacity(tile, lay["opacity"]), lay["x"], lay["y"] - th / 2, lay["angle"])
+        _place(base, _with_opacity(tile, lay["opacity"]), lay["x"], lay["y"] - th / 2, lay["angle"], lay.get("blend", ""))
         return
     tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     dr = ImageDraw.Draw(tile)
@@ -719,8 +793,8 @@ def _draw_shape(base, lay: dict) -> None:
         dr.rounded_rectangle(box, radius=min(lay.get("radius", 0), min(w, h) / 2), fill=fill, outline=outline,
                              width=round(sw))
     tile = _shadowed(tile, lay)
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
-                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
+    _place(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"], lay.get("blend", ""))
 
 
 def _draw_text(base, lay: dict) -> None:
@@ -753,8 +827,8 @@ def _draw_text(base, lay: dict) -> None:
         tile = tile.transform(tile.size, Image.Transform.AFFINE, (1, 0.2, -0.2 * h / 2, 0, 1, 0), Image.Resampling.BICUBIC)
     tile = _apply_text_effect(tile, lay)
     # Effects grow the tile; keep the original text box centred inside the grown tile.
-    _paste_rotated(base, _with_opacity(tile, lay["opacity"]),
-                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"])
+    _place(base, _with_opacity(tile, lay["opacity"]),
+                   lay["x"] - (tile.width - w) / 2, lay["y"] - (tile.height - h) / 2, lay["angle"], lay.get("blend", ""))
 
 
 def render_page(doc: dict, d: Path, index: int):
