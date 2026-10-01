@@ -272,6 +272,22 @@ def test_bad_calls_are_invalid_op(args, rule):
     assert e.value.code == "invalid_op" and e.value.extra["rule"] == rule and log.history_list() == []
 
 
+@pytest.mark.parametrize("with_file", [False, True])
+def test_a_summary_with_a_lone_surrogate_is_invalid_op_not_an_encode_error(tmp_path, with_file):
+    log = new_log(path=tmp_path / "oplog.jsonl") if with_file else new_log()
+    bad = json.loads('"a\\ud800"')
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x"}, summary=bad)
+    assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "bad_arg", "/summary")
+    r = apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x"})
+    with pytest.raises(O.OplogError) as e:
+        log.call(HUMAN, "history_undo", {"op_id": r["op_id"], "client_op_id": "u-sur", "summary": bad})
+    assert e.value.extra["path"] == "/summary" and log.version == 1 and len(log.history_list()) == 1
+    with pytest.raises(O.OplogError) as e:  # a lone surrogate in an op is the validator's wrong_type
+        apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": bad})
+    assert e.value.extra["rule"] == "wrong_type" and log.version == 1
+
+
 def test_unknown_tool_and_project():
     log = new_log()
     with pytest.raises(O.OplogError) as e:

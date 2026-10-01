@@ -696,7 +696,8 @@ class Oplog:
                                  path=T._j("", k))
         if "summary" in args:
             s = args["summary"]
-            if not (isinstance(s, str) and s.strip() and len(s) <= SUMMARY_MAX and unicodedata.normalize("NFC", s) == s):
+            if not (isinstance(s, str) and s.strip() and len(s) <= SUMMARY_MAX and _utf8(s)
+                    and unicodedata.normalize("NFC", s) == s):
                 raise OplogError("invalid_op", f"summary must be a non-empty NFC string of at most {SUMMARY_MAX} chars",
                                  rule="bad_arg", path="/summary")
         if "project_id" in args and args["project_id"] != self._doc["id"]:
@@ -894,6 +895,15 @@ def replay(base: dict, entries: list[dict]) -> dict:
         log._retired |= set(T._all_ids(new))
         log._doc = new
     return log.doc
+
+
+def _utf8(s: str) -> bool:
+    """False for a string UTF-8 can't encode (a lone surrogate), which the log line can't hold."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 _REF_KEYS = ("id", "to", "between", "ids", "a", "b")
