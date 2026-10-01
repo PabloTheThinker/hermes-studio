@@ -46,10 +46,18 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | transition | `id, type:"transition", kind:"xfade", between:[a,b], dur` | on clip tracks only |
 | anchor | `{to, offset}` | `to` = a clip on V1; `offset` signed ticks; resolved start ≥ 0 |
 
-Every object is strict: unknown fields are rejected. Times are integer ticks; floats and bools are
-rejected anywhere a number is expected. Other fractions are reduced `[num, den]` pairs
+Every object is strict: unknown fields are rejected, and a missing required field (an item's `id`
+or `type` included) is `missing_field` at the pointer of the absent key. Times are integer ticks; floats and bools are
+rejected anywhere a number is expected. Every tick value is at most 2⁵³ (`too_large`), and so is
+every derived value: an item's end (`at` + duration, or an anchored item's resolved end), a clip's
+duration `(out − in) / speed`, each part of a `[num, den]` pair (e.g. a media `fps` of `[2⁶³, 1]`)
+and `version` all fail as `out_of_range` above 2⁵³. So no value that big ever reaches
+`canonical_hash()` or `to_otio()`. Other fractions are reduced `[num, den]` pairs
 (`volume` 0–4, `speed` 1/10–10, `crop` `{x, y, w, h}` in 0–1 inside the frame). Every string must
-be NFC-normalized. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
+be NFC-normalized (`not_nfc`) and encodable as UTF-8: a lone surrogate such as JSON `"\ud800"`
+fails as `wrong_type`. A value of the wrong type anywhere (a list or object as a track `role`, a
+non-string key) is reported as a problem, never raised: `validate()` always returns a list, and
+`canonical_hash()` / `stamp_hash()` raise only `TimelineError`. Ids match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}` and are unique across the whole doc
 (media, tracks, items and markers).
 
 **Tracks.** The roles are exactly `text` (`T<n>`), `main` (`V1`, required, the only video
@@ -118,7 +126,11 @@ item whose own id is malformed or duplicated anywhere in the doc leaves `id` off
 
 `seconds_to_ticks(x)` is exact for int, `Fraction`, `Decimal` and str (`"19.15"`, `"1001/30000"`)
 and raises if the value is not a whole number of ticks; a float is taken at its exact binary
-value and rounded half to even. `ticks_to_seconds(t)` returns a `Fraction`. `ticks_per_frame`,
+value and rounded half to even. `seconds_to_ticks_nearest(x)` is the rounding one: it takes int,
+`Fraction`, `Decimal` or float (never a str, not even `"1"`), rounds to the nearest tick with
+exact halves going to even, passes negative values through, and returns `(ticks, seconds_used)`
+with `seconds_used = Fraction(ticks, 705600000)`. It raises `TypeError` for a bool, a str or any
+other non-number, and `ValueError` for NaN and ±infinity. `ticks_to_seconds(t)` returns a `Fraction`. `ticks_per_frame`,
 `frames_to_ticks`, `ticks_to_frames` are exact at 24000/1001, 24, 25, 30000/1001, 30, 60 fps and
 48 kHz, and raise for rates that are not.
 

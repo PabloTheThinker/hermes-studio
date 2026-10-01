@@ -197,6 +197,9 @@ BAD = {
     "src reversed": (_set("@c1.src", [2 * S, S]), "empty_range"),
     "src past media end": (_set("@c1.src", [1199 * S, 1201 * S]), "src_out_of_media"),
     "huge at": (_set("@c1.at", 2**60), "too_large"),
+    "huge media fps part": (_set("media.m1.fps", [2**63, 1]), "out_of_range"),
+    "huge top-level fps part": (_set("fps", [2**63, 1]), "out_of_range"),
+    "huge version": (_set("version", 2**60), "out_of_range"),
     "float fps": (_set("fps", 29.97), "bad_rational"),
     "unreduced fps": (_set("fps", [60, 2]), "bad_rational"),
     "fps not tick-exact": (_set("fps", [11, 1]), "bad_fps"),
@@ -270,6 +273,51 @@ def test_validator_rejects(name):
 def test_non_object_doc_is_rejected():
     for d in (None, [], "x", 3):
         assert rules(d) == {"not_object"}
+
+
+def _refused(d) -> set[str]:
+    """canonical_hash and stamp_hash both raise TimelineError (never TypeError & co.); its rules."""
+    with pytest.raises(T.TimelineError) as a:
+        T.canonical_hash(d)
+    with pytest.raises(T.TimelineError) as b:
+        T.stamp_hash(d)
+    assert a.value.problems == b.value.problems == T.validate(d)
+    return set(a.value.rules)
+
+
+@pytest.mark.parametrize("role", [[], {}, ["main"], {"x": 1}, 1, None, True])
+def test_a_role_of_the_wrong_type_is_bad_track_role(role):
+    d = doc()
+    i = next(k for k, t in enumerate(d["tracks"]) if t["id"] == "A1")
+    d["tracks"][i]["role"] = role
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("bad_track_role", f"/tracks/{i}/role")]
+    assert "id" not in V(d)[0]
+    assert _refused(d) == {"bad_track_role"}
+
+
+@pytest.mark.parametrize("key", [1, ("t",), None])
+def test_a_non_string_key_is_unknown_field(key):
+    # JSON can't make one, but a Python caller can; sorting mixed key types used to raise TypeError
+    d = doc()
+    d["tracks"][0][key] = "x"
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("unknown_field", f"/tracks/0/{key}")]
+    assert _refused(d) == {"unknown_field"}
+
+
+@pytest.mark.parametrize("where", ["style", "text", "label", "media_path"])
+def test_a_lone_surrogate_is_wrong_type_not_an_encode_error(where):
+    bad = json.loads('"a\\ud800"')  # valid JSON, but not encodable as UTF-8
+    d = doc()
+    if where == "label":
+        d["markers"][0]["label"], path, iid = bad, "/markers/0/label", "k2"
+    elif where == "media_path":
+        d["media"]["m1"]["path"], path, iid = bad, "/media/m1/path", None
+    else:
+        t = next(k for k, t in enumerate(d["tracks"]) if t["id"] == "T1")
+        d["tracks"][t]["items"][1][where], path, iid = bad, f"/tracks/{t}/items/1/{where}", "t2"
+    (p,) = V(d)
+    assert (p["rule"], p["path"], p.get("id")) == ("wrong_type", path, iid)
+    assert _refused(d) == {"wrong_type"}
 
 
 # --------------------------------------------------------------------------- desk rulings
@@ -353,6 +401,39 @@ def test_seconds_to_ticks():
     assert T.seconds_to_ticks(2.5 / S) == 2 and T.seconds_to_ticks(3.5 / S) == 4
     assert T.ticks_to_seconds(23543520) == Fraction(1001, 30000)
     assert T.seconds_to_ticks(T.ticks_to_seconds(123456789)) == 123456789
+
+
+def test_seconds_to_ticks_stays_strict_between_two_ticks():
+    for x in (Fraction(1, 2 * S), Fraction(3, 2 * S), Decimal(1) / Decimal(2 * S), "0.0000000000001", Fraction(-1, 3 * S)):
+        with pytest.raises(ValueError):
+            T.seconds_to_ticks(x)
+
+
+def test_seconds_to_ticks_nearest_rounds_half_to_even_and_reports_the_seconds_used():
+    assert T.seconds_to_ticks_nearest(Fraction(1, 2 * S)) == (0, Fraction(0))  # 0.5 tick -> 0
+    assert T.seconds_to_ticks_nearest(Fraction(3, 2 * S)) == (2, Fraction(2, S))  # 1.5 -> 2
+    assert T.seconds_to_ticks_nearest(Fraction(5, 2 * S)) == (2, Fraction(2, S))  # 2.5 -> 2
+    assert T.seconds_to_ticks_nearest(Fraction(-3, 2 * S)) == (-2, Fraction(-2, S))
+    assert T.seconds_to_ticks_nearest(Decimal("0.0000003125"))[0] == 220  # exactly 220.5 ticks
+    assert T.seconds_to_ticks_nearest(Decimal("0.0000009375"))[0] == 662  # exactly 661.5 ticks
+    assert T.seconds_to_ticks_nearest(2.5 / S)[0] == 2 and T.seconds_to_ticks_nearest(3.5 / S)[0] == 4
+    assert T.seconds_to_ticks_nearest(-0.5) == (-S // 2, Fraction(-1, 2))  # negatives pass through
+    assert T.seconds_to_ticks_nearest(1) == (S, Fraction(1))
+    t, used = T.seconds_to_ticks_nearest(Fraction(1, 3 * S) + Fraction(1, 7))
+    assert used == Fraction(t, S) and used != Fraction(1, 3 * S) + Fraction(1, 7)  # what was actually used
+    t, used = T.seconds_to_ticks_nearest(0.1 + 0.2)
+    assert (t, used) == (211680000, Fraction(3, 10))
+
+
+@pytest.mark.parametrize("x, err", [
+    (float("nan"), ValueError), (float("inf"), ValueError), (float("-inf"), ValueError),
+    (Decimal("NaN"), ValueError), (Decimal("Infinity"), ValueError), (Decimal("-Infinity"), ValueError),
+    (True, TypeError), (False, TypeError), ("1", TypeError), ("0.5", TypeError), (None, TypeError),
+    ([1], TypeError), (1j, TypeError),
+])
+def test_seconds_to_ticks_nearest_rejects(x, err):
+    with pytest.raises(err):
+        T.seconds_to_ticks_nearest(x)
 
 
 def test_frame_helpers_refuse_inexact_rates():
@@ -538,6 +619,77 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
+    assert len(T.RULES) == 36  # out_of_range also covers values past 2^53; no new id
+
+
+def _huge_scaled_src(d):
+    d["media"]["m1"]["dur"] = 2**53
+    it = item(d, "c3")
+    it["src"], it["props"]["speed"], it["fade_out"] = [0, 2**52 + 1], [1, 10], 0
+
+
+def _huge_text_end(d):
+    item(d, "t2")["at"] = 2**53 - S
+
+
+def _huge_anchored_end(d):
+    item(d, "t1")["anchor"]["offset"] = 2**53 - 8 * S  # c2 starts at 7.75 s: ends past 2^53
+
+
+def _end_at_the_limit(d):
+    item(d, "t2")["at"] = 2**53 - 2 * S  # t2 is 2 s long: ends exactly at 2^53
+
+
+@pytest.mark.parametrize("mutate, where", [
+    (_huge_scaled_src, ("c3", "/src")),
+    (_huge_text_end, ("t2", "")),
+    (_huge_anchored_end, ("t1", "")),
+    (_set("media.m1.fps", [2**63, 1]), (None, "/media/m1/fps")),
+    (_set("fps", [2**63, 2**63 - 1]), (None, "/fps")),
+    (_set("@c2.props.volume", [2**60, 2**60 + 1]), ("c2", "/props/volume")),
+    (_set("version", 2**53 + 1), (None, "/version")),
+])
+def test_values_past_2_53_are_out_of_range_and_never_hash_or_export(mutate, where):
+    d = doc()
+    mutate(d)
+    found = V(d)
+    assert [p["rule"] for p in found] == ["out_of_range"], found
+    iid, tail = where
+    p = found[0]
+    assert p.get("id") == iid
+    if iid is None:
+        assert p["path"] == tail
+    else:
+        ptr = _id_pointers(d)[iid][0]
+        assert p["path"] == ptr + tail
+    with pytest.raises(T.TimelineError):
+        T.canonical_hash(d)
+    with pytest.raises(T.TimelineError):
+        T.stamp_hash(d)
+    with pytest.raises(T.TimelineError):
+        T.to_otio(d)
+
+
+@pytest.mark.parametrize("iid", ["c1", "t2", "x1", "mu2"])
+@pytest.mark.parametrize("key", ["id", "type"])
+def test_a_missing_item_id_or_type_is_missing_field(iid, key):
+    d = doc()
+    ptr = _id_pointers(d)[iid][0]
+    del item(d, iid)[key]
+    assert [(p["rule"], p["path"], "id" in p) for p in V(d)] == [("missing_field", f"{ptr}/{key}", key == "type")]
+    assert _refused(d) == {"missing_field"}
+
+
+def test_a_wrong_item_type_value_is_still_wrong_type():
+    d = doc()
+    item(d, "c1")["type"] = "gap"
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("wrong_type", _id_pointers(doc())["c1"][0] + "/type")]
+
+
+def test_an_end_exactly_at_2_53_is_allowed():
+    d = doc()
+    _end_at_the_limit(d)
+    assert V(d) == []
 
 
 def test_the_documented_example_is_valid():
@@ -550,9 +702,9 @@ def test_the_documented_example_is_valid():
 
 
 def test_public_api_is_importable():
-    from hermes_studio.timeline import canonical_hash, seconds_to_ticks, to_otio, validate
+    from hermes_studio.timeline import canonical_hash, seconds_to_ticks, seconds_to_ticks_nearest, to_otio, validate
 
-    assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks))
+    assert all(callable(f) for f in (validate, canonical_hash, to_otio, seconds_to_ticks, seconds_to_ticks_nearest))
     assert T.ROLE_ORDER == ("text", "main", "voice", "music")
     assert T.new_timeline("p")["schema_version"] == "hs.timeline/1" and "schema" not in T.new_timeline("p")
 

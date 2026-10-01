@@ -27,7 +27,10 @@ from hermes_studio.api import HermesStudioError
 
 SCHEMA_VERSION = "hs.timeline/1"
 TICK_RATE = 705_600_000  # flicks: whole ticks per frame at 24, 25, 30, 60 and x/1.001 fps, and per 48 kHz sample
-MAX_TICKS = 2**53  # OTIO keeps RationalTime values as doubles; every tick count up to this is exact (~147 days)
+# OTIO keeps RationalTime values as doubles: every tick count up to this is exact in memory (~147 days).
+# No tick value, resolved or derived end (e.g. a source range scaled by speed), rational component or
+# version above it can pass validate(), so none can reach canonical_hash() or to_otio().
+MAX_TICKS = 2**53
 
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # role -> (track id letter, item types the track holds, may its items overlap). Tracks are listed
@@ -154,6 +157,19 @@ def seconds_to_ticks(x: int | Fraction | Decimal | str | float) -> int:
     return int(t)
 
 
+def seconds_to_ticks_nearest(x: int | Fraction | Decimal | float) -> tuple[int, Fraction]:
+    """The nearest tick to ``x`` seconds, rounding an exact half to even, and the seconds that tick
+    stands for: ``(ticks, Fraction(ticks, TICK_RATE))``. Takes int, Fraction, Decimal and float
+    (a float at its exact binary value); negative values pass through. Raises TypeError for a
+    bool, a str (even ``"1"``) or any other non-number, and ValueError for NaN or +-infinity."""
+    if isinstance(x, bool) or not isinstance(x, (int, Fraction, Decimal, float)):
+        raise TypeError(f"seconds must be an int, Fraction, Decimal or float, not {type(x).__name__}")
+    if isinstance(x, (float, Decimal)) and not (math.isfinite(x) if isinstance(x, float) else x.is_finite()):
+        raise ValueError("seconds must be finite")
+    t = round(Fraction(x) * TICK_RATE)  # Fraction.__round__ rounds half to even
+    return t, Fraction(t, TICK_RATE)
+
+
 def ticks_to_seconds(t: int) -> Fraction:
     return Fraction(t, TICK_RATE)
 
@@ -208,7 +224,7 @@ class _Checker:
             self.bad("not_object", path, "must be an object")
             return False
         ok = True
-        for k in sorted(set(obj) - required - optional):
+        for k in sorted(set(obj) - required - optional, key=repr):  # keys may not be strings
             if k in ATTRIBUTION_KEYS:
                 self.bad("attribution_field", _j(path, k), f"'{k}' is not allowed in a timeline")
             else:
@@ -241,6 +257,11 @@ class _Checker:
         if not empty and not v:
             self.bad("wrong_type", path, "must not be empty")
             return False
+        try:
+            v.encode("utf-8")
+        except UnicodeEncodeError:
+            self.bad("wrong_type", path, "must be valid Unicode text (no lone surrogates)")
+            return False
         if unicodedata.normalize("NFC", v) != v:
             self.bad("not_nfc", path, "must be NFC-normalized Unicode")
             return False
@@ -259,6 +280,9 @@ class _Checker:
         f = _rational(v)
         if f is None:
             self.bad("bad_rational", path, f"must be a reduced [num, den] pair of integers, got {v!r}")
+            return None
+        if abs(v[0]) > MAX_TICKS or v[1] > MAX_TICKS:
+            self.bad("out_of_range", path, f"each part of a [num, den] pair must be at most {MAX_TICKS}")
             return None
         if (lo is not None and (f < lo or (lo_open and f == lo))) or (hi is not None and f > hi):
             self.bad("out_of_range", path, f"{f} is out of range")
@@ -318,6 +342,8 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     c.ident(doc["id"], "/id")
     if not _is_int(doc["version"]) or doc["version"] < 0:
         c.bad("wrong_type", "/version", "must be an integer >= 0")
+    elif doc["version"] > MAX_TICKS:
+        c.bad("out_of_range", "/version", f"must be at most {MAX_TICKS}")
     if "hash" in doc and not (isinstance(doc["hash"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", doc["hash"])):
         c.bad("wrong_type", "/hash", "must be 'sha256:' and 64 lowercase hex digits")
     fps = c.ratio(doc["fps"], "/fps", Fraction(0), lo_open=True)
@@ -363,7 +389,7 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
         if not c.keys(tr, tp, TRACK_KEYS):
             continue
         role, tid = tr["role"], tr["id"]
-        if role not in ROLES:
+        if not isinstance(role, str) or role not in ROLES:
             c.bad("bad_track_role", _j(tp, "role"), f"role must be one of {', '.join(ROLE_ORDER)}")
             continue
         if not c.ident(tid, _j(tp, "id")):
@@ -387,13 +413,16 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
                 c.bad("not_object", ip, "must be an object")
                 continue
             typ = it.get("type")
+            if "type" not in it:
+                c.bad("missing_field", _j(ip, "type"), "'type' is required")
+                continue
             if typ not in ("clip", "text", "transition"):
                 c.bad("wrong_type", _j(ip, "type"), "type must be clip, text or transition")
                 continue
             if typ not in ROLES[role][1]:
                 c.bad("item_not_allowed_on_track", _j(ip, "type"), f"a {role} track can't hold a {typ}")
                 continue
-            if c.ident(it.get("id"), _j(ip, "id")):
+            if "id" in it and c.ident(it["id"], _j(ip, "id")):  # a missing id: missing_field, from _check_item
                 claim(it["id"], ip)
                 items[it["id"]] = {"item": it, "track": tid, "role": role, "path": ip}
             _check_item(c, it, typ, role, ip, media)
@@ -491,8 +520,12 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 d = Fraction(src[1] - src[0]) / speed
                 if d.denominator != 1:
                     c.bad("non_integer_duration", _j(ip, "src"), "(out - in) / speed must be a whole number of ticks")
+                elif d > MAX_TICKS:
+                    c.bad("out_of_range", _j(ip, "src"), f"(out - in) / speed must be at most {MAX_TICKS} ticks")
                 else:
                     dur = int(d)
+    if dur is not None and _is_int(it.get("at")) and 0 <= it["at"] <= MAX_TICKS and it["at"] + dur > MAX_TICKS:
+        c.bad("out_of_range", ip, f"the item must end by {MAX_TICKS} ticks")
     fi, fo = it["fade_in"], it["fade_out"]
     if c.ticks(fi, _j(ip, "fade_in")) and c.ticks(fo, _j(ip, "fade_out")) and dur is not None and fi + fo > dur:
         c.bad("fade_too_long", ip, "fade_in + fade_out must not exceed the item's duration")
@@ -524,6 +557,8 @@ def _check_relations(c: _Checker, doc: dict, items: dict[str, dict]) -> None:
             c.bad("anchor_target_not_main", _j(rec['path'], "anchor", "to"), f"{a['to']!r} is not a clip on {MAIN_TRACK}")
         elif tgt["item"]["at"] + a["offset"] < 0:
             c.bad("anchor_before_zero", _j(rec['path'], "anchor"), "the anchored item would start before 0")
+        elif tgt["item"]["at"] + a["offset"] + item_duration(it) > MAX_TICKS:
+            c.bad("out_of_range", rec["path"], f"the anchored item must end by {MAX_TICKS} ticks")
         else:
             starts[iid] = tgt["item"]["at"] + a["offset"]
     if c.problems:
