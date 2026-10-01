@@ -27,7 +27,10 @@ from hermes_studio.api import HermesStudioError
 
 SCHEMA_VERSION = "hs.timeline/1"
 TICK_RATE = 705_600_000  # flicks: whole ticks per frame at 24, 25, 30, 60 and x/1.001 fps, and per 48 kHz sample
-MAX_TICKS = 2**53  # OTIO keeps RationalTime values as doubles; every tick count up to this is exact (~147 days)
+# OTIO keeps RationalTime values as doubles: every tick count up to this is exact in memory (~147 days).
+# No tick value, resolved or derived end (e.g. a source range scaled by speed), rational component or
+# version above it can pass validate(), so none can reach canonical_hash() or to_otio().
+MAX_TICKS = 2**53
 
 ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 # role -> (track id letter, item types the track holds, may its items overlap). Tracks are listed
@@ -278,6 +281,9 @@ class _Checker:
         if f is None:
             self.bad("bad_rational", path, f"must be a reduced [num, den] pair of integers, got {v!r}")
             return None
+        if abs(v[0]) > MAX_TICKS or v[1] > MAX_TICKS:
+            self.bad("out_of_range", path, f"each part of a [num, den] pair must be at most {MAX_TICKS}")
+            return None
         if (lo is not None and (f < lo or (lo_open and f == lo))) or (hi is not None and f > hi):
             self.bad("out_of_range", path, f"{f} is out of range")
             return None
@@ -336,6 +342,8 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     c.ident(doc["id"], "/id")
     if not _is_int(doc["version"]) or doc["version"] < 0:
         c.bad("wrong_type", "/version", "must be an integer >= 0")
+    elif doc["version"] > MAX_TICKS:
+        c.bad("out_of_range", "/version", f"must be at most {MAX_TICKS}")
     if "hash" in doc and not (isinstance(doc["hash"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", doc["hash"])):
         c.bad("wrong_type", "/hash", "must be 'sha256:' and 64 lowercase hex digits")
     fps = c.ratio(doc["fps"], "/fps", Fraction(0), lo_open=True)
@@ -509,8 +517,12 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 d = Fraction(src[1] - src[0]) / speed
                 if d.denominator != 1:
                     c.bad("non_integer_duration", _j(ip, "src"), "(out - in) / speed must be a whole number of ticks")
+                elif d > MAX_TICKS:
+                    c.bad("out_of_range", _j(ip, "src"), f"(out - in) / speed must be at most {MAX_TICKS} ticks")
                 else:
                     dur = int(d)
+    if dur is not None and _is_int(it.get("at")) and 0 <= it["at"] <= MAX_TICKS and it["at"] + dur > MAX_TICKS:
+        c.bad("out_of_range", ip, f"the item must end by {MAX_TICKS} ticks")
     fi, fo = it["fade_in"], it["fade_out"]
     if c.ticks(fi, _j(ip, "fade_in")) and c.ticks(fo, _j(ip, "fade_out")) and dur is not None and fi + fo > dur:
         c.bad("fade_too_long", ip, "fade_in + fade_out must not exceed the item's duration")
@@ -542,6 +554,8 @@ def _check_relations(c: _Checker, doc: dict, items: dict[str, dict]) -> None:
             c.bad("anchor_target_not_main", _j(rec['path'], "anchor", "to"), f"{a['to']!r} is not a clip on {MAIN_TRACK}")
         elif tgt["item"]["at"] + a["offset"] < 0:
             c.bad("anchor_before_zero", _j(rec['path'], "anchor"), "the anchored item would start before 0")
+        elif tgt["item"]["at"] + a["offset"] + item_duration(it) > MAX_TICKS:
+            c.bad("out_of_range", rec["path"], f"the anchored item must end by {MAX_TICKS} ticks")
         else:
             starts[iid] = tgt["item"]["at"] + a["offset"]
     if c.problems:

@@ -197,6 +197,9 @@ BAD = {
     "src reversed": (_set("@c1.src", [2 * S, S]), "empty_range"),
     "src past media end": (_set("@c1.src", [1199 * S, 1201 * S]), "src_out_of_media"),
     "huge at": (_set("@c1.at", 2**60), "too_large"),
+    "huge media fps part": (_set("media.m1.fps", [2**63, 1]), "out_of_range"),
+    "huge top-level fps part": (_set("fps", [2**63, 1]), "out_of_range"),
+    "huge version": (_set("version", 2**60), "out_of_range"),
     "float fps": (_set("fps", 29.97), "bad_rational"),
     "unreduced fps": (_set("fps", [60, 2]), "bad_rational"),
     "fps not tick-exact": (_set("fps", [11, 1]), "bad_fps"),
@@ -616,6 +619,61 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
+    assert len(T.RULES) == 36  # out_of_range also covers values past 2^53; no new id
+
+
+def _huge_scaled_src(d):
+    d["media"]["m1"]["dur"] = 2**53
+    it = item(d, "c3")
+    it["src"], it["props"]["speed"], it["fade_out"] = [0, 2**52 + 1], [1, 10], 0
+
+
+def _huge_text_end(d):
+    item(d, "t2")["at"] = 2**53 - S
+
+
+def _huge_anchored_end(d):
+    item(d, "t1")["anchor"]["offset"] = 2**53 - 8 * S  # c2 starts at 7.75 s: ends past 2^53
+
+
+def _end_at_the_limit(d):
+    item(d, "t2")["at"] = 2**53 - 2 * S  # t2 is 2 s long: ends exactly at 2^53
+
+
+@pytest.mark.parametrize("mutate, where", [
+    (_huge_scaled_src, ("c3", "/src")),
+    (_huge_text_end, ("t2", "")),
+    (_huge_anchored_end, ("t1", "")),
+    (_set("media.m1.fps", [2**63, 1]), (None, "/media/m1/fps")),
+    (_set("fps", [2**63, 2**63 - 1]), (None, "/fps")),
+    (_set("@c2.props.volume", [2**60, 2**60 + 1]), ("c2", "/props/volume")),
+    (_set("version", 2**53 + 1), (None, "/version")),
+])
+def test_values_past_2_53_are_out_of_range_and_never_hash_or_export(mutate, where):
+    d = doc()
+    mutate(d)
+    found = V(d)
+    assert [p["rule"] for p in found] == ["out_of_range"], found
+    iid, tail = where
+    p = found[0]
+    assert p.get("id") == iid
+    if iid is None:
+        assert p["path"] == tail
+    else:
+        ptr = _id_pointers(d)[iid][0]
+        assert p["path"] == ptr + tail
+    with pytest.raises(T.TimelineError):
+        T.canonical_hash(d)
+    with pytest.raises(T.TimelineError):
+        T.stamp_hash(d)
+    with pytest.raises(T.TimelineError):
+        T.to_otio(d)
+
+
+def test_an_end_exactly_at_2_53_is_allowed():
+    d = doc()
+    _end_at_the_limit(d)
+    assert V(d) == []
 
 
 def test_the_documented_example_is_valid():

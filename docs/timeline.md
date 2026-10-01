@@ -47,7 +47,11 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | anchor | `{to, offset}` | `to` = a clip on V1; `offset` signed ticks; resolved start ≥ 0 |
 
 Every object is strict: unknown fields are rejected. Times are integer ticks; floats and bools are
-rejected anywhere a number is expected. Other fractions are reduced `[num, den]` pairs
+rejected anywhere a number is expected. Every tick value is at most 2⁵³ (`too_large`), and so is
+every derived value: an item's end (`at` + duration, or an anchored item's resolved end), a clip's
+duration `(out − in) / speed`, each part of a `[num, den]` pair (e.g. a media `fps` of `[2⁶³, 1]`)
+and `version` all fail as `out_of_range` above 2⁵³. So no value that big ever reaches
+`canonical_hash()` or `to_otio()`. Other fractions are reduced `[num, den]` pairs
 (`volume` 0–4, `speed` 1/10–10, `crop` `{x, y, w, h}` in 0–1 inside the frame). Every string must
 be NFC-normalized (`not_nfc`) and encodable as UTF-8: a lone surrogate such as JSON `"\ud800"`
 fails as `wrong_type`. A value of the wrong type anywhere (a list or object as a track `role`, a
