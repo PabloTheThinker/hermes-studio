@@ -670,6 +670,22 @@ def test_values_past_2_53_are_out_of_range_and_never_hash_or_export(mutate, wher
         T.to_otio(d)
 
 
+@pytest.mark.parametrize("iid", ["c1", "t2", "x1", "mu2"])
+@pytest.mark.parametrize("key", ["id", "type"])
+def test_a_missing_item_id_or_type_is_missing_field(iid, key):
+    d = doc()
+    ptr = _id_pointers(d)[iid][0]
+    del item(d, iid)[key]
+    assert [(p["rule"], p["path"], "id" in p) for p in V(d)] == [("missing_field", f"{ptr}/{key}", key == "type")]
+    assert _refused(d) == {"missing_field"}
+
+
+def test_a_wrong_item_type_value_is_still_wrong_type():
+    d = doc()
+    item(d, "c1")["type"] = "gap"
+    assert [(p["rule"], p["path"]) for p in V(d)] == [("wrong_type", _id_pointers(doc())["c1"][0] + "/type")]
+
+
 def test_an_end_exactly_at_2_53_is_allowed():
     d = doc()
     _end_at_the_limit(d)

@@ -413,13 +413,16 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
                 c.bad("not_object", ip, "must be an object")
                 continue
             typ = it.get("type")
+            if "type" not in it:
+                c.bad("missing_field", _j(ip, "type"), "'type' is required")
+                continue
             if typ not in ("clip", "text", "transition"):
                 c.bad("wrong_type", _j(ip, "type"), "type must be clip, text or transition")
                 continue
             if typ not in ROLES[role][1]:
                 c.bad("item_not_allowed_on_track", _j(ip, "type"), f"a {role} track can't hold a {typ}")
                 continue
-            if c.ident(it.get("id"), _j(ip, "id")):
+            if "id" in it and c.ident(it["id"], _j(ip, "id")):  # a missing id: missing_field, from _check_item
                 claim(it["id"], ip)
                 items[it["id"]] = {"item": it, "track": tid, "role": role, "path": ip}
             _check_item(c, it, typ, role, ip, media)

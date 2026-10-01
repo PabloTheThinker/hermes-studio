@@ -46,7 +46,8 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | transition | `id, type:"transition", kind:"xfade", between:[a,b], dur` | on clip tracks only |
 | anchor | `{to, offset}` | `to` = a clip on V1; `offset` signed ticks; resolved start ≥ 0 |
 
-Every object is strict: unknown fields are rejected. Times are integer ticks; floats and bools are
+Every object is strict: unknown fields are rejected, and a missing required field (an item's `id`
+or `type` included) is `missing_field` at the pointer of the absent key. Times are integer ticks; floats and bools are
 rejected anywhere a number is expected. Every tick value is at most 2⁵³ (`too_large`), and so is
 every derived value: an item's end (`at` + duration, or an anchored item's resolved end), a clip's
 duration `(out − in) / speed`, each part of a `[num, den]` pair (e.g. a media `fps` of `[2⁶³, 1]`)
