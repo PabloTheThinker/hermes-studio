@@ -111,6 +111,28 @@ Decisions:
 - **Trim.** Without `ripple`, trimming the start keeps the rest of the clip where it is (`at`, or
   an anchor's offset, moves by `Δin / speed`). With `ripple`, the start stays and later items on
   the track shift by the change in duration.
+- **Ripple trim and crossfades** (Glyph's rule, ruled by Ada: the crossfade stays with the cut).
+  - With `ripple` the start stays, so a trim of either end (`src_in` or `src_out`) moves the
+    clip's **end**.
+  - An **outgoing** crossfade moves with that end. The ripple point is the start of the overlap
+    (the next clip's start), not the old end, so the next clip, the crossfade and everything
+    after them shift together by the change in duration. The crossfade keeps its `dur` and its
+    `between` pair.
+  - An **incoming** crossfade stays at the clip's start, unchanged.
+  - **Too short:** the trimmed clip must be longer than each of its crossfades and at least as
+    long as both together, so the previous and next clips can abut but never overlap. Anything
+    shorter is `invalid_op` / `transition_too_long` at the op (`/ops/k`), with `id` set to the
+    crossfade that doesn't fit (Ada and Glyph's ruling). It's checked before anything moves.
+    - If one crossfade doesn't fit on its own, `id` is that crossfade's id. If neither fits on
+      its own, it's the outgoing one.
+    - If each fits on its own but not both together, `id` is the outgoing crossfade's id.
+    - `transition_too_long` is an op-level rule, not a timeline (validator) rule. It has the same
+      shape as a validator problem on one item (`rule`, `path`, message, `id`), like
+      `fade_too_long`.
+  - **Without `ripple`:** nothing shifts. An end trim of a clip with an outgoing crossfade still
+    fails validation with `transition_overlap_mismatch`, as before.
+  - `changed_ids` comes from the resolved diff, so it lists the trimmed clip, the shifted items,
+    the moved crossfade and anything anchored to a shifted clip. Markers don't move.
 
 ### Errors
 
@@ -118,15 +140,15 @@ Decisions:
 
 | `code` | When | Extra |
 |---|---|---|
-| `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()` |
+| `invalid_op` | bad args or ops, or the result fails `validate()` | `rule`, `path`, `op_index`; for validator failures also `id?` and `problems` verbatim from `validate()`; for `transition_too_long` also `id` (the crossfade) |
 | `not_found` | unknown item, track, marker, entry, group or project | `rule`, `path`, and `id` (the id that wasn't found); op-level ones also `op_index` |
 | `conflict` | `base_version` isn't the current version | `current_version`, `history_diff` |
 | `undo_blocked` | see below | `reason`, `op_ids`, `path` (`/op_id` or `/group_id`) and `id` (the op_id or group_id asked for); with `reason: "dependents"` also `blocking_op_ids` (by `seq`); with `reason: "inverse_invalid"` also `rule` and `problems` |
 
-Op-level `rule`s (16): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
+Op-level `rule`s (17): `unknown_tool`, `unknown_op`, `unknown_arg`, `missing_arg`, `bad_arg`,
 `not_integer_ticks`, `negative_time`, `bad_id`, `duplicate_id`, `id_reused`, `bad_track_role`,
 `non_integer_duration`, `not_found`, `already_undone`, `not_an_undo`, `client_op_id_mismatch`,
-plus every timeline rule.
+`transition_too_long`, plus every timeline rule.
 
 - **Id types:** every id an op names must be a string. That covers `id`, `track`, each entry
   of `between` and `ids`, and `anchor.to`. Anything else (a number, `null`, a list, an object

@@ -1362,3 +1362,181 @@ def test_r4_undo_with_a_null_group_is_bad_arg_and_undoes_nothing(monkeypatch):
     with pytest.raises(O.OplogError) as e:
         log.call(HUMAN, "history_undo", {"group_id": None, "client_op_id": "gnull2"})
     assert e.value.code == "not_found" and h(log) == before and len(log.history_list()) == 3
+
+
+# --------------------------------------------------------------------------- ripple trim with crossfades (Glyph/Ada: the crossfade stays with the cut)
+
+H = S // 2  # half a second
+
+
+def xfade_log(*, d12: int | None = H, d23: int | None = None, **kw) -> O.Oplog:
+    """The base doc with c2 pulled back under c1 by d12 (crossfade tr c1->c2) and, optionally,
+    c3 pulled under c2 by d23 (crossfade c2->c3). c2 = [4S-d12, 8S-d12), c3 after it."""
+    log = new_log(**kw)
+    ops: list[dict] = []
+    c2_at = 4 * S - (d12 or 0)
+    if d12:
+        ops += [
+            {"op": "move_clip", "id": "c2", "at": c2_at},
+            {"op": "add_transition", "between": ["c1", "c2"], "dur": d12, "id": "t12"},
+        ]
+    if d23:
+        ops += [
+            {"op": "move_clip", "id": "c3", "at": c2_at + 4 * S - d23},
+            {"op": "add_transition", "between": ["c2", "c3"], "dur": d23, "id": "t23"},
+        ]
+    if ops:
+        apply(log, HUMAN, *ops)
+    return log
+
+
+def spans(log: O.Oplog) -> dict[str, tuple[int, int]]:
+    return T.resolve(log.doc)
+
+
+def _trim_roundtrip(log: O.Oplog, op: dict) -> dict:
+    """Apply a trim; changed_ids covers every moved span on apply, undo and redo; hashes round-trip."""
+    h0, s0 = h(log), spans(log)
+    r = apply(log, HUMAN, op)
+    h1, s1 = h(log), spans(log)
+    moved = {i for i in s0.keys() & s1.keys() if s0[i] != s1[i]}
+    assert moved <= set(r["changed_ids"])
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert h(log) == h0 and spans(log) == s0 and u["changed_ids"] == r["changed_ids"]
+    rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
+    assert h(log) == h1 and rd["changed_ids"] == r["changed_ids"]
+    return r
+
+
+def test_ripple_end_trim_with_an_outgoing_crossfade_is_no_longer_rejected():
+    # regression: this used to be invalid_op / transition_overlap_mismatch
+    log = xfade_log()
+    r = apply(log, HUMAN, {"op": "trim_clip", "id": "c1", "src_out": 3 * S, "ripple": True})
+    assert r["ok"] and item(log.doc, "t12")["between"] == ["c1", "c2"] and item(log.doc, "t12")["dur"] == H
+
+
+@pytest.mark.parametrize(
+    "src_out, delta", [(3 * S, -S), (5 * S, S), (4 * S - S // 4, -S // 4)], ids=["shorter", "longer", "quarter"]
+)
+def test_ripple_end_trim_moves_the_crossfade_with_the_cut(src_out, delta):
+    log = xfade_log()
+    s0 = spans(log)
+    r = _trim_roundtrip(log, {"op": "trim_clip", "id": "c1", "src_out": src_out, "ripple": True})
+    s1 = spans(log)
+    assert s1["c1"] == (0, s0["c1"][1] + delta)  # the start stays
+    assert s1["t12"] == (s1["c1"][1] - H, s1["c1"][1])  # same dur, at the new cut, same pair
+    for i in ("c2", "t12", "c3", "x1"):  # the next clip, the crossfade, later items and x1 (anchored to c2)
+        assert s1[i] == (s0[i][0] + delta, s0[i][1] + delta)
+    assert s1["mu1"] == s0["mu1"] and log.doc["markers"] == base()["markers"]  # anchored to c1 (start kept); markers stay
+    assert r["changed_ids"] == ["c1", "c2", "c3", "t12", "x1"]
+
+
+def test_ripple_start_trim_with_an_outgoing_crossfade_moves_it_too():
+    log = xfade_log()
+    s0 = spans(log)
+    _trim_roundtrip(log, {"op": "trim_clip", "id": "c1", "src_in": S, "ripple": True})
+    s1 = spans(log)
+    assert s1["c1"] == (0, 3 * S) and s1["t12"] == (3 * S - H, 3 * S) and s1["c2"][0] == s0["c2"][0] - S
+
+
+def test_ripple_start_trim_with_an_incoming_crossfade_keeps_it_at_the_clip_start():
+    log = xfade_log()
+    s0 = spans(log)
+    r = _trim_roundtrip(log, {"op": "trim_clip", "id": "c2", "src_in": 11 * S, "ripple": True})
+    s1 = spans(log)
+    assert s1["t12"] == s0["t12"] and s1["c1"] == s0["c1"]  # the incoming crossfade doesn't move
+    assert s1["c2"] == (s0["c2"][0], s0["c2"][1] - S) and s1["c3"] == (s0["c3"][0] - S, s0["c3"][1] - S)
+    assert "t12" not in r["changed_ids"] and r["changed_ids"] == ["c2", "c3"]
+
+
+def test_ripple_trim_of_a_clip_with_both_crossfades():
+    log = xfade_log(d23=H)
+    s0 = spans(log)
+    _trim_roundtrip(log, {"op": "trim_clip", "id": "c2", "src_out": 13 * S, "ripple": True})
+    s1 = spans(log)
+    assert s1["t12"] == s0["t12"] and s1["t23"] == (s1["c2"][1] - H, s1["c2"][1])
+    assert s1["c3"][0] == s0["c3"][0] - S
+
+
+@pytest.mark.parametrize(
+    "d23, op, xid",
+    [
+        # one crossfade doesn't fit on its own: that crossfade
+        (None, {"op": "trim_clip", "id": "c1", "src_out": S // 4, "ripple": True}, "t12"),  # out xfade H
+        (None, {"op": "trim_clip", "id": "c1", "src_in": 4 * S - S // 4, "ripple": True}, "t12"),
+        (None, {"op": "trim_clip", "id": "c1", "src_out": H, "ripple": True}, "t12"),  # exactly the out xfade
+        (None, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + H, "ripple": True}, "t12"),  # exactly the in xfade
+        # each fits alone, not both together (in + out = S, c2 = 3/4 s): the outgoing one
+        (H, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + 3 * S // 4, "ripple": True}, "t23"),
+        # neither fits alone (c2 = 1/4 s): the outgoing one
+        (H, {"op": "trim_clip", "id": "c2", "src_out": 10 * S + S // 4, "ripple": True}, "t23"),
+    ],
+)
+@pytest.mark.parametrize("k", [0, 1])
+def test_a_ripple_trim_shorter_than_its_crossfades_need_is_transition_too_long(d23, op, xid, k):
+    log = xfade_log(d23=d23)
+    v, h0 = log.version, h(log)
+    ops = [{"op": "set_fade", "id": "c3", "fade_in": 0}] * k + [op]
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, *ops)
+    x = e.value.extra
+    assert (e.value.code, x["rule"], x["path"], x["id"], x["op_index"]) == (
+        "invalid_op",
+        "transition_too_long",
+        f"/ops/{k}",
+        xid,
+        k,
+    )
+    assert log.version == v and h(log) == h0 and item(log.doc, xid)["type"] == "transition"
+
+
+def test_a_ripple_trim_exactly_as_long_as_both_crossfades_is_allowed():
+    log = xfade_log(d23=H)
+    _trim_roundtrip(log, {"op": "trim_clip", "id": "c2", "src_out": 11 * S, "ripple": True})  # c2 = 1 s = H + H
+    s1 = spans(log)
+    assert s1["c1"][1] == s1["c3"][0]  # c1 and c3 abut, no overlap
+
+
+def test_a_non_ripple_end_trim_with_an_outgoing_crossfade_is_still_rejected():
+    log = xfade_log()
+    with pytest.raises(O.OplogError) as e:
+        apply(log, HUMAN, {"op": "trim_clip", "id": "c1", "src_out": 3 * S})
+    assert e.value.extra["rule"] == "transition_overlap_mismatch"
+
+
+def test_crossfade_ripple_trims_survive_load_and_replay(tmp_path):
+    p = tmp_path / "oplog.jsonl"
+    log = xfade_log(d23=H, path=p)
+    a = apply(log, HUMAN, {"op": "trim_clip", "id": "c1", "src_out": 3 * S, "ripple": True})
+    apply(log, HUMAN, {"op": "trim_clip", "id": "c2", "src_in": 11 * S, "ripple": True})
+    u = undo(log, HUMAN, op_id=log.history_list()[-1]["op_id"])
+    log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
+    again = O.Oplog.load(base(), p)
+    assert h(again) == h(log) and T.canonical_hash(O.replay(base(), log.history_list())) == h(log)
+    assert again.history_list()[1]["changed_ids"] == a["changed_ids"]
+
+
+def test_random_ripple_trims_with_crossfades_cover_changed_ids_and_round_trip_over_300_seeds():
+    done = rejected = 0
+    rules: dict[str, int] = {}
+    for seed in range(300):
+        rng = random.Random(50_000 + seed)
+        log = xfade_log(d12=rng.choice([None, S // 4, H, S]), d23=rng.choice([None, S // 4, H]))
+        for _ in range(rng.randrange(1, 4)):
+            c = rng.choice([i for i in log.doc["tracks"][1]["items"] if i["type"] == "clip"])
+            i0, o0 = c["src"]
+            k = rng.choice(["src_in", "src_out"])
+            step = rng.randrange(-12, 13) * S // 4
+            v = i0 + step if k == "src_in" else o0 + step
+            if not (0 <= v and (i0 + S // 4 <= v if k == "src_out" else v <= o0 - S // 4)):
+                continue
+            try:
+                _trim_roundtrip(log, {"op": "trim_clip", "id": c["id"], k: v, "ripple": True})
+                done += 1
+            except O.OplogError as e:
+                rules[e.extra["rule"]] = rules.get(e.extra["rule"], 0) + 1
+                rejected += 1
+    # a too-short trim is refused before validation; a clip that grows into the next one on a
+    # crossfade-free join is the usual overlap
+    assert set(rules) <= {"transition_too_long", "overlap"}, rules
+    assert done > 300 and rules.get("transition_too_long", 0) >= 5
