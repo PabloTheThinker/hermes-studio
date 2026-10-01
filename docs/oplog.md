@@ -48,7 +48,7 @@ before the entry takes effect; a failed write changes nothing):
 | `hash` | `canonical_hash` of the new doc |
 | `ops` | the ops as applied: forged fields dropped, engine-assigned ids filled in |
 | `inverse` | ops that undo this entry, computed at apply time |
-| `changed_ids` | sorted ids added, removed or changed (media, tracks, items, markers), worked out by diffing the doc before and after, so side effects count: items a delete turns from `anchor` into `at`, and items a split re-anchors to a piece. An undo entry lists the same ids |
+| `changed_ids` | sorted ids added, removed or changed (media, tracks, items, markers), worked out by diffing the doc before and after. Items are compared by their stored JSON **and** their resolved start/end, so side effects count: items that move because their anchor target moved (a `move_clip`, a trim that moves the clip's start, a ripple shift), items a delete turns from `anchor` into `at`, and items a split re-anchors to a piece. An undo entry lists the same ids. Undo's dependents check uses this same set |
 | `undoes` | `null`, or the list of `op_id`s this entry undoes (one for an op, all of a group's newest first) |
 
 `undoes` is a list so a group undo is one entry that names every entry it reverses.

@@ -182,25 +182,33 @@ def _later(d: dict, tr: dict, after: int, skip: str) -> list[str]:
 
 
 def _id_map(d: dict) -> dict[tuple[str, str], str]:
-    """Everything with an id, as canonical JSON, for working out changed_ids."""
+    """Everything with an id, as canonical JSON, for working out changed_ids. An item's entry
+    holds its track, its stored JSON and its RESOLVED (start, end), so an anchored item whose
+    target moved, or whose end moved with it, counts as changed even though its JSON didn't."""
     out: dict[tuple[str, str], str] = {}
 
     def j(v: Any) -> str:
         return json.dumps(v, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
+    try:
+        spans = T.resolve(d)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError):
+        spans = {}  # only a valid doc resolves; both sides of a commit are valid
     for k, m in d.get("media", {}).items():
         out[("media", k)] = j(m)
     for tr in d["tracks"]:
         out[("track", tr["id"])] = j({k: v for k, v in tr.items() if k != "items"})
         for it in tr["items"]:
-            out[("item", it["id"])] = j([tr["id"], it])
+            out[("item", it["id"])] = j([tr["id"], it, spans.get(it["id"])])
     for mk in d["markers"]:
         out[("marker", mk["id"])] = j(mk)
     return out
 
 
 def changed_ids(before: dict, after: dict) -> list[str]:
-    """Ids added, removed or changed between two docs (media, tracks, items, markers), sorted."""
+    """Ids added, removed or changed between two docs (media, tracks, items, markers), sorted.
+    Items are compared by stored state AND resolved start/end, so items that move because their
+    anchor target moved are included. Undo's dependents check uses this same set."""
     a, b = _id_map(before), _id_map(after)
     return sorted({k[1] for k in a.keys() | b.keys() if a.get(k) != b.get(k)})
 

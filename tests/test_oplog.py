@@ -639,3 +639,63 @@ def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
         assert h(log) == hashes[0]
         assert T.canonical_hash(O.replay(base(), log.history_list())) == hashes[0]
     assert applied > 2000 and undone_groups > 50
+
+
+# --------------------------------------------------------------------------- changed_ids follow resolved positions
+
+
+def _spans_changed(before: dict, after: dict) -> set[str]:
+    a, b = T.resolve(before), T.resolve(after)
+    return {i for i in a.keys() & b.keys() if a[i] != b[i]}
+
+
+@pytest.mark.parametrize("op, want", [
+    ({"op": "move_clip", "id": "c2", "at": 5 * S}, ["c2", "x1"]),
+    ({"op": "trim_clip", "id": "c2", "src_in": 11 * S}, ["c2", "x1"]),  # trim-start keeps the rest in place
+    ({"op": "trim_clip", "id": "c1", "src_out": 3 * S, "ripple": True}, ["c1", "c2", "c3", "x1"]),  # ripple shift
+])
+def test_items_that_move_with_their_anchor_are_in_changed_ids(op, want):
+    log = new_log()
+    before = log.doc
+    r = apply(log, HUMAN, op)
+    assert r["changed_ids"] == want == log.history_list()[-1]["changed_ids"]
+    assert "x1" in _spans_changed(before, log.doc)
+    u = undo(log, HUMAN, op_id=r["op_id"])
+    assert u["changed_ids"] == want  # the undo moves them back
+    redo = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
+    assert redo["changed_ids"] == want
+
+
+def test_a_later_edit_to_an_item_that_moved_with_its_anchor_blocks_undoing_the_move():
+    log = new_log()
+    mv = apply(log, HUMAN, {"op": "move_clip", "id": "c2", "at": 5 * S})
+    fx = apply(log, HUMAN, {"op": "set_fade", "id": "x1", "fade_in": S // 4})
+    with pytest.raises(O.OplogError) as e:
+        undo(log, HUMAN, op_id=mv["op_id"])
+    assert e.value.extra["reason"] == "dependents" and e.value.extra["blocking_op_ids"] == [fx["op_id"]]
+
+
+def test_an_unmoved_anchored_item_is_not_in_changed_ids():
+    log = new_log()
+    r = apply(log, HUMAN, {"op": "trim_clip", "id": "c2", "src_out": 13 * S})  # c2's start stays; x1 stays
+    assert r["changed_ids"] == ["c2"]
+
+
+def test_changed_ids_cover_every_item_whose_resolved_span_changed_over_300_seeded_runs():
+    checked = 0
+    for seed in range(300):
+        rng = random.Random(10_000 + seed)
+        log = new_log()
+        for _ in range(rng.randrange(2, 6)):
+            before = log.doc
+            try:
+                r = apply(log, rng.choice([HUMAN, hermes()]), *[_random_op(rng, before) for _ in range(rng.randrange(1, 3))])
+            except O.OplogError:
+                continue
+            assert _spans_changed(before, log.doc) <= set(r["changed_ids"])
+            checked += 1
+        for e in reversed([e for e in log.history_list() if not e["undoes"]]):
+            before = log.doc
+            u = undo(log, HUMAN, op_id=e["op_id"])
+            assert _spans_changed(before, log.doc) <= set(u["changed_ids"])
+    assert checked > 500
