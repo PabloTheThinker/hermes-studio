@@ -421,3 +421,20 @@ def test_d13_tokens():
     assert t.resolve(ro).scopes == frozenset({"read"})
     with pytest.raises(ValueError):
         t.mint("root")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_project_files_are_owner_only(home):
+    P.create_project(base())
+    eng, p = opened()
+    for i in range(50):
+        write(p, HUMAN, marker(i), key=f"k{i}")
+    p.export_otio()
+    eng.close()
+    eng, p = opened()  # .attach and .lock again, and a rewrite of nothing
+    files = [f for f in p.dir.rglob("*") if f.is_file()]
+    names = {f.relative_to(p.dir).as_posix() for f in files}
+    assert {"base.json", "oplog.jsonl", "timeline.json", ".lock", ".attach", "snapshots/v000050.json", "exports/p1-v000050.otio"} <= names
+    for f in files:
+        assert stat.S_IMODE(f.stat().st_mode) == 0o600, (f, oct(f.stat().st_mode))
+    eng.close()

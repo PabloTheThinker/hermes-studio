@@ -533,3 +533,53 @@ def test_used_reports_conversions(app):
     assert ok and r["used"] == {"at_s": {"ticks": 1058400000, "seconds": 1.5}}
     assert O.Oplog  # the engine never sees _s
     assert "at_s" not in (app.proj.dir / "oplog.jsonl").read_text()
+
+
+# --------------------------------------------------------------------------- Glyph's fixes (Ada, 8:29 PM)
+
+
+def test_get_routes_url_decode_the_project_id_like_post(app):
+    ok, _ = app.rest_apply({"op": "add_marker", "at": 0, "label": "m"})
+    assert ok
+    for rest in ("hash", "status", "history", "history/diff?since_version=0"):
+        st, _, plain = app.req("GET", f"/api/projects/p1/{rest}", token=app.ui)
+        st2, _, enc = app.req("GET", f"/api/projects/%70%31/{rest}", token=app.ui)
+        assert st == st2 == 200 and plain == enc, rest
+    args = app.apply_args({"op": "add_marker", "at": S, "label": "n"})
+    st, _, r = app.req("POST", "/api/projects/%70%31/timeline_apply", args, app.ui)
+    assert st == 200 and r["new_version"] == 2
+    st, _, e = app.req("GET", "/api/projects/%7A%7A/hash", token=app.ui)
+    assert st != 200 and e["code"] == "not_found" and e["id"] == "zz"
+    # decoded exactly once, after the split, on both methods: %25 stays a literal '%', %2F stays in the id
+    for raw, want in (("%2570%2531", "%70%31"), ("p%2F1", "p/1")):
+        st, _, g = app.req("GET", f"/api/projects/{raw}/hash", token=app.ui)
+        st2, _, w = app.req("POST", f"/api/projects/{raw}/timeline_apply", app.apply_args({"op": "add_marker", "at": 0, "label": "m"}), app.ui)
+        assert st == st2 != 200 and g["code"] == w["code"] == "not_found" and g["id"] == w["id"] == want, (g, w)
+
+
+def test_get_mcp_stream_hears_projects_opened_mid_stream(app):
+    import http.client
+
+    from hermes_studio import project as P
+
+    c = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
+    c.request("GET", "/mcp", headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.agent}"})
+    r = c.getresponse()
+    assert r.status == 200 and r.getheader("Content-Type").startswith("text/event-stream")
+    doc2 = base()
+    doc2["id"] = "p2"
+    P.create_project(doc2)  # after the stream connected; the engine opens it lazily on first use
+    assert "p2" not in app.eng.projects
+    ok, res = app.mcp("timeline_apply", {"project_id": "p2", "base_version": 0, "summary": "s", "client_op_id": "k",
+                                         "ops": [{"op": "add_marker", "at": 0, "label": "m"}]})
+    assert ok, res
+    app.mcp_apply({"op": "add_marker", "at": 0, "label": "m"})
+    uris = []
+    while len(uris) < 2:
+        line = r.fp.readline().decode()
+        if line.startswith("data: "):
+            note = json.loads(line[6:])
+            assert note["method"] == "notifications/resources/updated"
+            uris.append(note["params"]["uri"])
+    assert uris == ["timeline://p2", "timeline://p1"]
+    c.close()

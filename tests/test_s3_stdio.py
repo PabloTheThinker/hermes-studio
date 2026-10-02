@@ -188,6 +188,16 @@ def test_102_a_malformed_or_duplicate_headers_close_and_nothing_embedded_runs(se
     assert rest == [] and rc != 0 and "broken" in err
 
 
+@pytest.mark.parametrize("gap", [b"\r\n", b"\n", b"\r\n\r\n", b" \r\n"])
+def test_102_a_blank_line_between_frames_is_a_malformed_header(sess, gap):
+    """Ada 8:29 PM: in Content-Length mode nothing between frames is skipped, blank lines included."""
+    s = sess()
+    s.send(s.frame(ping(1)) + gap + s.frame(ping(5)) + json.dumps(ping(6)).encode() + b"\n")
+    assert [s.get(), s.get()] == [pong(1), PARSE]
+    rest, rc, err = s.finish()
+    assert rest == [] and rc != 0 and "broken Content-Length framing" in err
+
+
 def test_102_b_over_drain_bound_closes(sess):
     s = sess()
     s.send(f"Content-Length: {DRAIN_MAX + 1}\r\n\r\n".encode() + s.frame({"jsonrpc": "2.0", "id": 9, "method": "ping"}) + b"z" * 5000)

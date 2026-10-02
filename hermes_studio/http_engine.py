@@ -7,20 +7,19 @@ Every refusal of a request body closes the connection (D27(d)).
 
 from __future__ import annotations
 
-import contextlib
 import json
 import queue
 import re
 import threading
 from typing import Any
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs
 
 from hermes_studio import __version__
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import project as P
 from hermes_studio.api import HermesStudioError
 from hermes_studio.jsonrpc import PARSE_ERROR, dumps, parse_message
-from hermes_studio.studio import MAX_BODY, BodyRefused, body_length
+from hermes_studio.studio import MAX_BODY, BodyRefused, body_length, no_body
 
 ENGINE: P.Engine | None = None
 UI_TOKEN: str | None = None  # minted at start; how the Edit page receives it is not in S3
@@ -120,29 +119,35 @@ def _history_args(query: str) -> dict:
 # --------------------------------------------------------------------------- GET
 
 
-def get(h: Any, path: str, query: str) -> None:
+def get(h: Any, segs: list[str], query: str) -> None:
+    """GET /mcp or /api/projects/<id>/...; ``segs`` is the path split on '/', each segment
+    decoded once. D27(d): any body framing is refused before routing, nothing read."""
+    is_mcp = segs == ["", "mcp"]
+    try:
+        no_body(h)
+    except BodyRefused as exc:
+        return _mcp_refuse(h) if is_mcp else h._refuse(400, str(exc))
     tok = _token(h)
     if tok is None:
         return _unauthorized(h)
-    if path == "/mcp":
+    if is_mcp:
         return _mcp_stream(h, tok)
-    parts = path[len("/api/projects/"):].split("/")
-    pid, rest = parts[0], "/".join(parts[1:])
+    pid, rest = segs[3], segs[4:]  # a decoded '/' stays inside its segment, so it never matches a route
     if "read" not in tok.scopes or tok.session is None:
         return _error(h, _denied("read"))
     try:
         proj = ENGINE.get(pid)
-        if rest == "events":
+        if rest == ["events"]:
             return _events(h, proj)
-        if rest == "status":
+        if rest == ["status"]:
             return _json(h, 200, proj.status())
         with proj.mutex:
             log = proj.oplog()
-            if rest == "hash":
+            if rest == ["hash"]:
                 body = log.head()
-            elif rest == "history":
+            elif rest == ["history"]:
                 body = log.history_list(**_history_args(query))
-            elif rest == "history/diff":
+            elif rest == ["history", "diff"]:
                 body = log.history_diff(**_history_args(query))
             else:
                 return _json(h, 404, {"ok": False, "error": "unknown project route"})
@@ -209,10 +214,7 @@ def _mcp_stream(h: Any, tok: P.Token) -> None:
         except queue.Full:
             dropped.set()
 
-    projects = list(ENGINE.projects.values())
-    for p in projects:
-        with p.mutex:
-            p.listeners.append(listen)
+    ENGINE.listen(listen)  # every project, including ones opened after the stream connected
     try:
         _sse_head(h)
         h.wfile.flush()
@@ -229,22 +231,19 @@ def _mcp_stream(h: Any, tok: P.Token) -> None:
     except OSError:
         pass
     finally:
-        for p in projects:
-            with p.mutex:
-                with contextlib.suppress(ValueError):
-                    p.listeners.remove(listen)
+        ENGINE.unlisten(listen)
 
 
 # --------------------------------------------------------------------------- REST writes
 
 
-def rest_post(h: Any, path: str) -> None:
+def rest_post(h: Any, segs: list[str]) -> None:
     """POST /api/projects/<id>/<timeline_apply|history_undo|history_redo>: the JSON body goes to
     the engine as received; the actor is the token's (never the body's)."""
     tok = _token(h)
     if tok is None:
         return _unauthorized(h)
-    parts = path[len("/api/projects/"):].split("/")
+    parts = segs[3:]  # [id, route], each already decoded
     if len(parts) != 2 or parts[1] not in WRITE_ROUTES:
         return _refuse_unread(h, 404, "unknown project route")
     n = body_length(h)  # raises BodyRefused (handled by do_POST)
@@ -257,7 +256,7 @@ def rest_post(h: Any, path: str) -> None:
     if tok.session is None or "write" not in tok.scopes:
         return _error(h, _denied("write"))
     try:
-        proj = ENGINE.get(unquote(parts[0]))
+        proj = ENGINE.get(parts[0])
         return _json(h, 200, proj.write(tok.session, parts[1], body))
     except HermesStudioError as e:
         return _error(h, e)
