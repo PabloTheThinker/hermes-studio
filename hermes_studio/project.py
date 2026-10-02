@@ -179,6 +179,9 @@ def read_base(d: Path) -> dict:
     err = doc_error(doc)
     if err is not None:
         raise err
+    if "hash" not in doc:  # O2 (Ada 9:02 PM): a stored base must carry its hash, as a stale one fails
+        te = T.TimelineError([{"rule": "hash_mismatch", "path": "/hash", "message": "base.json has no stored hash"}])
+        raise ToolError("invalid_doc", te.message, hint=te.hint, rule=te.rule, path=te.path, problems=te.problems)
     return doc
 
 
@@ -231,25 +234,21 @@ def parse_log(raw: bytes, base_version: int) -> ParsedLog:
 
 
 def _replay_from(doc: dict, lines: list[dict]) -> dict:
-    """The doc after ``lines`` (internal ops), checking every stored hash and version."""
+    """The doc after ``lines`` (internal ops). Each line is checked exactly as ``Oplog.load``
+    checks it: the replayed ``hash``, ``new_version`` and ``inverse`` must equal the stored ones
+    (F1), so a bad line is named by its own ``seq``."""
     log = O.Oplog(doc)
     for e in lines:
         try:
-            new, _, _ = log._run(e["ops"], internal=True)
-        except HermesStudioError:
+            new, _, inverse = log._run(e["ops"], internal=True)
+        except (ValueError, HermesStudioError):
             raise log_error(e["seq"], "replay does not reproduce the entry") from None
-        if new["hash"] != e["hash"] or new["version"] != e["new_version"]:
+        if new["hash"] != e["hash"] or new["version"] != e["new_version"] or inverse != e["inverse"]:
             raise log_error(e["seq"], "replay does not reproduce the entry")
         log._entries.append(e)
         log._retire(new)
         log._doc = new
     return log.doc
-
-
-def _head_of(base: dict, lines: list[dict]) -> tuple[int, str | None]:
-    if lines:
-        return lines[-1]["new_version"], lines[-1]["hash"]
-    return base["version"], None
 
 
 def _read_json(path: Path) -> Any:
@@ -260,51 +259,31 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _snapshots(d: Path) -> list[tuple[int, Path]]:
-    out = []
-    try:
-        names = os.listdir(d / "snapshots")
-    except OSError:
-        return out
-    for name in names:
-        m = re.fullmatch(r"v([0-9]{6})\.json", name)
-        if m:
-            out.append((int(m.group(1)), d / "snapshots" / name))
-    return sorted(out, reverse=True)
-
-
 def doc_at_head(d: Path, base: dict, lines: list[dict]) -> dict:
-    """The doc at the log head, read-only (D28(a) steps 3-4): ``timeline.json`` when it
-    validates and its hash and version equal the head; otherwise a replay from the newest
-    snapshot that validates and lies on the log, or from ``base.json``."""
-    version, head_hash = _head_of(base, lines)
+    """The doc at the log head, read-only (D28(a)): a full replay from ``base.json`` that checks
+    every line as ``Oplog.load`` does (F1, Ada 9:02 PM). ``timeline.json`` and snapshots are
+    caches for the open engine; a closed read never trusts them, so a tampered middle line gives
+    the same ``failed`` body open or closed."""
+    del d
     base_doc, _ = T.stamp_hash(base)
-    if head_hash is None:
-        head_hash = base_doc["hash"]
-    cached = _read_json(d / "timeline.json")
-    if isinstance(cached, dict) and not T.validate(cached) and cached.get("hash") == head_hash and cached.get("version") == version:
-        return cached
-    by_version = {e["new_version"]: e for e in lines}
-    for v, path in _snapshots(d):
-        e = by_version.get(v)
-        snap = _read_json(path)
-        if e is None or not isinstance(snap, dict) or T.validate(snap) or snap.get("hash") != e["hash"] or snap.get("version") != v:
-            if e is not None:
-                _log(f"{d.name}: snapshot {path.name} skipped")
-            continue
-        return _replay_from(snap, lines[e["seq"]:])
     return _replay_from(base_doc, lines)
 
 
 # --------------------------------------------------------------------------- OS file lock
 
 
+# Windows byte-range locks are mandatory: a locked byte can't be read by anyone else. The lock
+# byte sits far past the JSON body, so other processes can still read .lock (the D6 message
+# and the stdio proxy's attach both read it while the engine holds the lock).
+LOCK_BYTE = 1 << 30
+
+
 def _try_lock(fd: int, *, exclusive: bool) -> bool:
-    if os.name == "nt":  # pragma: no cover - Windows
+    if os.name == "nt":  # Windows: one byte at LOCK_BYTE (msvcrt has no shared lock)
         import msvcrt
 
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
+            os.lseek(fd, LOCK_BYTE, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_NBLCK if exclusive else msvcrt.LK_NBRLCK, 1)
             return True
         except OSError:
@@ -319,11 +298,11 @@ def _try_lock(fd: int, *, exclusive: bool) -> bool:
 
 
 def _unlock(fd: int) -> None:
-    if os.name == "nt":  # pragma: no cover - Windows
+    if os.name == "nt":
         import msvcrt
 
         with contextlib.suppress(OSError):
-            os.lseek(fd, 0, os.SEEK_SET)
+            os.lseek(fd, LOCK_BYTE, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         return
     import fcntl
@@ -437,7 +416,6 @@ class Project:
         self.log: O.Oplog | None = None
         self.broken: HermesStudioError | None = None  # a damaged store: every tool gets this body
         self.subscribers: list[Subscriber] = []
-        self.listeners: list[Any] = []  # callables(event) for /mcp resources/updated (D12)
 
     # ---- open (D2)
 
@@ -460,13 +438,17 @@ class Project:
                     os.fsync(f.fileno())
                 _log(f"{self.id}: added the missing final newline to oplog.jsonl")
             if not path.exists():
-                path.touch()
+                path.touch(mode=0o600)
             try:
                 self.log = O.Oplog.load(base, path)
-            except (ValueError, HermesStudioError):
-                # name the line: replay it on its own (only on this failure path)
+            except (ValueError, HermesStudioError) as e:
+                # name the line: _replay_from checks each line as load does (F1), so it raises at
+                # the bad line's seq. If it somehow doesn't, use the seq load named, never the last line's.
                 _replay_from(T.stamp_hash(base)[0], parsed.lines)
-                raise log_error(len(parsed.lines), "replay does not reproduce the entry") from None
+                m = re.match(r"oplog line ([0-9]+): (.*)", str(getattr(e, "message", e)))
+                if m is None:
+                    raise ToolError("failed", "oplog.jsonl can't be replayed", hint=LOG_HINT) from None
+                raise log_error(int(m.group(1)), m.group(2)) from None
             self._write_cache(self.log.doc)
         except HermesStudioError as e:
             self.broken = e
@@ -521,7 +503,7 @@ class Project:
             if s.put(event):
                 keep.append(s)
         self.subscribers = keep
-        for fn in list(self.listeners):
+        for fn in self.engine.listeners_now():
             with contextlib.suppress(Exception):
                 fn(event)
 
@@ -558,6 +540,8 @@ class Project:
         out.mkdir(exist_ok=True)
         path = out / f"{self.id}-v{doc['version']:06d}.otio"
         T.write_otio(doc, str(path))
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)  # project files are owner-only (Ada, 8:29 PM)
         return {"path": str(path), "timeline_hash": doc["hash"]}
 
     def close(self) -> None:
@@ -578,6 +562,8 @@ class Engine:
     projects: dict[str, Project] = field(default_factory=dict)
     attach_token: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    # callables(event) that hear every project, including ones opened later (GET /mcp, D12)
+    listeners: list[Any] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.attach_token:
@@ -585,6 +571,18 @@ class Engine:
 
     def info(self) -> dict:
         return {"pid": os.getpid(), "port": self.port, "started_at": self.started_at}
+
+    def listen(self, fn: Any) -> None:
+        with self._lock:
+            self.listeners.append(fn)
+
+    def unlisten(self, fn: Any) -> None:
+        with self._lock:
+            self.listeners = [f for f in self.listeners if f is not fn]
+
+    def listeners_now(self) -> list[Any]:
+        with self._lock:
+            return list(self.listeners)
 
     def open_all(self) -> None:
         """Open every project folder at startup (a project another engine holds is an error)."""
@@ -700,6 +698,5 @@ def create_project(base: dict) -> Path:
     for sub in ("snapshots", "exports", "cache"):
         (d / sub).mkdir()
     _write_atomic(d / "base.json", _canon_file(T.stamp_hash(base)[0]))
-    (d / "oplog.jsonl").touch()
+    (d / "oplog.jsonl").touch(mode=0o600)
     return d
-

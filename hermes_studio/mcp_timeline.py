@@ -27,7 +27,16 @@ from hermes_studio import project as P
 from hermes_studio import timeline as T
 from hermes_studio.api import HermesStudioError
 
-READ_TOOLS = ("get_timeline", "get_hash", "list_markers", "export_otio", "validate_timeline", "history_list", "history_diff", "project_status")
+READ_TOOLS = (
+    "get_timeline",
+    "get_hash",
+    "list_markers",
+    "export_otio",
+    "validate_timeline",
+    "history_list",
+    "history_diff",
+    "project_status",
+)
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
 NAMES = READ_TOOLS + WRITE_TOOLS
 
@@ -51,8 +60,20 @@ def _tool(name: str, title: str, desc: str, props: dict, ann: dict) -> dict:
 
 
 TOOLS: list[dict] = [
-    _tool("get_timeline", "Get the timeline", "The project's timeline document, raw, in integer ticks (tick_rate 705600000/s), with version and hash.", {}, _RO),
-    _tool("get_hash", "Get the timeline hash", "{project_id, schema_version, version, hash, seq} of the timeline, read in one go.", {}, _RO),
+    _tool(
+        "get_timeline",
+        "Get the timeline",
+        "The project's timeline document, raw, in integer ticks (tick_rate 705600000/s), with version and hash.",
+        {},
+        _RO,
+    ),
+    _tool(
+        "get_hash",
+        "Get the timeline hash",
+        "{project_id, schema_version, version, hash, seq} of the timeline, read in one go.",
+        {},
+        _RO,
+    ),
     _tool("list_markers", "List markers", "The timeline's markers sorted by time, each time as {ticks, seconds}.", {}, _RO),
     _tool(
         "export_otio",
@@ -427,7 +448,10 @@ def as_result(res: dict | None, err: HermesStudioError | None) -> dict:
     if err is not None:
         body = err.as_dict()
         head = f"Error: {body.get('error')}" + (f"\nHint: {body['hint']}" if body.get("hint") else "")
-        return {"content": [{"type": "text", "text": head}, {"type": "text", "text": json.dumps(body, ensure_ascii=True)}], "isError": True}
+        return {
+            "content": [{"type": "text", "text": head}, {"type": "text", "text": json.dumps(body, ensure_ascii=True)}],
+            "isError": True,
+        }
     text = json.dumps(res, ensure_ascii=True)
     return {"content": [{"type": "text", "text": text}], "isError": False, "structuredContent": json.loads(text)}
 

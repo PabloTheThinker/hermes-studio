@@ -25,8 +25,14 @@ PARSE = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Par
 class Stdio:
     def __init__(self, home) -> None:
         env = {**os.environ, "HOME": str(home), "PYTHONPATH": ROOT}
-        self.p = subprocess.Popen([sys.executable, "-c", "from hermes_studio import mcp; raise SystemExit(mcp.serve())"],
-                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, cwd=ROOT)
+        self.p = subprocess.Popen(
+            [sys.executable, "-c", "from hermes_studio import mcp; raise SystemExit(mcp.serve())"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=ROOT,
+        )
         self.q: queue.Queue = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
 
@@ -150,11 +156,15 @@ def test_101_3_4_over_cap_answered_first_then_drained(sess, n):
     assert rest == [] and rc == 0
 
 
-@pytest.mark.parametrize("value", [str(DRAIN_MAX + 1), "100000000", "000000007", "-1", "+5", "1_000", "abc", "  ", "\u0663",
-                                   "5\x0b", "0x10"])
+@pytest.mark.parametrize(
+    "value",
+    [str(DRAIN_MAX + 1), "100000000", "000000007", "-1", "+5", "1_000", "abc", "  ", "\u0663", "5\x0b", "5\r", "0x10", ""],
+)
 def test_101_5_6_7_broken_stream_closes(sess, value):
     s = sess()
-    s.send(b"Content-Length: " + value.encode() + b"\r\n\r\n" + b'{"a":1}' + s.frame(ping(5)) + json.dumps(ping(6)).encode() + b"\n")
+    s.send(
+        b"Content-Length: " + value.encode() + b"\r\n\r\n" + b'{"a":1}' + s.frame(ping(5)) + json.dumps(ping(6)).encode() + b"\n"
+    )
     assert s.get() == PARSE
     rest, rc, err = s.finish()
     assert rest == [] and rc != 0 and "broken Content-Length framing" in err
@@ -170,16 +180,36 @@ def test_101_eight_digits_read_by_value(sess):
     assert s.finish()[1] == 0
 
 
-EMBED = b"Content-Length: 40\r\n\r\n" + json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
-                                                      "params": {"name": "doctor", "arguments": {}}}).encode() + b"\n" + \
-    json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "doctor", "arguments": {}}}).encode() + b"\n"
+EMBED = (
+    b"Content-Length: 40\r\n\r\n"
+    + json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "doctor", "arguments": {}}}).encode()
+    + b"\n"
+    + json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "doctor", "arguments": {}}}).encode()
+    + b"\n"
+)
 
 
-@pytest.mark.parametrize("headers", [
-    b"Content-Length: -1\r\n", b"Content-Length: +5\r\n", b"Content-Length: 1_000\r\n", b"Content-Length: abc\r\n",
-    b"Content-Length: 5\r\nContent-Length: 5\r\n", b"Content-Length: 5\r\nContent-Length: 7\r\n",
-    b"Content-Length: 5\r\ncontent-length: 5\r\n",
-])
+@pytest.mark.parametrize(
+    "headers",
+    [
+        b"Content-Length: -1\r\n",
+        b"Content-Length: +5\r\n",
+        b"Content-Length: 1_000\r\n",
+        b"Content-Length: abc\r\n",
+        b"Content-Length: 5\r\nContent-Length: 5\r\n",
+        b"Content-Length: 5\r\nContent-Length: 7\r\n",
+        b"Content-Length: 5\r\ncontent-length: 5\r\n",
+        # the addendum's second list: empty, whitespace-only, a non-ASCII digit, stray \r / \v, over 8 digits
+        b"Content-Length:\r\n",
+        b"Content-Length: \t \r\n",
+        "Content-Length: \u0663\r\n".encode(),
+        b"Content-Length: 5\r\r\n",
+        b"Content-Length: 5\x0b\r\n",
+        b"Content-Length: 000000005\r\n",
+        b"Content-Length: 16777217\r\n",
+        b"Content-Length: 5\r\nX-Other: 1\r\nContent-Length: 5\r\n",
+    ],
+)
 def test_102_a_malformed_or_duplicate_headers_close_and_nothing_embedded_runs(sess, headers):
     s = sess()
     s.send(headers + b"\r\n" + EMBED)
@@ -188,12 +218,43 @@ def test_102_a_malformed_or_duplicate_headers_close_and_nothing_embedded_runs(se
     assert rest == [] and rc != 0 and "broken" in err
 
 
+@pytest.mark.parametrize("gap", [b"\r\n", b"\n", b"\r\n\r\n", b" \r\n"])
+def test_102_a_blank_line_between_frames_is_a_malformed_header(sess, gap):
+    """Ada 8:29 PM: in Content-Length mode nothing between frames is skipped, blank lines included."""
+    s = sess()
+    s.send(s.frame(ping(1)) + gap + s.frame(ping(5)) + json.dumps(ping(6)).encode() + b"\n")
+    assert [s.get(), s.get()] == [pong(1), PARSE]
+    rest, rc, err = s.finish()
+    assert rest == [] and rc != 0 and "broken Content-Length framing" in err
+
+
 def test_102_b_over_drain_bound_closes(sess):
     s = sess()
-    s.send(f"Content-Length: {DRAIN_MAX + 1}\r\n\r\n".encode() + s.frame({"jsonrpc": "2.0", "id": 9, "method": "ping"}) + b"z" * 5000)
+    s.send(
+        f"Content-Length: {DRAIN_MAX + 1}\r\n\r\n".encode() + s.frame({"jsonrpc": "2.0", "id": 9, "method": "ping"}) + b"z" * 5000
+    )
     assert s.get() == PARSE
     rest, rc, _ = s.finish()
     assert rest == [] and rc != 0
+
+
+def test_102_b2_newline_line_over_cap_closes_unparsed(sess):
+    """O1: a newline-framed read takes at most MAX_BODY + 1 bytes; a longer line is never parsed."""
+    s = sess()
+    msg = json.dumps(ping(3)).encode()
+    s.send(msg + b" " * (MAX_BODY + 1 - len(msg)) + b"\n" + json.dumps(ping(4)).encode() + b"\n")
+    assert s.get() == PARSE  # not pong(3): the over-long line was never parsed
+    rest, rc, err = s.finish()
+    assert rest == [] and rc != 0 and f"line over {MAX_BODY} bytes" in err
+
+
+def test_102_b2_newline_line_at_cap_is_read(sess):
+    s = sess()
+    msg = json.dumps(ping(3)).encode()
+    s.send(msg + b" " * (MAX_BODY - len(msg)) + b"\n" + json.dumps(ping(4)).encode() + b"\n")
+    assert [s.get(), s.get()] == [pong(3), pong(4)]
+    rest, rc, _ = s.finish()
+    assert rest == [] and rc == 0
 
 
 def test_102_b_drained_body_is_not_scanned(sess):
@@ -255,7 +316,10 @@ def test_d17_output_is_ascii(sess):
 
 
 def call(s: Stdio, i: int, name: str, args: dict) -> tuple[bool, dict]:
-    s.send(json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": args}}).encode() + b"\n")
+    s.send(
+        json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {"name": name, "arguments": args}}).encode()
+        + b"\n"
+    )
     r = s.get()
     assert r["id"] == i, r
     r = r["result"]
@@ -272,8 +336,18 @@ def test_d28_closed_app_reads_and_refuses_writes(tmp_path, monkeypatch, sess):
     assert ok and h["version"] == 0
     ok, st = call(s, 2, "project_status", {"project_id": "p1"})
     assert ok and st["engine"] is None
-    ok, e = call(s, 3, "timeline_apply", {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "k",
-                                          "ops": [{"op": "add_marker", "at": 0, "label": "m"}]})
+    ok, e = call(
+        s,
+        3,
+        "timeline_apply",
+        {
+            "project_id": "p1",
+            "base_version": 0,
+            "summary": "s",
+            "client_op_id": "k",
+            "ops": [{"op": "add_marker", "at": 0, "label": "m"}],
+        },
+    )
     assert not ok and e["code"] == "engine_offline"
     ok, e = call(s, 4, "get_hash", {"project_id": "nope"})
     assert not ok and e["code"] == "not_found"
@@ -319,6 +393,7 @@ def test_94_c5_over_attached_stdio_matches_http(tmp_path, monkeypatch, sess):
     monkeypatch.setenv("HOME", str(tmp_path / "http"))
     ref = App(base())
     try:
+
         def rest(tool, args):
             ok, r = ref.rest(tool, args, ref.acp)
             assert ok, r

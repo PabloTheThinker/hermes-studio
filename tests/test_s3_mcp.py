@@ -39,19 +39,22 @@ def same_both(app: App, mcp_ops: list, http_ops: list, **extra) -> dict:
 # --------------------------------------------------------------------------- 88
 
 
-@pytest.mark.parametrize("op, want", [
-    ({"id": 5, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
-    ({"id": True, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
-    ({"id": None, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
-    ({"id": ["x1"], "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
-    ({"id": 5, "bogus": 1}, ("invalid_op", "unknown_arg", "/ops/0/bogus", 0, False, None)),
-    ({"id": 5}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
-    ({"id": "zz", "text": 5}, ("not_found", "not_found", "/ops/0/id", 0, True, "zz")),
-    ({"id": "x1", "text": 5}, ("invalid_op", "wrong_type", "/ops/0/text", 0, True, "x1")),
-    ({"id": "x1", "style": 5}, ("invalid_op", "wrong_type", "/ops/0/style", 0, True, "x1")),
-    ({"id": "x1", "text": None}, ("invalid_op", "wrong_type", "/ops/0/text", 0, True, "x1")),
-    ({"id": "x1", "style": {}}, ("invalid_op", "wrong_type", "/ops/0/style", 0, True, "x1")),
-])
+@pytest.mark.parametrize(
+    "op, want",
+    [
+        ({"id": 5, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
+        ({"id": True, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
+        ({"id": None, "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
+        ({"id": ["x1"], "text": "a"}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
+        ({"id": 5, "bogus": 1}, ("invalid_op", "unknown_arg", "/ops/0/bogus", 0, False, None)),
+        ({"id": 5}, ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None)),
+        ({"id": "zz", "text": 5}, ("not_found", "not_found", "/ops/0/id", 0, True, "zz")),
+        ({"id": "x1", "text": 5}, ("invalid_op", "wrong_type", "/ops/0/text", 0, True, "x1")),
+        ({"id": "x1", "style": 5}, ("invalid_op", "wrong_type", "/ops/0/style", 0, True, "x1")),
+        ({"id": "x1", "text": None}, ("invalid_op", "wrong_type", "/ops/0/text", 0, True, "x1")),
+        ({"id": "x1", "style": {}}, ("invalid_op", "wrong_type", "/ops/0/style", 0, True, "x1")),
+    ],
+)
 def test_88_edit_text_precheck_equals_engine(app, op, want):
     op = {"op": "edit_text", **op}
     e = same_both(app, [op], [op])
@@ -65,10 +68,31 @@ def test_88_edit_text_precheck_equals_engine(app, op, want):
 def test_89_schemas_enforce_nothing_the_engine_does_not():
     for t in MT.TOOLS:
         s = json.dumps(t["inputSchema"])
-        for banned in ("additionalProperties\": false", "minItems", "maxItems", "minLength", "maxLength", "\"required\""):
+        for banned in ('additionalProperties": false', "minItems", "maxItems", "minLength", "maxLength", '"required"'):
             assert banned not in s, (t["name"], banned)
     assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 11
 
+
+# Addendum (test 89): every public op, with args the engine would accept, so a non-string `id`
+# is the one fault and every case reaches bad_arg at /ops/0/id. The create ops (id optional) too.
+VALID_OPS = [
+    {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S},
+    {"op": "move_clip", "at": 30 * S},
+    {"op": "trim_clip", "src_in": S // 2},
+    {"op": "split_clip", "at": S},
+    {"op": "delete_clip", "ripple": False},
+    {"op": "set_props", "props": {}},
+    {"op": "set_fade", "fade_in": 0},
+    {"op": "set_anchor", "anchor": {"to": "c1", "offset": 0}},
+    {"op": "edit_text", "text": "a"},
+    {"op": "add_text", "dur": S, "text": "a", "style": "pop", "at": 0},
+    {"op": "add_transition", "between": ["c1", "c2"], "dur": S // 2},
+    {"op": "add_track", "role": "music"},
+    {"op": "remove_track"},
+    {"op": "add_marker", "at": 0, "label": "m"},
+    {"op": "remove_marker"},
+]
+assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
 
 WRITE_CASES = [
     ("timeline_apply", {"ops": [], "summary": "s", "base_version": 0}),
@@ -76,8 +100,14 @@ WRITE_CASES = [
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "s", "base_version": "0"}),
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "", "base_version": 0}),
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "x" * 201, "base_version": 0}),
-    ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": unicodedata.normalize("NFD", "Olé"), "base_version": 0}),
-    ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "s", "base_version": 0, "group_id": None}),
+    (
+        "timeline_apply",
+        {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": unicodedata.normalize("NFD", "Olé"), "base_version": 0},
+    ),
+    (
+        "timeline_apply",
+        {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "s", "base_version": 0, "group_id": None},
+    ),
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m"}], "summary": "s", "base_version": 0, "zz": 1}),
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0, "label": "m", "zz": 1}], "summary": "s", "base_version": 0}),
     ("timeline_apply", {"ops": [{"op": "add_marker", "at": 0}], "summary": "s", "base_version": 0}),
@@ -88,15 +118,7 @@ WRITE_CASES = [
     ("history_undo", {"zz": 1}),
     ("history_redo", {"op_id": 5}),
     ("history_redo", {}),
-] + [
-    ("timeline_apply", {"ops": [{**op, "id": 5}], "summary": "s", "base_version": 0})
-    for op in (
-        {"op": "move_clip", "at": 0}, {"op": "trim_clip", "in": 0, "out": S}, {"op": "split", "at": S},
-        {"op": "delete", "ripple": False}, {"op": "set_props", "props": {}}, {"op": "set_fade", "fade_in": 0},
-        {"op": "set_anchor", "anchor": None, "at": 0}, {"op": "edit_text", "text": "a"}, {"op": "move_marker", "at": 0},
-        {"op": "edit_marker", "label": "m"}, {"op": "delete_marker"},
-    )
-]
+] + [("timeline_apply", {"ops": [{**op, "id": 5}], "summary": "s", "base_version": 0}) for op in VALID_OPS]
 
 
 @pytest.mark.parametrize("tool, args", WRITE_CASES)
@@ -109,12 +131,57 @@ def test_89_every_write_error_equals_the_engine(app, tool, args):
     assert m["code"] in O_CODES
 
 
-O_CODES = {"invalid_op", "not_found", "conflict", "schema_mismatch", "invalid_doc", "failed", "nothing_to_undo", "nothing_to_redo"}
+@pytest.mark.parametrize("op", VALID_OPS, ids=[op["op"] for op in VALID_OPS])
+def test_89_a_non_string_op_id_is_bad_arg_on_every_op(app, op):
+    h0 = app.head()
+    args = {"client_op_id": "k89", "ops": [{**op, "id": 5}], "summary": "s", "base_version": 0}
+    m = refused(app, app.mcp("timeline_apply", {"project_id": "p1", **args}), h0)
+    h = refused(app, app.rest("timeline_apply", args), h0)
+    assert key(m) == key(h) == ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None), (m, h)
+    good = {**op, "id": ID_FOR[op["op"]]} if op["op"] in ID_FOR else op  # create ops: the engine picks the id
+    ops = (
+        [{"op": "move_clip", "id": "c2", "at": 3 * S + S // 2}, good] if op["op"] == "add_transition" else [good]
+    )  # make the overlap
+    ok, r = app.mcp("timeline_apply", {"project_id": "p1", **args, "client_op_id": "k89ok", "ops": ops})
+    assert ok, r  # with a real id the same op goes through: the id was the only fault
+
+
+ID_FOR = {
+    "move_clip": "c3",
+    "trim_clip": "c1",
+    "split_clip": "c1",
+    "delete_clip": "c3",
+    "set_props": "c1",
+    "set_fade": "c1",
+    "set_anchor": "x1",
+    "edit_text": "x1",
+    "remove_track": "A2",
+    "remove_marker": "k1",
+}
+O_CODES = {
+    "invalid_op",
+    "not_found",
+    "conflict",
+    "schema_mismatch",
+    "invalid_doc",
+    "failed",
+    "nothing_to_undo",
+    "nothing_to_redo",
+}
 
 
 @pytest.mark.parametrize("tool", ["history_list", "history_diff"])
-@pytest.mark.parametrize("args", [{"since_version": 0}, {"since_version": -1}, {"limit": 0}, {"since_version": 0, "limit": 9999},
-                                  {"since_version": 0, "limit": 2}, {}])
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"since_version": 0},
+        {"since_version": -1},
+        {"limit": 0},
+        {"since_version": 0, "limit": 9999},
+        {"since_version": 0, "limit": 2},
+        {},
+    ],
+)
 def test_89_history_reads_equal_http(app, tool, args):
     app.mcp_apply({"op": "add_marker", "at": 0, "label": "m"})
     ok, m = app.mcp(tool, {"project_id": "p1", **args})
@@ -174,7 +241,10 @@ def test_89_reads_match_the_engine(app):
 
 def test_89_forged_actor_and_step_get_engine_warnings(app):
     ok, r = app.mcp_apply({"op": "add_marker", "at": 3 * S, "label": "a", "step": 9}, actor={"kind": "human", "id": "x"})
-    assert ok and [(w["code"], w["path"]) for w in r["warnings"]] == [("ignored_field", "/actor"), ("ignored_field", "/ops/0/step")]
+    assert ok and [(w["code"], w["path"]) for w in r["warnings"]] == [
+        ("ignored_field", "/actor"),
+        ("ignored_field", "/ops/0/step"),
+    ]
     line = (app.proj.dir / "oplog.jsonl").read_text()
     assert '"x"' not in line and '"step": 9' not in line and json.loads(line)["actor"] == {"kind": "agent", "id": "claude"}
 
@@ -185,7 +255,10 @@ def test_89_forged_actor_and_step_get_engine_warnings(app):
 @pytest.mark.parametrize("v", [True, False, float("nan"), float("inf"), float("-inf"), "1.5"])
 def test_90_bad_seconds_are_bad_arg_with_no_engine_call(app, v):
     h0 = app.head()
-    for op, arg in (({"op": "add_marker", "label": "m", "at_s": v}, "at_s"), ({"op": "set_fade", "id": "c1", "fade_in_s": v}, "fade_in_s")):
+    for op, arg in (
+        ({"op": "add_marker", "label": "m", "at_s": v}, "at_s"),
+        ({"op": "set_fade", "id": "c1", "fade_in_s": v}, "fade_in_s"),
+    ):
         e = refused(app, app.mcp_apply(op), h0)
         assert (e["code"], e["rule"], e["path"], e["op_index"]) == ("invalid_op", "bad_arg", f"/ops/0/{arg}", 0)
     assert app.proj.log._results == {}  # no engine call: nothing cached, nothing reserved
@@ -218,8 +291,13 @@ def test_90_big_negative_and_minus_zero(app):
 
 
 def test_91_float_seconds_retry_never_mismatches(app):
-    args = {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "f",
-            "ops": [{"op": "add_marker", "at_s": 0.3333333333333333, "label": "m"}]}
+    args = {
+        "project_id": "p1",
+        "base_version": 0,
+        "summary": "s",
+        "client_op_id": "f",
+        "ops": [{"op": "add_marker", "at_s": 0.3333333333333333, "label": "m"}],
+    }
     ok, a = app.mcp("timeline_apply", args)
     assert ok and app.proj.log.doc["markers"][-1]["at"] == 235200000
     assert type(json.loads((app.proj.dir / "oplog.jsonl").read_text())["ops"][0]["at"]) is int
@@ -228,8 +306,13 @@ def test_91_float_seconds_retry_never_mismatches(app):
     app.mcp_apply({"op": "add_marker", "at": 5 * S, "label": "z"})
     ok, c = app.mcp("timeline_apply", args)  # stale base_version, same key: still the cache
     assert ok and c["op_id"] == a["op_id"] and len(app.proj.log._entries) == 2
-    mv = {"project_id": "p1", "base_version": 2, "summary": "s", "client_op_id": "mv",
-          "ops": [{"op": "move_clip", "id": "c3", "at_s": 10.000000000000002}]}
+    mv = {
+        "project_id": "p1",
+        "base_version": 2,
+        "summary": "s",
+        "client_op_id": "mv",
+        "ops": [{"op": "move_clip", "id": "c3", "at_s": 10.000000000000002}],
+    }
     ok, m1 = app.mcp("timeline_apply", mv)
     ok2, m2 = app.mcp("timeline_apply", mv)
     assert ok and ok2 and m1["op_id"] == m2["op_id"] and len(app.proj.log._entries) == 3
@@ -239,18 +322,67 @@ def test_92_nfd_retries_never_mismatch(app):
     nfd = unicodedata.normalize("NFD", "Olé")
     h0 = app.head()
     for _ in range(2):
-        e = refused(app, app.mcp("timeline_apply", {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "n",
-                                                    "ops": [{"op": "edit_text", "id": "x1", "text": nfd}]}), h0)
+        e = refused(
+            app,
+            app.mcp(
+                "timeline_apply",
+                {
+                    "project_id": "p1",
+                    "base_version": 0,
+                    "summary": "s",
+                    "client_op_id": "n",
+                    "ops": [{"op": "edit_text", "id": "x1", "text": nfd}],
+                },
+            ),
+            h0,
+        )
         assert (e["rule"], e["path"], e["id"]) == ("not_nfc", "/ops/0/text", "x1")
-        e = refused(app, app.mcp("timeline_apply", {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "n",
-                                                    "ops": [{"op": "add_marker", "at": 0, "label": nfd}]}), h0)
-        h = refused(app, app.rest("timeline_apply", {"base_version": 0, "summary": "s", "client_op_id": "n",
-                                                     "ops": [{"op": "add_marker", "at": 0, "label": nfd}]}), h0)
-        assert e["rule"] == "not_nfc" and key(e) == key(h)  # the engine's answer (validator path, as at c6de84e)
-        e = refused(app, app.mcp("timeline_apply", {"project_id": "p1", "base_version": 0, "summary": nfd, "client_op_id": "n",
-                                                    "ops": [{"op": "add_marker", "at": 0, "label": "m"}]}), h0)
+        e = refused(
+            app,
+            app.mcp(
+                "timeline_apply",
+                {
+                    "project_id": "p1",
+                    "base_version": 0,
+                    "summary": "s",
+                    "client_op_id": "n",
+                    "ops": [{"op": "add_marker", "at": 0, "label": nfd}],
+                },
+            ),
+            h0,
+        )
+        h = refused(
+            app,
+            app.rest(
+                "timeline_apply",
+                {"base_version": 0, "summary": "s", "client_op_id": "n", "ops": [{"op": "add_marker", "at": 0, "label": nfd}]},
+            ),
+            h0,
+        )
+        assert key(e) == key(h)  # the engine's answer (validator path, as at c6de84e)
+        assert (e["rule"], e["path"], e["id"]) == ("not_nfc", "/markers/1/label", "mk1")  # O4: pinned literally
+        e = refused(
+            app,
+            app.mcp(
+                "timeline_apply",
+                {
+                    "project_id": "p1",
+                    "base_version": 0,
+                    "summary": nfd,
+                    "client_op_id": "n",
+                    "ops": [{"op": "add_marker", "at": 0, "label": "m"}],
+                },
+            ),
+            h0,
+        )
         assert (e["rule"], e["path"]) == ("bad_arg", "/summary")
-    good = {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "n", "ops": [{"op": "edit_text", "id": "x1", "text": "Olé"}]}
+    good = {
+        "project_id": "p1",
+        "base_version": 0,
+        "summary": "s",
+        "client_op_id": "n",
+        "ops": [{"op": "edit_text", "id": "x1", "text": "Olé"}],
+    }
     ok, a = app.mcp("timeline_apply", good)
     ok2, b = app.mcp("timeline_apply", good)
     assert ok and ok2 and a["op_id"] == b["op_id"] and len(app.proj.log._entries) == 1
@@ -260,8 +392,13 @@ def test_92_nfd_retries_never_mismatch(app):
 
 
 def c5_calls(app: App, send) -> list[dict]:
-    a = {"base_version": 0, "summary": "s", "client_op_id": "k70",
-         "ops": [{"op": "add_marker", "at": 3 * S, "label": "a", "step": 9}], "actor": {"kind": "human", "id": "x"}}
+    a = {
+        "base_version": 0,
+        "summary": "s",
+        "client_op_id": "k70",
+        "ops": [{"op": "add_marker", "at": 3 * S, "label": "a", "step": 9}],
+        "actor": {"kind": "human", "id": "x"},
+    }
     r1 = send("timeline_apply", a)
     r2 = send("timeline_apply", a)  # the test-93 exact retry
     u = send("history_undo", {"client_op_id": "u70", "op_id": r1["op_id"], "step": 7})
@@ -295,15 +432,18 @@ def test_94_c5_over_http_and_acp(tmp_path, monkeypatch):
         app = App(base())
         try:
             if path == "http":
+
                 def send(tool, args):
                     ok, r = app.rest(tool, args, app.acp)
                     assert ok, r
                     return r
             else:
+
                 def send(tool, args):
                     ok, r = app.mcp(tool, {"project_id": "p1", **args}, app.acp)
                     assert ok, r
                     return r
+
             out = c5_calls(app, send)
             check_c5(app, out, 3)
             results.append(strip_ids(out))
@@ -381,7 +521,10 @@ def test_97_anchor_keys_by_name_http_equals_mcp(app, op, extra):
         assert key(m) == key(h) == ("invalid_op", *want, 0, False, None), (m, h)
     e = refused(app, app.mcp_apply({"op": op, **extra, "anchor": {"to": "c2", "offset_s": "x"}, "bogus": 1}), h0)
     assert (e["rule"], e["path"]) == ("unknown_arg", "/ops/0/bogus")
-    for anchor, want in [({"to": "c2", "zz": 1}, ("unknown_arg", "/ops/0/anchor/zz")), ({}, ("missing_arg", "/ops/0/anchor/offset"))]:
+    for anchor, want in [
+        ({"to": "c2", "zz": 1}, ("unknown_arg", "/ops/0/anchor/zz")),
+        ({}, ("missing_arg", "/ops/0/anchor/offset")),
+    ]:
         h = refused(app, app.rest_apply({"op": op, **extra, "anchor": anchor}), h0)
         assert (h["rule"], h["path"]) == want
 
@@ -411,31 +554,72 @@ def test_98_trim_clip_dur_s(app):
 
 def test_99_batch_order_and_cached_key(app):
     h0 = app.head()
-    e = refused(app, app.mcp_apply({"op": "move_clip", "id": "zz", "at_s": 0}, {"op": "add_marker", "at_s": "x", "label": "m"}), h0)
+    e = refused(
+        app, app.mcp_apply({"op": "move_clip", "id": "zz", "at_s": 0}, {"op": "add_marker", "at_s": "x", "label": "m"}), h0
+    )
     assert (e["rule"], e["path"], e["op_index"]) == ("bad_arg", "/ops/1/at_s", 1)
-    e = refused(app, app.mcp_apply({"op": "move_clip", "id": "zz", "at_s": 0, "bogus": 1}, {"op": "add_marker", "at_s": "x", "label": "m"}), h0)
+    e = refused(
+        app,
+        app.mcp_apply({"op": "move_clip", "id": "zz", "at_s": 0, "bogus": 1}, {"op": "add_marker", "at_s": "x", "label": "m"}),
+        h0,
+    )
     assert (e["rule"], e["path"]) == ("unknown_arg", "/ops/0/bogus")
     h = refused(app, app.rest_apply({"op": "move_clip", "id": "zz", "at": 0}, {"op": "add_marker", "at": 0, "label": "m"}), h0)
     assert (h["code"], h["path"], h["id"]) == ("not_found", "/ops/0/id", "zz")
-    ok, _ = app.mcp("timeline_apply", {"project_id": "p1", "base_version": 0, "summary": "s", "client_op_id": "k",
-                                       "ops": [{"op": "add_marker", "at": 0, "label": "m"}]})
+    ok, _ = app.mcp(
+        "timeline_apply",
+        {
+            "project_id": "p1",
+            "base_version": 0,
+            "summary": "s",
+            "client_op_id": "k",
+            "ops": [{"op": "add_marker", "at": 0, "label": "m"}],
+        },
+    )
     assert ok
     h1 = app.head()
-    e = refused(app, app.mcp("timeline_apply", {"project_id": "p1", "base_version": 1, "summary": "s", "client_op_id": "k",
-                                                 "ops": [{"op": "add_marker", "at_s": "x", "label": "m"}]}), h1)
+    e = refused(
+        app,
+        app.mcp(
+            "timeline_apply",
+            {
+                "project_id": "p1",
+                "base_version": 1,
+                "summary": "s",
+                "client_op_id": "k",
+                "ops": [{"op": "add_marker", "at_s": "x", "label": "m"}],
+            },
+        ),
+        h1,
+    )
     assert (e["rule"], e["path"]) == ("bad_arg", "/ops/0/at_s")
-    e = refused(app, app.mcp("timeline_apply", {"project_id": "p1", "base_version": 1, "summary": "s", "client_op_id": "k",
-                                                 "ops": [{"op": "add_marker", "at_s": 1, "label": "m"}]}), h1)
+    e = refused(
+        app,
+        app.mcp(
+            "timeline_apply",
+            {
+                "project_id": "p1",
+                "base_version": 1,
+                "summary": "s",
+                "client_op_id": "k",
+                "ops": [{"op": "add_marker", "at_s": 1, "label": "m"}],
+            },
+        ),
+        h1,
+    )
     assert e["rule"] == "client_op_id_mismatch"
 
 
-@pytest.mark.parametrize("extra, ops0, want", [
-    ({"summary": ""}, None, ("bad_arg", "/summary", None)),
-    ({"bogus": 1}, None, ("unknown_arg", "/bogus", None)),
-    ({"group_id": None}, None, ("bad_arg", "/group_id", None)),
-    ({"base_version": "0"}, None, ("bad_arg", "/base_version", None)),
-    ({}, 5, ("bad_arg", "/ops/0", 0)),
-])
+@pytest.mark.parametrize(
+    "extra, ops0, want",
+    [
+        ({"summary": ""}, None, ("bad_arg", "/summary", None)),
+        ({"bogus": 1}, None, ("unknown_arg", "/bogus", None)),
+        ({"group_id": None}, None, ("bad_arg", "/group_id", None)),
+        ({"base_version": "0"}, None, ("bad_arg", "/base_version", None)),
+        ({}, 5, ("bad_arg", "/ops/0", 0)),
+    ],
+)
 def test_100_envelope_before_the_mcp_op_stage(app, extra, ops0, want):
     h0 = app.head()
     m_ops = [{"op": "add_marker", "at_s": "x", "label": "m"}]
@@ -502,7 +686,11 @@ def test_sse_events_and_last_event_id(app):
 
     app.mcp_apply({"op": "add_marker", "at": 0, "label": "a"})
     c = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
-    c.request("GET", "/api/projects/p1/events", headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "0"})
+    c.request(
+        "GET",
+        "/api/projects/p1/events",
+        headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "0"},
+    )
     r = c.getresponse()
     assert r.status == 200 and r.getheader("Content-Type").startswith("text/event-stream")
     app.mcp_apply({"op": "add_marker", "at": S, "label": "b"})
@@ -516,14 +704,22 @@ def test_sse_events_and_last_event_id(app):
     assert seen == [1, 2]
     c.close()
     c = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
-    c.request("GET", "/api/projects/p1/events", headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "99"})
+    c.request(
+        "GET",
+        "/api/projects/p1/events",
+        headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "99"},
+    )
     r = c.getresponse()
     got = b""
     while b"stream.reset" not in got:
         got += r.fp.readline()
     c.close()
     c = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
-    c.request("GET", "/api/projects/p1/events", headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "x"})
+    c.request(
+        "GET",
+        "/api/projects/p1/events",
+        headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.ui}", "Last-Event-ID": "x"},
+    )
     assert c.getresponse().status == 400
     c.close()
 
@@ -533,3 +729,63 @@ def test_used_reports_conversions(app):
     assert ok and r["used"] == {"at_s": {"ticks": 1058400000, "seconds": 1.5}}
     assert O.Oplog  # the engine never sees _s
     assert "at_s" not in (app.proj.dir / "oplog.jsonl").read_text()
+
+
+# --------------------------------------------------------------------------- Glyph's fixes (Ada, 8:29 PM)
+
+
+def test_get_routes_url_decode_the_project_id_like_post(app):
+    ok, _ = app.rest_apply({"op": "add_marker", "at": 0, "label": "m"})
+    assert ok
+    for rest in ("hash", "status", "history", "history/diff?since_version=0"):
+        st, _, plain = app.req("GET", f"/api/projects/p1/{rest}", token=app.ui)
+        st2, _, enc = app.req("GET", f"/api/projects/%70%31/{rest}", token=app.ui)
+        assert st == st2 == 200 and plain == enc, rest
+    args = app.apply_args({"op": "add_marker", "at": S, "label": "n"})
+    st, _, r = app.req("POST", "/api/projects/%70%31/timeline_apply", args, app.ui)
+    assert st == 200 and r["new_version"] == 2
+    st, _, e = app.req("GET", "/api/projects/%7A%7A/hash", token=app.ui)
+    assert st != 200 and e["code"] == "not_found" and e["id"] == "zz"
+    # decoded exactly once, after the split, on both methods: %25 stays a literal '%', %2F stays in the id
+    for raw, want in (("%2570%2531", "%70%31"), ("p%2F1", "p/1")):
+        st, _, g = app.req("GET", f"/api/projects/{raw}/hash", token=app.ui)
+        st2, _, w = app.req(
+            "POST", f"/api/projects/{raw}/timeline_apply", app.apply_args({"op": "add_marker", "at": 0, "label": "m"}), app.ui
+        )
+        assert st == st2 != 200 and g["code"] == w["code"] == "not_found" and g["id"] == w["id"] == want, (g, w)
+
+
+def test_get_mcp_stream_hears_projects_opened_mid_stream(app):
+    import http.client
+
+    from hermes_studio import project as P
+
+    c = http.client.HTTPConnection("127.0.0.1", app.port, timeout=10)
+    c.request("GET", "/mcp", headers={"Host": f"127.0.0.1:{app.port}", "Authorization": f"Bearer {app.agent}"})
+    r = c.getresponse()
+    assert r.status == 200 and r.getheader("Content-Type").startswith("text/event-stream")
+    doc2 = base()
+    doc2["id"] = "p2"
+    P.create_project(doc2)  # after the stream connected; the engine opens it lazily on first use
+    assert "p2" not in app.eng.projects
+    ok, res = app.mcp(
+        "timeline_apply",
+        {
+            "project_id": "p2",
+            "base_version": 0,
+            "summary": "s",
+            "client_op_id": "k",
+            "ops": [{"op": "add_marker", "at": 0, "label": "m"}],
+        },
+    )
+    assert ok, res
+    app.mcp_apply({"op": "add_marker", "at": 0, "label": "m"})
+    uris = []
+    while len(uris) < 2:
+        line = r.fp.readline().decode()
+        if line.startswith("data: "):
+            note = json.loads(line[6:])
+            assert note["method"] == "notifications/resources/updated"
+            uris.append(note["params"]["uri"])
+    assert uris == ["timeline://p2", "timeline://p1"]
+    c.close()

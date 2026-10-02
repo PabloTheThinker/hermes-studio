@@ -293,7 +293,8 @@ class Transport:
 
     Framing is whichever the client sends first: one JSON message per line, or Content-Length
     headers. Once a stream has used Content-Length it stays in that mode, and what follows a
-    body is read as the next header block (D27(c)). No resync ever scans bytes for a header."""
+    body is read as the next header block (D27(c)): even a blank line there is a malformed
+    header block (Ada, 8:29 PM). No resync ever scans bytes for a header."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -316,8 +317,6 @@ class Transport:
                 line = self.inp.readline(HEADER_LINE_MAX + 1)
                 if not line:
                     return None
-                if line in (b"\r\n", b"\n"):
-                    continue  # blank lines between frames
                 got = self._frame(line)
                 if got is None:
                     return None
@@ -328,9 +327,13 @@ class Transport:
                     return True, msg
                 self.write(PARSE_ERROR)
                 continue
-            line = self.inp.readline()
+            line = self.inp.readline(MAX_BODY + 1)  # O1: at most one capped body per line
             if not line:
                 return None
+            if len(line) > MAX_BODY and not line.endswith(b"\n"):
+                self.write(PARSE_ERROR)  # never parsed; the rest of the line can't be trusted
+                print(f"mcp: line over {MAX_BODY} bytes; closing session", file=sys.stderr, flush=True)
+                raise BrokenFraming("line too long")
             s = line.strip()
             if not s:
                 continue

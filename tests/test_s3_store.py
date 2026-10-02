@@ -52,8 +52,13 @@ def tree(d) -> dict:
 def test_93_c5_retry_returns_cache_plus_its_own_strip_warnings_live_and_after_load(tmp_path):
     path = tmp_path / "oplog.jsonl"
     log = new_log(path=path)
-    forged = {"base_version": 0, "ops": [{"op": "add_marker", "at": 3 * S, "label": "a", "step": 9}], "summary": "s",
-              "client_op_id": "k", "actor": {"kind": "human", "id": "x"}}
+    forged = {
+        "base_version": 0,
+        "ops": [{"op": "add_marker", "at": 3 * S, "label": "a", "step": 9}],
+        "summary": "s",
+        "client_op_id": "k",
+        "actor": {"kind": "human", "id": "x"},
+    }
     a = log.call(hermes(3), "timeline_apply", forged)
     want = ["/actor", "/ops/0/step"]
     assert [w["path"] for w in a["warnings"]] == want and all(w["code"] == "ignored_field" for w in a["warnings"])
@@ -104,11 +109,19 @@ def test_d4_non_string_project_id_is_bad_arg_with_no_id():
     log = new_log()
     for pid in (5, None, True, []):
         with pytest.raises(O.OplogError) as e:
-            log.call(HUMAN, "timeline_apply", {"base_version": 0, "ops": [marker(0)], "summary": "s", "client_op_id": "k", "project_id": pid})
+            log.call(
+                HUMAN,
+                "timeline_apply",
+                {"base_version": 0, "ops": [marker(0)], "summary": "s", "client_op_id": "k", "project_id": pid},
+            )
         d = e.value.as_dict()
         assert (d["code"], d["rule"], d["path"]) == ("invalid_op", "bad_arg", "/project_id") and "id" not in d
     with pytest.raises(O.OplogError) as e:
-        log.call(HUMAN, "timeline_apply", {"base_version": 0, "ops": [marker(0)], "summary": "s", "client_op_id": "k", "project_id": "zz"})
+        log.call(
+            HUMAN,
+            "timeline_apply",
+            {"base_version": 0, "ops": [marker(0)], "summary": "s", "client_op_id": "k", "project_id": "zz"},
+        )
     assert e.value.as_dict()["id"] == "zz" and e.value.code == "not_found"
 
 
@@ -123,7 +136,18 @@ def test_d10_d19_history_pages_and_records_carry_hash():
     assert len(log.history_list()["entries"]) == 7
     d = log.history_diff(since_version=5)
     assert [r["new_version"] for r in d["records"]] == [6, 7] and d["records"][-1]["hash"] == log.doc["hash"]
-    assert set(d["records"][0]) == {"seq", "op_id", "group_id", "actor", "summary", "base_version", "new_version", "hash", "changed_ids", "undoes"}
+    assert set(d["records"][0]) == {
+        "seq",
+        "op_id",
+        "group_id",
+        "actor",
+        "summary",
+        "base_version",
+        "new_version",
+        "hash",
+        "changed_ids",
+        "undoes",
+    }
     cases = [
         ("history_list", {"since_version": "5"}, "bad_arg", "/since_version"),
         ("history_list", {"since_version": None}, "bad_arg", "/since_version"),
@@ -239,10 +263,17 @@ def test_61d_corrupt_middle_line_is_failed_with_seq_open_and_closed(home):
     good = log.read_bytes().splitlines(keepends=True)
     variants = {
         "bad json": (good[0] + b"{nope\n" + good[2], 2, "not valid JSON"),
-        "unknown key": (good[0] + json.dumps({**json.loads(good[1]), "zz": 1}).encode() + b"\n" + good[2], 2, "not an oplog line"),
+        "unknown key": (
+            good[0] + json.dumps({**json.loads(good[1]), "zz": 1}).encode() + b"\n" + good[2],
+            2,
+            "not an oplog line",
+        ),
         "out of sequence": (good[0] + good[2], 3, "out of sequence"),
-        "tampered final hash": (good[0] + good[1] + json.dumps({**json.loads(good[2]), "hash": "sha256:" + "0" * 64}).encode() + b"\n", 3,
-                                "replay does not reproduce the entry"),
+        "tampered final hash": (
+            good[0] + good[1] + json.dumps({**json.loads(good[2]), "hash": "sha256:" + "0" * 64}).encode() + b"\n",
+            3,
+            "replay does not reproduce the entry",
+        ),
     }
     for name, (raw, seq, reason) in variants.items():
         log.write_bytes(raw)
@@ -258,13 +289,66 @@ def test_61d_corrupt_middle_line_is_failed_with_seq_open_and_closed(home):
         with pytest.raises(P.ToolError):
             write(p, HUMAN, marker(9), key="w") if p.log else p.write(HUMAN, "timeline_apply", {})
         eng.close()
-    # a tampered middle hash is caught by the open app's replay (finding 8: the closed fast path may serve it)
+    # a tampered middle hash: the closed read replays every line too (F1), so it names seq 2 open or closed
     mid = json.dumps({**json.loads(good[1]), "hash": "sha256:" + "1" * 64}).encode() + b"\n"
     log.write_bytes(good[0] + mid + good[2])
-    eng, p = opened()
     with pytest.raises(P.ToolError) as e:
-        p.oplog()
+        P.ClosedProject("p1")
     assert e.value.as_dict()["seq"] == 2
+    eng, p = opened()
+    with pytest.raises(P.ToolError) as e2:
+        p.oplog()
+    assert e2.value.as_dict() == e.value.as_dict()
+    eng.close()
+
+
+def test_61d_f1_tampered_middle_inverse_is_failed_seq_2_open_and_closed(home):
+    """F1 (row F): a 5-line log whose seq 2 ``inverse`` was edited, hash and version intact."""
+    P.create_project(base())
+    eng, p = opened()
+    for i in range(5):
+        write(p, HUMAN, marker(i), key=f"k{i}")
+    eng.close()
+    log = p.dir / "oplog.jsonl"
+    lines = log.read_bytes().splitlines(keepends=True)
+    assert len(lines) == 5
+    e2 = json.loads(lines[1])
+    e2["inverse"] = [{**e2["inverse"][0], "id": "mk99"}]
+    log.write_bytes(lines[0] + json.dumps(e2).encode() + b"\n" + b"".join(lines[2:]))
+    with pytest.raises(ValueError, match="oplog line 2: replay does not reproduce"):
+        O.Oplog.load(base(), log)  # what c6de84e's load says
+    want = {
+        "ok": False,
+        "code": "failed",
+        "error": "oplog line 2: replay does not reproduce the entry",
+        "seq": 2,
+        "hint": P.LOG_HINT,
+    }
+    with pytest.raises(P.ToolError) as closed:
+        P.ClosedProject("p1")
+    assert {k: v for k, v in closed.value.as_dict().items() if k in want} == want
+    eng, p = opened()
+    with pytest.raises(P.ToolError) as live:
+        p.oplog()
+    assert live.value.as_dict() == closed.value.as_dict()
+    eng.close()
+
+
+def test_61_o2_base_json_without_hash_is_hash_mismatch_open_and_closed(home):
+    P.create_project(base())
+    root = P.project_dir("p1")
+    nohash = {k: v for k, v in json.loads((root / "base.json").read_text()).items() if k != "hash"}
+    assert not T.validate(nohash)  # the validator alone accepts it: the store checks it (row E)
+    (root / "base.json").write_text(json.dumps(nohash))
+    with pytest.raises(P.ToolError) as e:
+        P.ClosedProject("p1")
+    x = e.value.as_dict()
+    assert (x["code"], x["rule"], x["path"]) == ("invalid_doc", "hash_mismatch", "/hash") and "id" not in x
+    eng, p = opened()
+    for call in (p.status, p.oplog, lambda: p.write(HUMAN, "timeline_apply", {})):
+        with pytest.raises(P.ToolError) as e2:
+            call()
+        assert e2.value.as_dict() == x
     eng.close()
 
 
@@ -277,7 +361,13 @@ def test_61_base_json_faults_never_hash(home):
     with pytest.raises(P.ToolError) as e:
         P.ClosedProject("p1")
     x = e.value.as_dict()
-    assert (x["code"], x["rule"], x["path"], x["expected"], x["got"]) == ("schema_mismatch", "bad_schema", "/schema_version", T.SCHEMA_VERSION, "hs.timeline/2")
+    assert (x["code"], x["rule"], x["path"], x["expected"], x["got"]) == (
+        "schema_mismatch",
+        "bad_schema",
+        "/schema_version",
+        T.SCHEMA_VERSION,
+        "hs.timeline/2",
+    )
     stale, _ = T.stamp_hash(base())
     stale["hash"] = "sha256:" + "0" * 64
     (root / "base.json").write_text(json.dumps(stale))
@@ -383,13 +473,28 @@ def test_d9_d11_events_replay_and_reset(home):
     eng, p = opened()
     sub, replay, reset = p.subscribe(None)
     r = write(p, hermes(3), marker(0), key="a")
-    p.write(hermes(3), "timeline_apply", {"base_version": 0, "ops": [marker(0)], "summary": "edit", "client_op_id": "a"})  # cached retry: no event
+    p.write(
+        hermes(3), "timeline_apply", {"base_version": 0, "ops": [marker(0)], "summary": "edit", "client_op_id": "a"}
+    )  # cached retry: no event
     p.write(hermes(3), "history_undo", {"client_op_id": "u", "op_id": r["op_id"]})
     evs = [sub.q.get_nowait() for _ in range(sub.q.qsize())]
     assert [e["type"] for e in evs] == ["op.applied", "op.undone"] and [e["seq"] for e in evs] == [1, 2]
     assert evs[0]["project_id"] == "p1" and evs[0]["step"] == 3 and evs[1]["undoes"] == [r["op_id"]]
-    assert set(evs[0]) == {"type", "project_id", "seq", "op_id", "group_id", "actor", "step", "summary", "base_version",
-                           "new_version", "hash", "changed_ids", "undoes"}
+    assert set(evs[0]) == {
+        "type",
+        "project_id",
+        "seq",
+        "op_id",
+        "group_id",
+        "actor",
+        "step",
+        "summary",
+        "base_version",
+        "new_version",
+        "hash",
+        "changed_ids",
+        "undoes",
+    }
     _, replay, reset = p.subscribe(1)
     assert [e["seq"] for e in replay] == [2] and reset is None
     _, replay, reset = p.subscribe(9)
@@ -421,3 +526,28 @@ def test_d13_tokens():
     assert t.resolve(ro).scopes == frozenset({"read"})
     with pytest.raises(ValueError):
         t.mint("root")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_project_files_are_owner_only(home):
+    P.create_project(base())
+    eng, p = opened()
+    for i in range(50):
+        write(p, HUMAN, marker(i), key=f"k{i}")
+    p.export_otio()
+    eng.close()
+    eng, p = opened()  # .attach and .lock again, and a rewrite of nothing
+    files = [f for f in p.dir.rglob("*") if f.is_file()]
+    names = {f.relative_to(p.dir).as_posix() for f in files}
+    assert {
+        "base.json",
+        "oplog.jsonl",
+        "timeline.json",
+        ".lock",
+        ".attach",
+        "snapshots/v000050.json",
+        "exports/p1-v000050.otio",
+    } <= names
+    for f in files:
+        assert stat.S_IMODE(f.stat().st_mode) == 0o600, (f, oct(f.stat().st_mode))
+    eng.close()

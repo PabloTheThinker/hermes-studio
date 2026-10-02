@@ -233,7 +233,18 @@ def test_forged_fields_are_ignored_on_undo_and_redo_too():
 
 def test_call_is_the_only_way_to_write():
     public = {n for n in dir(O.Oplog) if not n.startswith("_")}
-    assert public == {"call", "doc", "version", "head", "history_list", "history_diff", "load", "check_apply_envelope", "check_undo_envelope", "precheck"}
+    assert public == {
+        "call",
+        "doc",
+        "version",
+        "head",
+        "history_list",
+        "history_diff",
+        "load",
+        "check_apply_envelope",
+        "check_undo_envelope",
+        "precheck",
+    }
     log = new_log()
     log.doc["markers"].clear()  # doc is a copy
     assert log.doc["markers"]
