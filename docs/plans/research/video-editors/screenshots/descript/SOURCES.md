@@ -1,0 +1,20 @@
+# Screenshot sources: descript
+
+All files are real images downloaded with curl on Oct 1, 2026 (ET) from the official URLs below (static images converted to PNG; GIFs kept as-is). Own captures, if any, are listed separately.
+
+| File | Image URL | Found on page | What it shows |
+|---|---|---|---|
+| 01-underlord-chat-beside-transcript-editor.png | https://cdn.sanity.io/images/lsw4j9eq/production/1d31bad567e2b6bf3a2d492d37fc9e15ef5ccbde-960x840.jpg | https://www.descript.com/underlord | Official marketing image: underlord chat beside transcript editor |
+| 02-meet-underlord-agent-panel.png | https://cdn.sanity.io/images/lsw4j9eq/production/20f5b183885102b091068251618460b815a6d514-1200x630.jpg | https://www.descript.com/underlord | Official marketing image: meet underlord agent panel |
+| 03-underlord-prompt-panel.png | https://cdn.sanity.io/images/lsw4j9eq/production/af2dc9805602dd152689fa5f5ad82724cba1b8b7-960x840.jpg | https://www.descript.com/underlord | Official marketing image: underlord prompt panel |
+| 04-underlord-chat-vertical-video.png | https://cdn.sanity.io/images/lsw4j9eq/production/408ba335ccf94ef9da91b516ace4eb03ff343e33-960x840.jpg | https://www.descript.com/underlord | Official marketing image: underlord chat vertical video |
+| 05-underlord-prompt-pitch-deck-to-video.png | https://cdn.sanity.io/images/lsw4j9eq/production/d57caa94647cd700ce209af3b619b56241a5c722-1280x921.webp | https://www.descript.com/ | Official marketing image: underlord prompt pitch deck to video |
+| 06-transcript-editing-with-timeline.png | https://cdn.sanity.io/images/lsw4j9eq/production/392fafaeba8d66d9c919007127fc3ec7b44aaab5-1648x1300.webp | https://www.descript.com/video-editing | Official marketing image: transcript editing with timeline |
+| 07-transcript-doc-with-speaker-video.png | https://cdn.sanity.io/images/lsw4j9eq/production/911bc2e36110a7bed71b97cc97a899a44f403e45-1280x840.webp | https://www.descript.com/ | Official marketing image: transcript doc with speaker video |
+| 08-script-view-with-timeline.png | https://cdn.sanity.io/images/lsw4j9eq/production/b397598d971cc4a9295e96753786b28349c3bf48-1336x816.webp | https://www.descript.com/video-editing | Official marketing image: script view with timeline |
+| 09-regenerate-menu-in-transcript.png | https://cdn.sanity.io/images/lsw4j9eq/production/e0c6d91d959c7169651f6f44cba048f910e11ac9-1281x840.webp | https://www.descript.com/ | Official marketing image: regenerate menu in transcript |
+| 10-properties-panel-adjustments.png | https://cdn.sanity.io/images/lsw4j9eq/production/f2b3b630bde4899752bea2d2128a68cc44537d0c-1336x816.webp | https://www.descript.com/video-editing | Official marketing image: properties panel adjustments |
+| 11-editor-interface-tour-help.png | https://mintcdn.com/descript-5bf56f3f/x_o3AVZ-HKjw1TIM/images/external/descript-37585546795789-19962a2c84.png?fit=max&auto=format&n=x_o3AVZ-HKjw1TIM&q=85&s=e03358228766b4b5aa606c039b2f9fd7 | https://help.descript.com/descript-tour/the-editor-interface | Help center: editor interface tour (script, scene editor, timeline, sidebar) |
+| 12-underlord-model-picker.png | https://mintcdn.com/descript-5bf56f3f/qxpOFUY856zgDrds/images/external/descript-40475274188941-3fd81f8d14.png?fit=max&auto=format&n=qxpOFUY856zgDrds&q=85&s=286bf27feef313be56f97765af025bbb | https://help.descript.com/getting-started/underlord-beta-your-ai-co-editor-in-descript | Help center: Underlord chat model picker |
+| 13-underlord-revert-button.png | https://mintcdn.com/descript-5bf56f3f/NQQ8Oln3iV-r_AmP/images/external/descript-43171900848909-0fae02f076.png?fit=max&auto=format&n=NQQ8Oln3iV-r_AmP&q=85&s=517afb91960f77af5788c55135ec6e31 | https://help.descript.com/ai-assistant/revert | Help center: Underlord side panel with Revert / thumbs buttons under a response |
+| 14-remove-filler-words-sidebar.png | https://mintcdn.com/descript-5bf56f3f/x_o3AVZ-HKjw1TIM/images/external/descript-37135973531533-6ae6d41cd5.png?fit=max&auto=format&n=x_o3AVZ-HKjw1TIM&q=85&s=daaf8bea50a47786da912b8165b64eee | https://help.descript.com/script-editing/filler-words | Help center: Remove filler words review sidebar |

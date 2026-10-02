@@ -1,0 +1,19 @@
+# Screenshot sources: blender-vse
+
+All files are real images downloaded with curl on Oct 1, 2026 (ET) from the official URLs below (static images converted to PNG; GIFs kept as-is). Own captures, if any, are listed separately.
+
+| File | Image URL | Found on page | What it shows |
+|---|---|---|---|
+| 01-video-editing-screen-layout.png | https://docs.blender.org/manual/en/latest/_images/video-editing_introduction_screen-layout.png | https://docs.blender.org/manual/en/latest/video_editing/index.html | Video Editing workspace layout |
+| 02-app-template.png | https://docs.blender.org/manual/en/latest/_images/video_editing-app_template.webp | https://docs.blender.org/manual/en/latest/video_editing/setup/app_template.html | Blender Manual figure: app-template |
+| 03-strips-introduction-add-menu.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_introduction_add-menu.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/introduction.html | Blender Manual figure: strips-introduction-add-menu |
+| 04-retiming.png | https://docs.blender.org/manual/en/latest/_images/video-editing-retiming.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/editing.html | Blender Manual figure: retiming |
+| 05-meta-example.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_meta_example.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/meta.html | Blender Manual figure: meta-example |
+| 06-strip-modifiers-panel.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strip_modifiers_panel.webp | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/modifiers/index.html | Blender Manual figure: strip-modifiers-panel |
+| 07-sidebar-color-balance-modifier.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_sidebar_color-balance-modifier.webp | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/modifiers/color_balance.html | Blender Manual figure: sidebar-color-balance-modifier |
+| 08-strips-transitions-cross-example.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_transitions_cross_example.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/transitions/cross.html | Blender Manual figure: strips-transitions-cross-example |
+| 09-strips-effects-multicam-example.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_effects_multicam_example.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/effects/multicam.html | Blender Manual figure: strips-effects-multicam-example |
+| 10-strips-effects-speed-control-keyframing.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_effects_speed-control_keyframing.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/effects/speed_control.html | Blender Manual figure: strips-effects-speed-control-keyframing |
+| 11-strips-sound-editing.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_sound_editing.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/sound.html | Blender Manual figure: strips-sound-editing |
+| 12-strips-text-example.png | https://docs.blender.org/manual/en/latest/_images/video-editing_sequencer_strips_text_example.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/strips/text.html | Blender Manual figure: strips-text-example |
+| 13-vse-compositor-modifier-example.png | https://docs.blender.org/manual/en/latest/_images/vse_compositor_modifier_example.png | https://docs.blender.org/manual/en/latest/video_editing/edit/montage/modifiers/compositor.html | Blender Manual figure: vse-compositor-modifier-example |
