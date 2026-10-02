@@ -144,13 +144,37 @@ def _seconds(value):
     return float(text)
 
 
-def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+class BodyRefused(ValueError):
+    """A request body we won't read: answered with 400 and a closed connection (D27(d))."""
+
+
+def body_length(handler: BaseHTTPRequestHandler) -> int:
+    """The request body length, from headers only (nothing is read). Any Transfer-Encoding is
+    refused first; then there must be at most one Content-Length, whose value (spaces and tabs
+    stripped) is 1-8 ASCII digits. No Content-Length is 0, as before."""
+    from hermes_studio.jsonrpc import content_length
+
+    if handler.headers.get_all("Transfer-Encoding"):
+        raise BodyRefused("unsupported transfer encoding")
+    values = handler.headers.get_all("Content-Length") or []
+    if not values:
+        return 0
+    if len(values) != 1:
+        raise BodyRefused("invalid content length")
     try:
-        length = int(handler.headers.get("Content-Length") or 0)
-    except ValueError:
-        length = 0
-    if length < 0 or length > limit:
-        raise ValueError("request body too large")
+        raw = values[0].encode("latin-1")
+    except (UnicodeEncodeError, AttributeError):
+        raise BodyRefused("invalid content length") from None
+    n, _ = content_length(raw)
+    if n is None:
+        raise BodyRefused("invalid content length")
+    return n
+
+
+def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+    length = body_length(handler)
+    if length > limit:
+        raise BodyRefused("request body too large")
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
         return {}
@@ -304,6 +328,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         path = unquote(parsed.path)
         if path in {"/", "/index.html"}:
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
+        if path.startswith("/api/projects/") or path == "/mcp":
+            from hermes_studio import http_engine
+
+            return http_engine.get(self, path, parsed.query)
         if path.startswith("/api/probe"):
             qs = parse_qs(parsed.query)
             src = (qs.get("src") or [""])[0]
@@ -441,14 +469,25 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if not self._guard(write=True):
             return
+        if urlparse(self.path).path == "/mcp":
+            from hermes_studio import http_engine
+
+            return http_engine.mcp_post(self)
         try:
+            body_length(self)  # Transfer-Encoding and Content-Length checked before any route
             self._post()
-        except ValueError as exc:  # bad JSON, oversized body
+        except BodyRefused as exc:  # nothing more is read: one response, then the connection closes
+            return self._refuse(400, str(exc))
+        except ValueError as exc:  # bad JSON
             return _json(self, 400, {"ok": False, "error": str(exc)[:200]})
 
     def _post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/projects/"):
+            from hermes_studio import http_engine
+
+            return http_engine.rest_post(self, path)
         if path == "/api/design" or path.startswith("/api/design/"):
             return self._design_post(path)
         if path == "/api/jobs":
@@ -790,6 +829,12 @@ def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
         pass
     _start_worker()
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
+    from hermes_studio import http_engine
+
+    engine = http_engine.start(httpd.server_address[1])  # the timeline engine: locks its projects (D5, D6)
     print(f"Hermes Studio  http://{host}:{port}/", flush=True)
     print("Library  Create  Jobs  — loopback only. Does not post.", flush=True)
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        http_engine.stop(engine)
