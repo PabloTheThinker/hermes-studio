@@ -92,12 +92,12 @@ class Out:
 
     def emit(self, obj: dict) -> None:
         if self.json:
-            print(json.dumps(obj, ensure_ascii=False, default=str), flush=True)
+            print(json.dumps(obj, ensure_ascii=True, default=str), flush=True)
 
     def error(self, e: HermesStudioError) -> int:
         self.end_bar()
         if self.json:
-            print(json.dumps(e.as_dict(), ensure_ascii=False), flush=True)
+            print(json.dumps(e.as_dict(), ensure_ascii=True), flush=True)
         else:
             print(self.red("error: ", err=True) + e.message, file=sys.stderr)
             if e.hint:

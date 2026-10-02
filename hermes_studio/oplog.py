@@ -53,7 +53,12 @@ LINE_FIELDS = (
     "changed_ids",
     "undoes",
 )
-LINE_OPTIONAL = ("step",)
+LINE_OPTIONAL = ("step", "warnings")  # warnings: result warnings only, written only when non-empty
+CONFLICT_DIFF_MAX = 200  # records in a conflict body; the rest are paged with history_diff
+HISTORY_LIST_LIMIT = (50, 200)  # (default, max)
+HISTORY_DIFF_LIMIT = (200, 500)
+ANCHOR_OPS = ("insert_clip", "add_text", "set_anchor")  # public ops that take an anchor
+ANCHOR_KEYS = frozenset({"to", "offset"})
 
 # --------------------------------------------------------------------------- sessions
 
@@ -758,18 +763,60 @@ class _Ctx:
         return f"{prefix}{n}"
 
 
-def _apply_one(ctx: _Ctx, op: Any, internal: bool) -> tuple[dict, list[dict]]:
+def _op_arg_error(op: Any, internal: bool) -> _OpError | None:
+    """The op's name and argument-name checks, in the engine's order (values are never read)."""
     if not isinstance(op, dict) or not isinstance(op.get("op"), str):
-        raise _OpError("bad_arg", "an op is an object with an 'op' name")
+        return _OpError("bad_arg", "an op is an object with an 'op' name")
     table = {**PUBLIC_OPS, **INTERNAL_OPS} if internal else PUBLIC_OPS
     if op["op"] not in table:
-        raise _OpError("unknown_op", f"unknown op {op['op']!r}", "op")
-    fn, req, opt = table[op["op"]]
+        return _OpError("unknown_op", f"unknown op {op['op']!r}", "op")
+    _, req, opt = table[op["op"]]
+    for k in sorted(set(op) - req - opt - {"op"}, key=repr):  # keys may not be strings
+        return _OpError("unknown_arg", f"{op['op']} takes no {k!r}", (k,))
+    for k in sorted(req - set(op), key=repr):
+        return _OpError("missing_arg", f"{op['op']} needs '{k}'", k)
+    anchor = op.get("anchor")
+    if not internal and op["op"] in ANCHOR_OPS and isinstance(anchor, dict):
+        # keys inside anchor are checked by name too, before any lookup or value check
+        for k in sorted(set(anchor) - ANCHOR_KEYS, key=repr):
+            return _OpError("unknown_arg", f"{op['op']} anchor takes no {k!r}", ("anchor", k))
+        for k in sorted(ANCHOR_KEYS - set(anchor)):
+            return _OpError("missing_arg", f"{op['op']} anchor needs '{k}'", ("anchor", k))
+    return None
+
+
+def _as_oplog_error(e: _OpError, k: int) -> OplogError:
+    """The OplogError a batch reports for op ``k``'s _OpError (``op_index`` k, path /ops/k/...)."""
+    found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
+    if e.item_id is not None:
+        found_id = {"id": e.item_id}
+    return OplogError(
+        e.code,
+        f"op {k}: {e.message}",
+        rule=e.rule,
+        op_index=k,
+        path=T._j("", "ops", k, *_key_parts(e.key)),
+        **found_id,
+    )
+
+
+def check_op_args(op: Any, k: int, *, internal: bool = False) -> OplogError | None:
+    """The engine's own per-op name check for op ``k`` of a batch, or None when it passes:
+    (1) not an object / no string ``op`` -> ``bad_arg`` @ /ops/k; (2) ``unknown_op`` @ /ops/k/op;
+    (3) ``unknown_arg`` @ /ops/k/<key> (sorted with ``key=repr``); (4) ``missing_arg`` (sorted);
+    (5) for a public ``insert_clip``/``add_text``/``set_anchor`` with a dict ``anchor``: a key
+    other than to/offset -> ``unknown_arg`` @ /ops/k/anchor/<key>, then a missing offset or to ->
+    ``missing_arg``. It reads names only, never values. ``_run`` and /mcp both call it."""
+    e = _op_arg_error(op, internal)
+    return None if e is None else _as_oplog_error(e, k)
+
+
+def _apply_one(ctx: _Ctx, op: Any, internal: bool, k: int = 0) -> tuple[dict, list[dict]]:
+    err = check_op_args(op, k, internal=internal)
+    if err is not None:
+        raise err
+    fn, _, _ = ({**PUBLIC_OPS, **INTERNAL_OPS} if internal else PUBLIC_OPS)[op["op"]]
     a = copy.deepcopy(op)
-    for k in sorted(set(a) - req - opt - {"op"}, key=repr):  # keys may not be strings
-        raise _OpError("unknown_arg", f"{op['op']} takes no {k!r}", (k,))
-    for k in sorted(req - set(a), key=repr):
-        raise _OpError("missing_arg", f"{op['op']} needs '{k}'", k)
     if op["op"] in PUBLIC_OPS:
         _check_refs(a)
     try:
@@ -787,7 +834,32 @@ def _apply_one(ctx: _Ctx, op: Any, internal: bool) -> tuple[dict, list[dict]]:
 def _check_line(e: Any) -> dict:
     if not (isinstance(e, dict) and set(LINE_FIELDS) <= set(e) <= set(LINE_FIELDS) | set(LINE_OPTIONAL)):
         raise ValueError("not an oplog line")
+    if "warnings" in e and not _result_warnings_ok(e["warnings"]):
+        raise ValueError("not an oplog line")
     return e
+
+
+def _result_warnings_ok(w: Any) -> bool:
+    """A stored ``warnings`` value: a non-empty list of {code, path, message} strings, never
+    ``ignored_field`` (that one belongs to the call, not to the result)."""
+    return (
+        isinstance(w, list)
+        and len(w) > 0
+        and all(
+            isinstance(x, dict)
+            and set(x) == {"code", "path", "message"}
+            and all(isinstance(v, str) for v in x.values())
+            and x["code"] != "ignored_field"
+            for x in w
+        )
+    )
+
+
+_UNSET: Any = object()
+
+
+def _int_arg(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
 
 
 class Oplog:
@@ -825,14 +897,55 @@ class Oplog:
     def version(self) -> int:
         return self._doc["version"]
 
-    def history_list(self, since_version: int = 0) -> list[dict]:
-        """Copies of the entries with ``new_version`` > ``since_version``, oldest first."""
-        return [copy.deepcopy(e) for e in self._entries if e["new_version"] > since_version]
+    def head(self) -> dict:
+        """The current ``{project_id, schema_version, version, hash, seq}`` in one read."""
+        return {
+            "project_id": self._doc["id"],
+            "schema_version": self._doc["schema_version"],
+            "version": self._doc["version"],
+            "hash": self._doc["hash"],
+            "seq": len(self._entries),
+        }
 
-    def history_diff(self, since_version: int) -> list[dict]:
-        """What changed after ``since_version``: one short record per entry (no ops)."""
-        keep = ("seq", "op_id", "group_id", "actor", "step", "summary", "base_version", "new_version", "changed_ids", "undoes")
-        return [{k: copy.deepcopy(e[k]) for k in keep if k in e} for e in self._entries if e["new_version"] > since_version]
+    def history_list(self, /, **args: Any) -> dict:
+        """``history_list{since_version?=0, limit?=50}``: copies of the full log lines with
+        ``new_version`` > ``since_version``, oldest first, at most ``limit`` (1-200), as
+        ``{entries, next_since_version, head_version}``. Bad args are ``invalid_op``."""
+        since, limit = self._history_args(args, required=False, limits=HISTORY_LIST_LIMIT)
+        page, nxt = self._page([e for e in self._entries if e["new_version"] > since], limit)
+        return {"entries": [copy.deepcopy(e) for e in page], "next_since_version": nxt, "head_version": self.version}
+
+    def history_diff(self, /, **args: Any) -> dict:
+        """``history_diff{since_version, limit?=200}``: one short record per entry after
+        ``since_version`` (no ops), at most ``limit`` (1-500), as ``{records, next_since_version,
+        head_version}``."""
+        since, limit = self._history_args(args, required=True, limits=HISTORY_DIFF_LIMIT)
+        page, nxt = self._page([e for e in self._entries if e["new_version"] > since], limit)
+        return {"records": [_diff_record(e) for e in page], "next_since_version": nxt, "head_version": self.version}
+
+    @staticmethod
+    def _page(items: list[dict], limit: int) -> tuple[list[dict], int | None]:
+        page = items[:limit]
+        return page, (page[-1]["new_version"] if len(items) > limit else None)
+
+    def _history_args(self, args: dict, *, required: bool, limits: tuple[int, int]) -> tuple[int, int]:
+        """Order: unknown arg, missing arg, project_id, since_version, limit."""
+        need = {"since_version"} if required else set()
+        for k in sorted(set(args) - {"since_version", "limit", "project_id"}, key=repr):
+            raise OplogError("invalid_op", f"unknown argument '{k}'", rule="unknown_arg", path=T._j("", k))
+        for k in sorted(need - set(args), key=repr):
+            raise OplogError("invalid_op", f"'{k}' is required", rule="missing_arg", path=T._j("", k))
+        self._check_project_id(args)
+        since = args.get("since_version", 0)
+        if not (_int_arg(since) and since >= 0):
+            raise OplogError("invalid_op", "since_version must be an integer >= 0", rule="bad_arg", path="/since_version")
+        limit = args.get("limit", limits[0])
+        if not (_int_arg(limit) and 1 <= limit <= limits[1]):
+            raise OplogError("invalid_op", f"limit must be an integer from 1 to {limits[1]}", rule="bad_arg", path="/limit")
+        return since, limit
+
+    def _diff_since(self, since_version: int) -> list[dict]:
+        return [_diff_record(e) for e in self._entries if e["new_version"] > since_version]
 
     # ---- the single entry point
 
@@ -845,7 +958,7 @@ class Oplog:
             raise TypeError("call() needs the Session the caller's token resolves to")
         if not isinstance(args, dict):
             raise OplogError("invalid_op", "args must be an object", rule="bad_arg", path="")
-        args, warnings = _strip_forged(args)
+        args, warnings = _strip_forged(args)  # this call's own ignored_field warnings
         if tool == "timeline_apply":
             return self._apply(session, args, warnings)
         if tool in ("history_undo", "history_redo"):
@@ -878,13 +991,20 @@ class Oplog:
                     rule="bad_arg",
                     path="/summary",
                 )
-        if "project_id" in args and args["project_id"] != self._doc["id"]:
+        self._check_project_id(args)
+
+    def _check_project_id(self, args: dict) -> None:
+        if "project_id" not in args:
+            return
+        if not isinstance(args["project_id"], str):
+            raise OplogError("invalid_op", "project_id must be a string", rule="bad_arg", path="/project_id")
+        if args["project_id"] != self._doc["id"]:
             raise OplogError(
                 "not_found",
                 f"no project {args['project_id']!r} here",
                 rule="not_found",
                 path="/project_id",
-                id=str(args["project_id"]),
+                id=args["project_id"],
             )
 
     @staticmethod
@@ -922,17 +1042,20 @@ class Oplog:
         self._base_version_type(args)
         bv = args["base_version"]
         if bv != self.version:
+            diff = self._diff_since(min(bv, self.version))
             raise OplogError(
                 "conflict",
                 f"the timeline is at version {self.version}, not {bv}",
                 hint="Read the history_diff, then retry against current_version.",
                 current_version=self.version,
-                history_diff=self.history_diff(min(bv, self.version)),
+                history_diff=diff[:CONFLICT_DIFF_MAX],
+                history_diff_truncated=len(diff) > CONFLICT_DIFF_MAX,
             )
 
-    def _replayed(self, session: Session, tool: str, args: dict) -> dict | None:
+    def _replayed(self, session: Session, tool: str, args: dict, warnings: list[dict]) -> dict | None:
         """The cached result of an identical earlier call with this (actor, client_op_id), or
-        None. A different call under the same key is ``client_op_id_mismatch``."""
+        None. A different call under the same key is ``client_op_id_mismatch``. The cache holds
+        result warnings only; this call's own strip ``warnings`` are added after them."""
         key = (session.actor.kind, session.actor.id, args["client_op_id"])
         r = self._results.get(key)
         if r is None:
@@ -948,7 +1071,9 @@ class Oplog:
                 op_ids=[entry["op_id"]],
                 hint="Use a new client_op_id for a new call.",
             )
-        return copy.deepcopy(r)
+        out = copy.deepcopy(r)
+        out["warnings"] = out["warnings"] + copy.deepcopy(warnings)
+        return out
 
     def _same_call(self, tool: str, args: dict, e: dict) -> bool:
         """Whether ``args`` (forged fields already stripped) is the call that made entry ``e``.
@@ -1009,19 +1134,9 @@ class Oplog:
         inverse: list[dict] = []
         for k, op in enumerate(ops):
             try:
-                a, inv = _apply_one(ctx, op, internal)
+                a, inv = _apply_one(ctx, op, internal, k)
             except _OpError as e:
-                found_id = {"id": e.ident} if e.code == "not_found" and isinstance(e.ident, str) else {}
-                if e.item_id is not None:
-                    found_id = {"id": e.item_id}
-                raise OplogError(
-                    e.code,
-                    f"op {k}: {e.message}",
-                    rule=e.rule,
-                    op_index=k,
-                    path=T._j("", "ops", k, *_key_parts(e.key)),
-                    **found_id,
-                ) from None
+                raise _as_oplog_error(e, k) from None
             logged.append(a)
             inverse = inv + inverse
             ctx.seen |= set(T._all_ids(ctx.doc))
@@ -1059,7 +1174,7 @@ class Oplog:
         """The first op after which the doc stops validating (only worked out on failure)."""
         ctx = _Ctx(copy.deepcopy(start), self._retired, public=not internal)
         for k, op in enumerate(ops):
-            _apply_one(ctx, op, internal)
+            _apply_one(ctx, op, internal, k)
             d = dict(ctx.doc)
             d.pop("hash", None)
             if T.validate(d):
@@ -1078,6 +1193,9 @@ class Oplog:
         warnings: list[dict],
         tool: str,
     ) -> dict:
+        """``warnings`` are this call's strip warnings: returned, never stored. Result warnings
+        (none exist yet) would go in the line's ``warnings`` key and the cache."""
+        stored: list[dict] = []
         entry: dict[str, Any] = {
             "seq": len(self._entries) + 1,
             "op_id": self._new_op_id(),
@@ -1096,6 +1214,8 @@ class Oplog:
         step = session.step()
         if step is not None:
             entry["step"] = step
+        if stored:
+            entry["warnings"] = stored
         if self._path is not None:
             line = _canon(entry)
             with open(self._path, "a", encoding="utf-8") as f:
@@ -1106,18 +1226,27 @@ class Oplog:
         self._retire(new)
         self._doc = new
         self._checkpoint()
-        result = _result(entry, warnings)
+        result = _result(entry, entry.get("warnings", []))
         self._results[(session.actor.kind, session.actor.id, args["client_op_id"])] = result
         self._tools[(session.actor.kind, session.actor.id, args["client_op_id"])] = tool
-        return copy.deepcopy(result)
+        out = copy.deepcopy(result)
+        out["warnings"] = out["warnings"] + copy.deepcopy(warnings)
+        return out
 
-    def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
+    def check_apply_envelope(self, args: dict) -> None:
+        """``timeline_apply``'s envelope checks, in order: tool args (unknown, missing,
+        client_op_id, group_id, summary, project_id), ``group_id: null``, the ``base_version``
+        type, the ``ops`` shape. ``args`` must already have actor/step stripped. /mcp runs this
+        same check before its op stage."""
         self._check_args(args, {"base_version", "ops", "summary", "client_op_id"}, {"project_id", "group_id"})
         if "group_id" in args and args["group_id"] is None:  # Ada: omit it for no group; null is junk
             raise OplogError("invalid_op", "group_id must be a string; omit it for no group", rule="bad_arg", path="/group_id")
         self._base_version_type(args)  # every shape check runs before dedupe
         self._ops_shape(args["ops"])
-        done = self._replayed(session, "timeline_apply", args)
+
+    def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
+        self.check_apply_envelope(args)
+        done = self._replayed(session, "timeline_apply", args, warnings)
         if done is not None:
             return done
         self._base_version(args, required=True)
@@ -1134,11 +1263,40 @@ class Oplog:
                 out.update(e["undoes"] or [])
         return out
 
-    def _undo(self, session: Session, args: dict, warnings: list[dict], *, redo: bool) -> dict:
+    def check_undo_envelope(self, args: dict, *, redo: bool) -> None:
+        """``history_undo``/``history_redo``'s arg checks, in order (``args`` already stripped)."""
         self._check_args(args, {"client_op_id"}, {"project_id", "op_id", "group_id", "summary", "base_version"})
         self._base_version_type(args)  # every shape check runs before dedupe
         self._undo_shape(args, redo)
-        done = self._replayed(session, "history_redo" if redo else "history_undo", args)
+
+    @classmethod
+    def precheck(cls, tool: str, args: dict) -> OplogError:
+        """The error the engine gives ``tool`` with these ``args`` when there is no such project:
+        the same checks in the same order, with any string ``project_id`` ``not_found`` and any
+        other one ``bad_arg``. For a caller (/mcp) that can't pick the project, so it answers
+        exactly as the engine would."""
+        shadow = cls.__new__(cls)
+        shadow._doc = {"id": None, "version": 0}
+        shadow._entries = []
+        args, _ = _strip_forged(args)
+        try:
+            if tool == "timeline_apply":
+                shadow.check_apply_envelope(args)
+            elif tool in ("history_undo", "history_redo"):
+                shadow.check_undo_envelope(args, redo=tool == "history_redo")
+            elif tool == "history_list":
+                shadow.history_list(**args)
+            elif tool == "history_diff":
+                shadow.history_diff(**args)
+            else:
+                shadow._check_project_id(args)
+        except OplogError as e:
+            return e
+        raise AssertionError("precheck needs a project_id")  # pragma: no cover
+
+    def _undo(self, session: Session, args: dict, warnings: list[dict], *, redo: bool) -> dict:
+        self.check_undo_envelope(args, redo=redo)
+        done = self._replayed(session, "history_redo" if redo else "history_undo", args, warnings)
         if done is not None:
             return done
         self._base_version(args, required=False)
@@ -1238,7 +1396,7 @@ class Oplog:
             log._doc = new
             log._checkpoint()
             key = (e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])
-            log._results[key] = _result(e, [])
+            log._results[key] = _result(e, e.get("warnings", []))
             log._tools[key] = _tool_of(e, log._entries)
         log._path = os.fspath(path)
         return log
@@ -1294,6 +1452,31 @@ def _mentions(obj: Any, ids: set[str]) -> bool:
             if isinstance(v, (dict, list)) and _mentions(v, ids):
                 return True
     return False
+
+
+_DIFF_KEYS = (
+    "seq",
+    "op_id",
+    "group_id",
+    "actor",
+    "step",
+    "summary",
+    "base_version",
+    "new_version",
+    "hash",
+    "changed_ids",
+    "undoes",
+)
+
+
+def _diff_record(e: dict) -> dict:
+    """The short record of one entry (history_diff, conflict bodies, events): no ops."""
+    return {k: copy.deepcopy(e[k]) for k in _DIFF_KEYS if k in e}
+
+
+def strip_forged(args: dict) -> tuple[dict, list[dict]]:
+    """Public name for the engine's actor/step strip (what :meth:`Oplog.call` does first)."""
+    return _strip_forged(args)
 
 
 def _result(entry: dict, warnings: list[dict]) -> dict:

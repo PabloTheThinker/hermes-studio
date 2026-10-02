@@ -19,6 +19,18 @@ HUMAN = O.Session(O.Actor("human", "pablo"))
 HERMES_ACTOR = O.Actor("agent", "hermes")
 
 
+def all_lines(log: O.Oplog) -> list[dict]:
+    """Every log line, oldest first (pages history_list)."""
+    out: list[dict] = []
+    since = 0
+    while True:
+        page = log.history_list(since_version=since, limit=200)
+        out += page["entries"]
+        if page["next_since_version"] is None:
+            return out
+        since = page["next_since_version"]
+
+
 def hermes(step: int | None = 3) -> O.Session:
     return O.Session(HERMES_ACTOR, O.PlanContext(step))
 
@@ -97,7 +109,7 @@ def h(log: O.Oplog) -> str:
 def test_a_line_has_exactly_the_contract_fields():
     log = new_log()
     r = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 11 * S}, group_id="g1")
-    (e,) = log.history_list()
+    (e,) = all_lines(log)
     assert list(O.LINE_FIELDS) == [
         "seq",
         "op_id",
@@ -160,7 +172,7 @@ def test_forged_actor_in_the_args_is_ignored():
             "ops": [{"op": "move_clip", "id": "c3", "at": 11 * S}],
         },
     )
-    assert log.history_list()[-1]["actor"] == {"kind": "agent", "id": "hermes"}
+    assert all_lines(log)[-1]["actor"] == {"kind": "agent", "id": "hermes"}
     assert r["warnings"] == [
         {"code": "ignored_field", "path": "/actor", "message": "'actor' is ignored: it comes from the session, not the arguments"}
     ]
@@ -174,7 +186,7 @@ def test_forged_actor_in_the_args_is_ignored():
 def test_forged_actor_and_step_inside_an_op_are_ignored():
     log = new_log()
     r = apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x", "actor": "hermes", "step": 7})
-    e = log.history_list()[-1]
+    e = all_lines(log)[-1]
     assert e["actor"] == {"kind": "human", "id": "pablo"} and "step" not in e
     assert e["ops"] == [{"op": "add_marker", "at": 0, "label": "x", "id": "mk1"}]
     assert [w["path"] for w in r["warnings"]] == ["/ops/0/actor", "/ops/0/step"]
@@ -186,17 +198,17 @@ def test_forged_step_is_ignored_and_the_plan_step_is_logged():
     plan = O.PlanContext(3)
     agent = O.Session(HERMES_ACTOR, plan)
     apply(log, agent, {"op": "move_clip", "id": "c3", "at": 11 * S}, step=99)
-    assert log.history_list()[-1]["step"] == 3
+    assert all_lines(log)[-1]["step"] == 3
     plan.step = 4  # the session layer moves the plan on
     apply(log, agent, {"op": "move_clip", "id": "c3", "at": 12 * S}, step=1)
-    assert log.history_list()[-1]["step"] == 4
+    assert all_lines(log)[-1]["step"] == 4
 
 
 def test_an_agent_without_a_plan_step_gets_no_step_even_if_the_args_have_one():
     log = new_log()
     for session in (O.Session(O.Actor("agent", "claude")), hermes(None)):
         r = apply(log, session, {"op": "add_marker", "at": 0, "label": "x"}, step=2)
-        assert "step" not in log.history_list()[-1]
+        assert "step" not in all_lines(log)[-1]
         assert [w["path"] for w in r["warnings"]] == ["/step"]
 
 
@@ -205,8 +217,8 @@ def test_a_human_op_never_gets_a_step():
     human_with_plan = O.Session(O.Actor("human", "pablo"), O.PlanContext(5))  # a plan context is present
     apply(log, human_with_plan, {"op": "move_clip", "id": "c3", "at": 11 * S}, step=5)
     apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 12 * S})
-    log.call(human_with_plan, "history_undo", {"op_id": log.history_list()[1]["op_id"], "client_op_id": "hu", "step": 2})
-    assert len(log.history_list()) == 3 and all("step" not in e for e in log.history_list())
+    log.call(human_with_plan, "history_undo", {"op_id": all_lines(log)[1]["op_id"], "client_op_id": "hu", "step": 2})
+    assert len(all_lines(log)) == 3 and all("step" not in e for e in all_lines(log))
 
 
 def test_forged_fields_are_ignored_on_undo_and_redo_too():
@@ -214,14 +226,25 @@ def test_forged_fields_are_ignored_on_undo_and_redo_too():
     r = apply(log, hermes(2), {"op": "move_clip", "id": "c3", "at": 11 * S})
     u = log.call(hermes(2), "history_undo", {"op_id": r["op_id"], "client_op_id": "u", "actor": "pablo", "step": 9})
     rd = log.call(hermes(2), "history_redo", {"op_id": u["op_id"], "client_op_id": "r", "actor": {"kind": "human"}, "step": 9})
-    for res, e in zip((u, rd), log.history_list()[1:], strict=True):
+    for res, e in zip((u, rd), all_lines(log)[1:], strict=True):
         assert e["actor"] == {"kind": "agent", "id": "hermes"} and e["step"] == 2
         assert [w["path"] for w in res["warnings"]] == ["/actor", "/step"]
 
 
 def test_call_is_the_only_way_to_write():
     public = {n for n in dir(O.Oplog) if not n.startswith("_")}
-    assert public == {"call", "doc", "version", "history_list", "history_diff", "load"}
+    assert public == {
+        "call",
+        "doc",
+        "version",
+        "head",
+        "history_list",
+        "history_diff",
+        "load",
+        "check_apply_envelope",
+        "check_undo_envelope",
+        "precheck",
+    }
     log = new_log()
     log.doc["markers"].clear()  # doc is a copy
     assert log.doc["markers"]
@@ -248,7 +271,7 @@ def test_a_retry_with_the_same_client_op_id_applies_once():
     args = {"base_version": 0, "ops": [{"op": "add_marker", "at": 0, "label": "x"}], "summary": "s", "client_op_id": "same"}
     r1 = log.call(HUMAN, "timeline_apply", args)
     r2 = log.call(HUMAN, "timeline_apply", args)  # base_version is stale now: the retry still returns the original
-    assert r1 == r2 and log.version == 1 and len(log.history_list()) == 1
+    assert r1 == r2 and log.version == 1 and len(all_lines(log)) == 1
     r3 = log.call(hermes(), "timeline_apply", {**args, "base_version": 1})  # another actor: its own key
     assert r3["op_id"] != r1["op_id"] and log.version == 2
 
@@ -256,7 +279,7 @@ def test_a_retry_with_the_same_client_op_id_applies_once():
 def test_a_stale_base_version_is_a_conflict_with_a_history_diff():
     log = new_log()
     apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 11 * S})
-    before, n = h(log), len(log.history_list())
+    before, n = h(log), len(all_lines(log))
     args = {"base_version": 0, "ops": [{"op": "add_marker", "at": 0, "label": "x"}], "summary": "s", "client_op_id": "c"}
     for _ in range(2):  # a stale retry is refused again
         with pytest.raises(O.OplogError) as e:
@@ -264,7 +287,7 @@ def test_a_stale_base_version_is_a_conflict_with_a_history_diff():
         d = e.value.as_dict()
         assert d["code"] == "conflict" and d["current_version"] == 1
         assert [x["op_id"] for x in d["history_diff"]] == ["op1"] and d["history_diff"][0]["actor"]["kind"] == "human"
-        assert h(log) == before and len(log.history_list()) == n
+        assert h(log) == before and len(all_lines(log)) == n
 
 
 def test_a_batch_that_fails_at_op_k_applies_nothing():
@@ -273,7 +296,7 @@ def test_a_batch_that_fails_at_op_k_applies_nothing():
     with pytest.raises(O.OplogError) as e:
         apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 11 * S}, {"op": "move_clip", "id": "nope", "at": 0})
     assert e.value.code == "not_found" and e.value.extra["op_index"] == 1 and e.value.extra["path"] == "/ops/1/id"
-    assert log.doc == before and log.history_list() == []
+    assert log.doc == before and all_lines(log) == []
 
 
 def test_a_batch_whose_result_is_invalid_applies_nothing_and_passes_problems_through():
@@ -284,7 +307,7 @@ def test_a_batch_whose_result_is_invalid_applies_nothing_and_passes_problems_thr
     d = e.value.as_dict()
     assert d["code"] == "invalid_op" and d["rule"] == "overlap" and d["op_index"] == 1 and d["id"] == "c3"
     assert d["path"] == "/tracks/1/items/2" and d["problems"][0]["rule"] == "overlap"
-    assert log.doc == before and log.history_list() == []
+    assert log.doc == before and all_lines(log) == []
 
 
 @pytest.mark.parametrize(
@@ -332,7 +355,7 @@ def test_bad_calls_are_invalid_op(args, rule):
     log = new_log()
     with pytest.raises(O.OplogError) as e:
         log.call(HUMAN, "timeline_apply", {"base_version": 0, "client_op_id": "x", **args})
-    assert e.value.code == "invalid_op" and e.value.extra["rule"] == rule and log.history_list() == []
+    assert e.value.code == "invalid_op" and e.value.extra["rule"] == rule and all_lines(log) == []
 
 
 @pytest.mark.parametrize("with_file", [False, True])
@@ -345,7 +368,7 @@ def test_a_summary_with_a_lone_surrogate_is_invalid_op_not_an_encode_error(tmp_p
     r = apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x"})
     with pytest.raises(O.OplogError) as e:
         log.call(HUMAN, "history_undo", {"op_id": r["op_id"], "client_op_id": "u-sur", "summary": bad})
-    assert e.value.extra["path"] == "/summary" and log.version == 1 and len(log.history_list()) == 1
+    assert e.value.extra["path"] == "/summary" and log.version == 1 and len(all_lines(log)) == 1
     with pytest.raises(O.OplogError) as e:  # a lone surrogate in an op is the validator's wrong_type
         apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": bad})
     assert e.value.extra["rule"] == "wrong_type" and log.version == 1
@@ -382,7 +405,7 @@ def roundtrip(*ops: dict) -> tuple[O.Oplog, dict]:
 def test_insert_clip_gets_a_fresh_id_and_undo_deletes_it():
     log, d = roundtrip({"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S})
     assert item(d, "c4")["at"] == 20 * S and item(d, "c4")["fade_in"] == 0
-    assert log.history_list()[0]["inverse"] == [{"op": "delete_item", "id": "c4"}]
+    assert all_lines(log)[0]["inverse"] == [{"op": "delete_item", "id": "c4"}]
 
 
 def test_add_text_transition_track_and_marker():
@@ -412,7 +435,7 @@ def test_trim_ripple_moves_later_items_and_undo_moves_them_back():
     apply(log, HUMAN, {"op": "trim_clip", "id": "c1", "src_out": 3 * S, "ripple": True})
     d = log.doc
     assert item(d, "c2")["at"] == 3 * S and item(d, "c3")["at"] == 9 * S
-    assert log.history_list()[0]["inverse"][0] == {"op": "shift_items", "ids": ["c2", "c3"], "by": S}
+    assert all_lines(log)[0]["inverse"][0] == {"op": "shift_items", "ids": ["c2", "c3"], "by": S}
 
 
 def test_split_gives_two_pieces_and_undo_joins_back_to_the_old_id():
@@ -421,7 +444,7 @@ def test_split_gives_two_pieces_and_undo_joins_back_to_the_old_id():
     assert "c2" not in ids(d) and a["split_from"] == b["split_from"] == "c2"
     assert (a["src"], a["at"], b["src"], b["at"]) == ([10 * S, 11 * S], 4 * S, [11 * S, 14 * S], 5 * S)
     assert item(d, "x1")["anchor"] == {"to": "c5", "offset": 0}  # x1 starts at the cut: the second piece
-    e = log.history_list()[0]
+    e = all_lines(log)[0]
     assert e["ops"][0]["ids"] == ["c4", "c5"] and e["inverse"][0]["op"] == "join_clips"
     assert e["changed_ids"] == ["c2", "c4", "c5", "x1"]
     assert item(log.doc, "c4") == a  # redo made the same pieces
@@ -465,10 +488,10 @@ def test_freed_anchored_items_are_in_changed_ids_of_the_delete_and_its_undo():
     log = new_log()
     apply(log, HUMAN, {"op": "add_text", "id": "x9", "dur": S, "text": "b", "style": "pop", "anchor": {"to": "c2", "offset": 0}})
     r = apply(log, HUMAN, {"op": "delete_clip", "id": "c2"})
-    assert r["changed_ids"] == ["c2", "x1", "x9"] == log.history_list()[-1]["changed_ids"]
-    assert {o["id"] for o in log.history_list()[-1]["inverse"] if o["op"] == "set_fields"} == {"x1", "x9"}
+    assert r["changed_ids"] == ["c2", "x1", "x9"] == all_lines(log)[-1]["changed_ids"]
+    assert {o["id"] for o in all_lines(log)[-1]["inverse"] if o["op"] == "set_fields"} == {"x1", "x9"}
     u = undo(log, HUMAN, op_id=r["op_id"])
-    assert u["changed_ids"] == ["c2", "x1", "x9"] == log.history_list()[-1]["changed_ids"]
+    assert u["changed_ids"] == ["c2", "x1", "x9"] == all_lines(log)[-1]["changed_ids"]
     assert item(log.doc, "x1")["anchor"] == {"to": "c2", "offset": S} and "at" not in item(log.doc, "x9")
     rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "rd-del"})
     assert rd["changed_ids"] == ["c2", "x1", "x9"]
@@ -478,8 +501,8 @@ def test_re_anchored_items_are_in_changed_ids_of_the_split_and_its_undo():
     log = new_log()
     r = apply(log, HUMAN, {"op": "split_clip", "id": "c1", "at": S, "ids": ["p1", "p2"]})
     assert item(log.doc, "mu1")["anchor"] == {"to": "p1", "offset": 0}  # music anchored to c1 moved to p1
-    assert r["changed_ids"] == ["c1", "mu1", "p1", "p2"] == log.history_list()[-1]["changed_ids"]
-    (inv,) = log.history_list()[-1]["inverse"]
+    assert r["changed_ids"] == ["c1", "mu1", "p1", "p2"] == all_lines(log)[-1]["changed_ids"]
+    (inv,) = all_lines(log)[-1]["inverse"]
     assert inv["op"] == "join_clips" and inv["anchors"] == {"mu1": {"to": "c1", "offset": 0}}
     u = undo(log, HUMAN, op_id=r["op_id"])
     assert u["changed_ids"] == ["c1", "mu1", "p1", "p2"] and item(log.doc, "mu1")["anchor"]["to"] == "c1"
@@ -538,9 +561,9 @@ def test_ripple_delete_closes_the_hole_and_takes_transitions_along():
 def test_undo_is_a_new_entry_and_history_is_never_rewritten():
     log = new_log()
     r = apply(log, HUMAN, {"op": "move_clip", "id": "c3", "at": 12 * S})
-    first = copy.deepcopy(log.history_list())
+    first = copy.deepcopy(all_lines(log))
     u = undo(log, HUMAN, op_id=r["op_id"])
-    hist = log.history_list()
+    hist = all_lines(log)
     assert hist[:1] == first and len(hist) == 2 and hist[1]["undoes"] == [r["op_id"]] and u["new_version"] == 2
     assert hist[1]["ops"] == first[0]["inverse"] and hist[1]["summary"] == "Undo: edit"
     with pytest.raises(O.OplogError) as e:
@@ -556,7 +579,7 @@ def test_undoing_a_group_is_one_entry_in_reverse_order():
     apply(log, hermes(), {"op": "add_marker", "at": 0, "label": "x"})
     u = undo(log, hermes(), group_id="fillers")
     assert u["undoes"] == [b["op_id"], a["op_id"]] and h(log) != h0 and item(log.doc, "c3")["at"] == 10 * S
-    assert len(log.history_list()) == 4
+    assert len(all_lines(log)) == 4
 
 
 def test_an_agent_cannot_undo_a_humans_entry_but_a_human_can_undo_an_agents():
@@ -626,7 +649,7 @@ def test_the_log_file_replays_to_the_live_hash(tmp_path):
     )
     undo(log, HUMAN, group_id="g")
     lines = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines()]
-    assert lines == log.history_list() and lines[0]["step"] == 4
+    assert lines == all_lines(log) and lines[0]["step"] == 4
     assert all(set(e) <= set(O.LINE_FIELDS) | {"step"} for e in lines)
     again = O.Oplog.load(base(), p)
     assert again.doc == log.doc and T.canonical_hash(O.replay(base(), lines)) == h(log)
@@ -635,7 +658,7 @@ def test_the_log_file_replays_to_the_live_hash(tmp_path):
         "ops": [{"op": "split_clip", "id": "c2", "at": 5 * S}],
         "summary": "edit",
         "group_id": "g",
-        "client_op_id": log.history_list()[0]["client_op_id"],
+        "client_op_id": all_lines(log)[0]["client_op_id"],
     }
     retry = again.call(hermes(4), "timeline_apply", first)
     assert retry["op_id"] == r["op_id"] and again.version == log.version  # dedupe survives a reload
@@ -652,7 +675,7 @@ def test_a_failed_write_to_the_log_changes_nothing(tmp_path):
     before = log.doc
     with pytest.raises(OSError):
         apply(log, HUMAN, {"op": "add_marker", "at": 0, "label": "x"})
-    assert log.doc == before and log.history_list() == []
+    assert log.doc == before and all_lines(log) == []
 
 
 # --------------------------------------------------------------------------- C2: 1,000 seeded random runs
@@ -704,28 +727,28 @@ def test_c2_undo_restores_the_hash_over_1000_seeded_runs():
                 continue
             hashes.append(h(log))
             applied += 1
-        n = len(log.history_list())
+        n = len(all_lines(log))
         assert len(hashes) == n + 1
-        if n and rng.random() < 0.3 and any(e["group_id"] == "g" for e in log.history_list()):
+        if n and rng.random() < 0.3 and any(e["group_id"] == "g" for e in all_lines(log)):
             # a group undo is one entry
             try:
                 undo(log, HUMAN, group_id="g")
                 undone_groups += 1
-                assert len(log.history_list()) == n + 1
-                undo(log, HUMAN, op_id=log.history_list()[-1]["op_id"])  # undo the undo
+                assert len(all_lines(log)) == n + 1
+                undo(log, HUMAN, op_id=all_lines(log)[-1]["op_id"])  # undo the undo
                 assert h(log) == hashes[-1]
             except O.OplogError as e:
                 assert e.code == "undo_blocked" and e.extra["reason"] == "dependents"
                 blockers = e.extra["blocking_op_ids"]
-                seqs = {x["op_id"]: x["seq"] for x in log.history_list()}
+                seqs = {x["op_id"]: x["seq"] for x in all_lines(log)}
                 assert blockers and [seqs[b] for b in blockers] == sorted(seqs[b] for b in blockers)
         # undo-all, newest first, as a human: every step lands on the previous hash
-        live = [e for e in log.history_list() if not e["undoes"]]
+        live = [e for e in all_lines(log) if not e["undoes"]]
         for e, want in zip(reversed(live), reversed(hashes[:-1]), strict=True):
             undo(log, HUMAN, op_id=e["op_id"])
             assert h(log) == want
         assert h(log) == hashes[0]
-        assert T.canonical_hash(O.replay(base(), log.history_list())) == hashes[0]
+        assert T.canonical_hash(O.replay(base(), all_lines(log))) == hashes[0]
     assert applied > 2000 and undone_groups > 50
 
 
@@ -749,7 +772,7 @@ def test_items_that_move_with_their_anchor_are_in_changed_ids(op, want):
     log = new_log()
     before = log.doc
     r = apply(log, HUMAN, op)
-    assert r["changed_ids"] == want == log.history_list()[-1]["changed_ids"]
+    assert r["changed_ids"] == want == all_lines(log)[-1]["changed_ids"]
     assert "x1" in _spans_changed(before, log.doc)
     u = undo(log, HUMAN, op_id=r["op_id"])
     assert u["changed_ids"] == want  # the undo moves them back
@@ -785,7 +808,7 @@ def test_changed_ids_cover_every_item_whose_resolved_span_changed_over_300_seede
                 continue
             assert _spans_changed(before, log.doc) <= set(r["changed_ids"])
             checked += 1
-        for e in reversed([e for e in log.history_list() if not e["undoes"]]):
+        for e in reversed([e for e in all_lines(log) if not e["undoes"]]):
             before = log.doc
             u = undo(log, HUMAN, op_id=e["op_id"])
             assert _spans_changed(before, log.doc) <= set(u["changed_ids"])
@@ -800,17 +823,17 @@ def test_add_track_never_reuses_a_track_id_that_existed_in_the_log(tmp_path):
     n = iter(range(1, 10**9))
     log = O.Oplog(base(), path=p, new_op_id=lambda: f"op{next(n)}")
     a = apply(log, HUMAN, {"op": "add_track", "role": "music"})
-    assert "A3" in a["changed_ids"] and log.history_list()[-1]["ops"][0]["id"] == "A3"  # picked id is logged
+    assert "A3" in a["changed_ids"] and all_lines(log)[-1]["ops"][0]["id"] == "A3"  # picked id is logged
     apply(log, HUMAN, {"op": "remove_track", "id": "A3"})
     b = apply(log, HUMAN, {"op": "add_track", "role": "music"})
     assert "A4" in b["changed_ids"] and "A3" not in b["changed_ids"]
-    assert log.history_list()[-1]["ops"][0]["id"] == "A4"
+    assert all_lines(log)[-1]["ops"][0]["id"] == "A4"
     apply(log, HUMAN, {"op": "remove_track", "id": "A4"})
     again = O.Oplog.load(base(), p, new_op_id=lambda: f"op{next(n)}")
     assert T.canonical_hash(again.doc) == h(log)
     c = apply(again, HUMAN, {"op": "add_track", "role": "voice"})
     assert "A5" in c["changed_ids"]  # A3 and A4 are retired after load too
-    assert again.history_list()[-1]["ops"][0]["id"] == "A5"
+    assert all_lines(again)[-1]["ops"][0]["id"] == "A5"
 
 
 def test_add_track_takes_the_first_free_id_never_seen():
@@ -827,7 +850,7 @@ def test_add_track_with_a_non_string_role_is_bad_track_role(role):
         apply(log, HUMAN, {"op": "add_track", "role": role})
     x = e.value.extra
     assert e.value.code == "invalid_op" and x["rule"] == "bad_track_role" and x["path"] == "/ops/0/role"
-    assert log.version == 0 and log.history_list() == []
+    assert log.version == 0 and all_lines(log) == []
 
 
 # --------------------------------------------------------------------------- undo_blocked shapes
@@ -843,7 +866,7 @@ def test_inverse_invalid_carries_the_target_op_ids_path_and_id():
     assert e.value.code == "undo_blocked" and x["reason"] == "inverse_invalid"
     assert x["op_ids"] == [mv["op_id"]] and x["path"] == "/op_id" and x["id"] == mv["op_id"]
     assert x["rule"] == "overlap" and x["problems"] and "blocking_op_ids" not in x
-    assert len(log.history_list()) == 2
+    assert len(all_lines(log)) == 2
 
 
 def test_inverse_invalid_on_a_group_lists_its_entries_by_seq():
@@ -885,14 +908,14 @@ def test_an_op_level_not_found_carries_the_missing_id(op, path, missing):
         apply(log, HUMAN, {"op": "set_fade", "id": "c1", "fade_in": 0}, op)
     x = e.value.extra
     assert e.value.code == "not_found" and x["rule"] == "not_found" and x["op_index"] == 1
-    assert x["path"] == path and x["id"] == missing and log.history_list() == []
+    assert x["path"] == path and x["id"] == missing and all_lines(log) == []
 
 
 # --------------------------------------------------------------------------- ids that existed only inside a batch (Prove F1)
 
 
 def _picked(log: O.Oplog, k: int = 0) -> str:
-    return log.history_list()[-1]["ops"][k]["id"]
+    return all_lines(log)[-1]["ops"][k]["id"]
 
 
 @pytest.mark.parametrize(
@@ -918,8 +941,8 @@ def test_an_id_created_and_removed_in_one_batch_is_never_handed_out_again(tmp_pa
     apply(probe, HUMAN, make)
     gone = _picked(probe)
     apply(log, HUMAN, make, remove(gone))
-    assert log.history_list()[-1]["ops"][0]["id"] == gone and gone not in T._all_ids(log.doc)
-    lines = log.history_list()
+    assert all_lines(log)[-1]["ops"][0]["id"] == gone and gone not in T._all_ids(log.doc)
+    lines = all_lines(log)
     p2 = tmp_path / "after-batch.jsonl"
     p2.write_bytes(p.read_bytes())
     apply(log, HUMAN, again)
@@ -928,7 +951,7 @@ def test_an_id_created_and_removed_in_one_batch_is_never_handed_out_again(tmp_pa
     apply(loaded, HUMAN, again)
     assert _picked(loaded) != gone
     # replay retires the same way (it shares _retire with _commit and load) and reproduces the hash
-    assert T.canonical_hash(O.replay(base(), lines)) == T.canonical_hash(O.replay(base(), loaded.history_list()[:1]))
+    assert T.canonical_hash(O.replay(base(), lines)) == T.canonical_hash(O.replay(base(), all_lines(loaded)[:1]))
 
 
 # --------------------------------------------------------------------------- id types are checked up front (Prove F2)
@@ -975,18 +998,18 @@ def test_a_non_string_id_is_bad_arg_at_its_path_not_not_found(op, path, bad):
         apply(log, HUMAN, _put(op, bad))
     x = e.value.extra
     assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "bad_arg", path, 0)
-    assert log.history_list() == [] and log.version == 0
+    assert all_lines(log) == [] and log.version == 0
 
 
 # --------------------------------------------------------------------------- id_reused (Ada)
 
 
 def _reused(log: O.Oplog, *ops: dict, path: str) -> None:
-    v, n = log.version, len(log.history_list())
+    v, n = log.version, len(all_lines(log))
     with pytest.raises(O.OplogError) as e:
         apply(log, HUMAN, *ops)
     assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "id_reused", path)
-    assert log.version == v and len(log.history_list()) == n
+    assert log.version == v and len(all_lines(log)) == n
 
 
 def test_an_explicit_retired_marker_clip_or_track_id_is_id_reused():
@@ -1036,7 +1059,7 @@ def test_id_reused_holds_after_load_and_undo_redo_still_restore_old_ids(tmp_path
     log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "redo-1"})
     assert "c3" not in ids(log.doc)
     again = O.Oplog.load(base(), p)
-    assert T.canonical_hash(O.replay(base(), log.history_list())) == h(log) == h(again)
+    assert T.canonical_hash(O.replay(base(), all_lines(log))) == h(log) == h(again)
     _reused(again, {"op": "add_marker", "at": 0, "label": "b", "id": "z1"}, path="/ops/0/id")
     _reused(again, {"op": "insert_clip", "track": "V1", "media": "m1", "src": [0, S], "at": 20 * S, "id": "c3"}, path="/ops/0/id")
 
@@ -1045,7 +1068,7 @@ def test_id_reused_holds_after_load_and_undo_redo_still_restore_old_ids(tmp_path
 
 
 def _mismatch(log: O.Oplog, session: O.Session, tool: str, args: dict) -> None:
-    v, n = log.version, len(log.history_list())
+    v, n = log.version, len(all_lines(log))
     with pytest.raises(O.OplogError) as e:
         log.call(session, tool, args)
     assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == (
@@ -1053,7 +1076,7 @@ def _mismatch(log: O.Oplog, session: O.Session, tool: str, args: dict) -> None:
         "client_op_id_mismatch",
         "/client_op_id",
     )
-    assert log.version == v and len(log.history_list()) == n
+    assert log.version == v and len(all_lines(log)) == n
 
 
 APPLY = {
@@ -1093,7 +1116,7 @@ def test_an_identical_retry_still_returns_the_cached_result_even_with_forged_fie
         "ops": [{**APPLY["ops"][0], "step": 1, "actor": "x"}],
     }
     again = log.call(hermes(2), "timeline_apply", forged)
-    assert again["op_id"] == r["op_id"] and len(log.history_list()) == 1
+    assert again["op_id"] == r["op_id"] and len(all_lines(log)) == 1
     picked = {**APPLY, "ops": [{**APPLY["ops"][0], "id": _picked(log)}]}  # naming the id the engine picked
     assert log.call(hermes(2), "timeline_apply", picked)["op_id"] == r["op_id"]
 
@@ -1131,7 +1154,7 @@ def test_the_mismatch_check_survives_load(tmp_path):
     _mismatch(again, HUMAN, "timeline_apply", {**APPLY})  # other ops
     _mismatch(again, HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "same"})
     _mismatch(again, HUMAN, "history_undo", {"group_id": "g", "client_op_id": "u1"})
-    assert T.canonical_hash(O.replay(base(), again.history_list())) == h(again)
+    assert T.canonical_hash(O.replay(base(), all_lines(again))) == h(again)
 
 
 # --------------------------------------------------------------------------- junk retries on a cached key (Wire)
@@ -1145,11 +1168,11 @@ def _cached() -> tuple[O.Oplog, dict, dict]:
 
 
 def _bad_arg(log: O.Oplog, tool: str, args: dict, path: str) -> None:
-    v, n = log.version, len(log.history_list())
+    v, n = log.version, len(all_lines(log))
     with pytest.raises(O.OplogError) as e:
         log.call(HUMAN, tool, args)
     assert (e.value.code, e.value.extra["rule"], e.value.extra["path"]) == ("invalid_op", "bad_arg", path)
-    assert log.version == v and len(log.history_list()) == n
+    assert log.version == v and len(all_lines(log)) == n
 
 
 @pytest.mark.parametrize(
@@ -1248,7 +1271,7 @@ _JUNK = [
 
 def test_junk_args_on_a_cached_key_never_crash_over_3000_seeded_runs():
     log, a, u = _cached()
-    v, n = log.version, len(log.history_list())
+    v, n = log.version, len(all_lines(log))
     good = {  # the cached calls; each run mutates one to three fields with junk
         "timeline_apply": {k: v for k, v in APPLY.items() if k != "client_op_id"},
         "history_undo": {"op_id": a["op_id"]},
@@ -1273,7 +1296,7 @@ def test_junk_args_on_a_cached_key_never_crash_over_3000_seeded_runs():
         except O.OplogError as e:
             out = f"{e.code}/{e.extra.get('rule')}"
         seen[out] = seen.get(out, 0) + 1
-        assert log.version == v and len(log.history_list()) == n
+        assert log.version == v and len(all_lines(log)) == n
     assert {"invalid_op/bad_arg", "invalid_op/client_op_id_mismatch", "invalid_op/unknown_arg"} <= set(seen)
 
 
@@ -1358,12 +1381,12 @@ def test_r4_undo_with_a_null_group_is_bad_arg_and_undoes_nothing(monkeypatch):
     apply(log, HUMAN, {"op": "add_marker", "at": 2 * S, "label": "C"}, group_id="g1")
     before = h(log)
     _bad_arg(log, "history_undo", {"group_id": None, "client_op_id": "gnull"}, "/group_id")
-    assert h(log) == before and len(log.history_list()) == 3 and all(not e["undoes"] for e in log.history_list())
+    assert h(log) == before and len(all_lines(log)) == 3 and all(not e["undoes"] for e in all_lines(log))
     # with the shape check out of the way, the group match itself still never takes null as "ungrouped"
     monkeypatch.setattr(O.Oplog, "_undo_shape", staticmethod(lambda args, redo: None))
     with pytest.raises(O.OplogError) as e:
         log.call(HUMAN, "history_undo", {"group_id": None, "client_op_id": "gnull2"})
-    assert e.value.code == "not_found" and h(log) == before and len(log.history_list()) == 3
+    assert e.value.code == "not_found" and h(log) == before and len(all_lines(log)) == 3
 
 
 # --------------------------------------------------------------------------- ripple trim with crossfades (Glyph/Ada: the crossfade stays with the cut)
@@ -1511,11 +1534,11 @@ def test_crossfade_ripple_trims_survive_load_and_replay(tmp_path):
     log = xfade_log(d23=H, path=p)
     a = apply(log, HUMAN, {"op": "trim_clip", "id": "c1", "src_out": 3 * S, "ripple": True})
     apply(log, HUMAN, {"op": "trim_clip", "id": "c2", "src_in": 11 * S, "ripple": True})
-    u = undo(log, HUMAN, op_id=log.history_list()[-1]["op_id"])
+    u = undo(log, HUMAN, op_id=all_lines(log)[-1]["op_id"])
     log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
     again = O.Oplog.load(base(), p)
-    assert h(again) == h(log) and T.canonical_hash(O.replay(base(), log.history_list())) == h(log)
-    assert again.history_list()[1]["changed_ids"] == a["changed_ids"]
+    assert h(again) == h(log) and T.canonical_hash(O.replay(base(), all_lines(log))) == h(log)
+    assert all_lines(again)[1]["changed_ids"] == a["changed_ids"]
 
 
 def test_random_ripple_trims_with_crossfades_cover_changed_ids_and_round_trip_over_300_seeds():
@@ -1573,7 +1596,7 @@ def test_a_non_string_arg_name_is_unknown_arg_not_a_crash(junk):
                 },
             )
         assert (e.value.code, e.value.extra["rule"]) == ("invalid_op", "unknown_arg")
-    assert log.history_list() == [] and log.version == 0
+    assert all_lines(log) == [] and log.version == 0
 
 
 _NFC = "caf\u00e9"
@@ -1640,9 +1663,9 @@ def _busy_log(seed: int, n: int, **kw) -> O.Oplog:
     rng = random.Random(seed)
     log = new_log(**kw)
     k = 0
-    while len(log.history_list()) < n:
+    while len(all_lines(log)) < n:
         k += 1
-        entries = log.history_list()
+        entries = all_lines(log)
         if entries and rng.random() < 0.15:
             try:
                 tool = rng.choice(["history_undo", "history_redo"])
@@ -1663,7 +1686,7 @@ def test_same_call_checkpoints_equal_a_full_replay(seed, monkeypatch, tmp_path):
     monkeypatch.setattr(O, "CHECKPOINT_EVERY", 3)
     p = tmp_path / "oplog.jsonl"
     log = _busy_log(seed, 30, path=p)
-    states = _replayed_states(log.history_list())
+    states = _replayed_states(all_lines(log))
     assert sorted(log._checkpoints) == list(range(0, 31, 3))
     for again in (log, O.Oplog.load(base(), p)):
         assert sorted(again._checkpoints) == sorted(log._checkpoints)
@@ -1682,7 +1705,7 @@ def test_an_identical_retry_reruns_at_most_one_checkpoint_span(monkeypatch):
     runs = []
     real = O.Oplog._run
     monkeypatch.setattr(O.Oplog, "_run", lambda self, *a, **kw: runs.append(1) or real(self, *a, **kw))
-    for i, e in enumerate(log.history_list()):
+    for i, e in enumerate(all_lines(log)):
         runs.clear()
         retry = {
             **APPLY,
@@ -1706,7 +1729,7 @@ def test_retries_at_every_seq_still_match_after_load_with_engine_picked_ids(tmp_
             {**APPLY, "base_version": log.version, "client_op_id": f"k{i}", "ops": [{"op": "add_marker", "at": i, "label": "x"}]},
         )
     again = O.Oplog.load(base(), p)
-    for i, e in enumerate(log.history_list()):
+    for i, e in enumerate(all_lines(log)):
         omitted = {
             **APPLY,
             "base_version": e["base_version"],
@@ -1731,7 +1754,7 @@ def test_insert_clip_with_junk_media_is_unknown_media_at_the_op_arg(media):
         apply(log, HUMAN, *ops)
     x = e.value.extra
     assert (e.value.code, x["rule"], x["path"], x["op_index"]) == ("invalid_op", "unknown_media", "/ops/1/media", 1)
-    assert "id" not in x and log.version == 0 and log.history_list() == []
+    assert "id" not in x and log.version == 0 and all_lines(log) == []
     assert apply(log, HUMAN, {**ops[1], "media": "m1"})["new_version"] == 1  # a real media id still works
 
 
@@ -1740,7 +1763,7 @@ def test_timeline_apply_with_a_null_group_id_is_bad_arg_and_omitting_it_is_no_gr
     _bad_arg(log, "timeline_apply", {**APPLY, "group_id": None}, "/group_id")  # fresh
     ungrouped = {k: v for k, v in APPLY.items() if k != "group_id"}
     r = log.call(HUMAN, "timeline_apply", ungrouped)
-    assert r["group_id"] is None and log.history_list()[0]["group_id"] is None
+    assert r["group_id"] is None and all_lines(log)[0]["group_id"] is None
     _bad_arg(log, "timeline_apply", {**ungrouped, "group_id": None}, "/group_id")  # a cached key: shape first
     assert log.call(HUMAN, "timeline_apply", ungrouped)["op_id"] == r["op_id"]
     _bad_arg(log, "timeline_apply", {**ungrouped, "client_op_id": "n2", "base_version": 1, "group_id": None}, "/group_id")
@@ -1778,7 +1801,7 @@ def test_a_ripple_trim_never_moves_a_neighbour_that_only_overlaps_the_clip():
         apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2, "ripple": True})
     x = e.value.extra
     assert (e.value.code, x["rule"], x["id"]) == ("invalid_op", "transition_overlap_mismatch", "tab")  # the existing rule
-    assert h(log) == h0 and log.history_list() == []
+    assert h(log) == h0 and all_lines(log) == []
     apply(log, HUMAN, {"op": "trim_clip", "id": "m0", "src_out": S // 2})  # without ripple it's fine
 
 
@@ -1801,10 +1824,10 @@ def _edit(log: O.Oplog, session: O.Session = HUMAN, iid: str = "x1", **fields) -
 
 
 def _op_error(log: O.Oplog, *ops: dict) -> O.OplogError:
-    v, h0, n = log.version, h(log), len(log.history_list())
+    v, h0, n = log.version, h(log), len(all_lines(log))
     with pytest.raises(O.OplogError) as e:
         apply(log, HUMAN, *ops)
-    assert (log.version, h(log), len(log.history_list())) == (v, h0, n), "nothing applied"
+    assert (log.version, h(log), len(all_lines(log))) == (v, h0, n), "nothing applied"
     return e.value
 
 
@@ -1820,7 +1843,7 @@ def test_edit_text_replaces_only_the_fields_given(fields):
     after = _text(log)
     assert after == {**before, **fields}, "every other field (dur, anchor, fades, the field not given) is untouched"
     assert r["changed_ids"] == ["x1"]
-    e = log.history_list()[-1]
+    e = all_lines(log)[-1]
     assert e["ops"] == [{"op": "edit_text", "id": "x1", **fields}]
     assert e["inverse"] == [{"op": "set_fields", "id": "x1", "set": {k: before[k] for k in fields}, "unset": []}]
 
@@ -1857,7 +1880,7 @@ def test_edit_text_stores_strings_byte_for_byte(s, tmp_path):
     assert line["ops"][0]["text"] == s
     again = O.Oplog.load(base(), p)
     assert _text(again)["text"].encode("utf-8") == s.encode("utf-8") and h(again) == h(log)
-    assert T.canonical_hash(O.replay(base(), log.history_list())) == h(log)
+    assert T.canonical_hash(O.replay(base(), all_lines(log))) == h(log)
 
 
 @pytest.mark.parametrize(
@@ -1924,7 +1947,7 @@ def test_edit_text_undo_and_redo_restore_state_hashes_and_changed_ids(tmp_path):
     rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": "r1"})
     assert h(log) == h1 and _text(log) == item(d1, "x1") and rd["changed_ids"] == ["x1"]
     again = O.Oplog.load(base(), p)
-    assert h(again) == h1 and T.canonical_hash(O.replay(base(), log.history_list())) == h1
+    assert h(again) == h1 and T.canonical_hash(O.replay(base(), all_lines(log))) == h1
 
 
 def test_edit_text_to_the_same_values_is_an_entry_with_no_changed_ids():
@@ -1955,9 +1978,9 @@ def test_an_exact_edit_text_retry_returns_the_cached_result():
     for c in calls:
         args = {**c, "base_version": log.version, "summary": "edit"}
         r = log.call(HUMAN, "timeline_apply", args)
-        n = len(log.history_list())
+        n = len(all_lines(log))
         assert log.call(HUMAN, "timeline_apply", copy.deepcopy(args))["op_id"] == r["op_id"]
-        assert len(log.history_list()) == n
+        assert len(all_lines(log)) == n
     first = {**calls[0], "base_version": 0, "summary": "edit"}
     nfd = unicodedata.normalize("NFD", nfc)
     assert nfd != nfc
@@ -1980,7 +2003,7 @@ def test_an_nfd_edit_text_is_rejected_the_same_way_every_time():
         with pytest.raises(O.OplogError) as e:
             log.call(HUMAN, "timeline_apply", nfd)
         assert (e.value.extra["rule"], e.value.extra["path"]) == ("not_nfc", "/ops/0/text")
-    assert log.history_list() == []
+    assert all_lines(log) == []
 
 
 def test_edit_text_retry_survives_load(tmp_path):
@@ -2056,7 +2079,7 @@ def test_edit_text_apply_undo_redo_restores_hashes_over_300_seeds():
             rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
             assert h(log) == after and rd["changed_ids"] == r["changed_ids"]
             hashes.append(after)
-        assert T.canonical_hash(O.replay(base(), log.history_list())) == hashes[-1]
+        assert T.canonical_hash(O.replay(base(), all_lines(log))) == hashes[-1]
     assert edits > 300
 
 
@@ -2089,7 +2112,7 @@ def test_a_noop_edit_text_has_empty_changed_ids_on_apply_undo_and_redo(op):
     assert u["changed_ids"] == [] and h(log) == h0
     rd = log.call(HUMAN, "history_redo", {"op_id": u["op_id"], "client_op_id": f"r{next(_cid)}"})
     assert rd["changed_ids"] == [] and h(log) == h0 and log.version == 3
-    assert [e["changed_ids"] for e in log.history_list()] == [[], [], []]
+    assert [e["changed_ids"] for e in all_lines(log)] == [[], [], []]
 
 
 # --------------------------------------------------------------------------- S2b: Prove's extra checks
@@ -2099,7 +2122,7 @@ def test_undo_of_edit_text_after_its_item_was_deleted_is_undo_blocked_and_applie
     log = new_log()
     e = _edit(log, text="new", style="bold")
     d = apply(log, HUMAN, {"op": "delete_clip", "id": "x1"})
-    v, h0, n = log.version, h(log), len(log.history_list())
+    v, h0, n = log.version, h(log), len(all_lines(log))
     with pytest.raises(O.OplogError) as err:
         undo(log, HUMAN, op_id=e["op_id"])
     x = err.value.extra
@@ -2110,7 +2133,7 @@ def test_undo_of_edit_text_after_its_item_was_deleted_is_undo_blocked_and_applie
         [d["op_id"]],
     )
     assert (x["path"], x["id"]) == ("/op_id", e["op_id"])
-    assert (log.version, h(log), len(log.history_list())) == (v, h0, n)
+    assert (log.version, h(log), len(all_lines(log))) == (v, h0, n)
     assert "x1" not in {i["id"] for t in log.doc["tracks"] for i in t["items"]}
 
 
@@ -2138,18 +2161,18 @@ def test_an_exact_retry_of_a_noop_edit_text_returns_the_cached_entry():
         "ops": [{"op": "edit_text", "id": "x1", "text": "Hi", "style": "pop"}],
     }
     r = log.call(HUMAN, "timeline_apply", args)
-    assert r["changed_ids"] == [] and len(log.history_list()) == 1
+    assert r["changed_ids"] == [] and len(all_lines(log)) == 1
     for _ in range(2):
         again = log.call(HUMAN, "timeline_apply", copy.deepcopy(args))
         assert again["op_id"] == r["op_id"] and again["new_version"] == r["new_version"] == 1
-        assert len(log.history_list()) == 1 and log.version == 1
+        assert len(all_lines(log)) == 1 and log.version == 1
 
 
 def test_edit_text_inverse_only_holds_the_fields_given_and_clients_cannot_send_set_fields(tmp_path):
     log = new_log()
     for fields in ({"text": "a"}, {"style": "b"}, {"text": "c", "style": "d"}):
         _edit(log, **fields)
-        inv = log.history_list()[-1]["inverse"]
+        inv = all_lines(log)[-1]["inverse"]
         assert len(inv) == 1 and inv[0]["op"] == "set_fields" and set(inv[0]["set"]) == set(fields) and inv[0]["unset"] == []
     # set_fields is internal: a client sending it gets unknown_op, whatever it tries to change
     for sets in ({"dur": S}, {"text": "x"}, {"type": "clip"}):

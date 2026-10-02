@@ -144,13 +144,55 @@ def _seconds(value):
     return float(text)
 
 
-def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+class BodyRefused(ValueError):
+    """A request body we won't read: answered with 400 and a closed connection (D27(d))."""
+
+
+def body_length(handler: BaseHTTPRequestHandler) -> int:
+    """The request body length, from headers only (nothing is read). Any Transfer-Encoding is
+    refused first; then there must be at most one Content-Length, whose value (spaces and tabs
+    stripped) is 1-8 ASCII digits. No Content-Length is 0, as before."""
+    from hermes_studio.jsonrpc import content_length
+
+    if handler.headers.get_all("Transfer-Encoding"):
+        raise BodyRefused("unsupported transfer encoding")
+    values = handler.headers.get_all("Content-Length") or []
+    if not values:
+        return 0
+    if len(values) != 1:
+        raise BodyRefused("invalid content length")
     try:
-        length = int(handler.headers.get("Content-Length") or 0)
-    except ValueError:
-        length = 0
-    if length < 0 or length > limit:
-        raise ValueError("request body too large")
+        raw = values[0].encode("latin-1")
+    except (UnicodeEncodeError, AttributeError):
+        raise BodyRefused("invalid content length") from None
+    n, _ = content_length(raw)
+    if n is None:
+        raise BodyRefused("invalid content length")
+    return n
+
+
+def no_body(handler: BaseHTTPRequestHandler) -> None:
+    """D27(d) for every method that takes no body (GET, HEAD, OPTIONS), checked before routing:
+    Transfer-Encoding, then exactly one valid Content-Length, then a valid length > 0 (over the
+    cap included) is refused. Nothing is read; the caller answers 400 and closes."""
+    if body_length(handler) > 0:
+        raise BodyRefused("request body not allowed")
+
+
+def path_segments(raw: str) -> list[str]:
+    """Split the raw URL path on '/' first, then percent-decode each segment once, so an
+    encoded '/' (%2F) stays inside its segment (GET and POST alike)."""
+    return [unquote(seg) for seg in raw.split("/")]
+
+
+def is_project_route(segs: list[str]) -> bool:
+    return len(segs) >= 4 and segs[1] == "api" and segs[2] == "projects"
+
+
+def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+    length = body_length(handler)
+    if length > limit:
+        raise BodyRefused("request body too large")
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
         return {}
@@ -270,12 +312,28 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def _no_body(self, segs: list[str] | None = None) -> bool:
+        """True if the request carries no body; refuses (400 + close, nothing read) otherwise."""
+        try:
+            no_body(self)
+            return True
+        except BodyRefused as exc:
+            if segs == ["", "mcp"]:
+                from hermes_studio import http_engine
+
+                http_engine._mcp_refuse(self)
+            else:
+                self._refuse(400, str(exc))
+            return False
+
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if not self._no_body():
+            return
         # No CORS: cross-site preflights get nothing to work with.
         self._refuse(405, "no cross-origin access")
 
     def do_HEAD(self) -> None:  # noqa: N802
-        if not self._guard(write=False):
+        if not self._guard(write=False) or not self._no_body():
             return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -301,9 +359,16 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not self._guard(write=False):
             return
         parsed = urlparse(self.path)
-        path = unquote(parsed.path)
+        segs = path_segments(parsed.path)  # split first, then decode each segment
+        if not self._no_body(segs):  # D27(d) before any route
+            return
+        path = "/".join(segs)
         if path in {"/", "/index.html"}:
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
+        if is_project_route(segs) or segs == ["", "mcp"]:
+            from hermes_studio import http_engine
+
+            return http_engine.get(self, segs, parsed.query)
         if path.startswith("/api/probe"):
             qs = parse_qs(parsed.query)
             src = (qs.get("src") or [""])[0]
@@ -441,14 +506,27 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if not self._guard(write=True):
             return
+        segs = path_segments(urlparse(self.path).path)
+        if segs == ["", "mcp"]:
+            from hermes_studio import http_engine
+
+            return http_engine.mcp_post(self)
         try:
+            body_length(self)  # Transfer-Encoding and Content-Length checked before any route
             self._post()
-        except ValueError as exc:  # bad JSON, oversized body
+        except BodyRefused as exc:  # nothing more is read: one response, then the connection closes
+            return self._refuse(400, str(exc))
+        except ValueError as exc:  # bad JSON
             return _json(self, 400, {"ok": False, "error": str(exc)[:200]})
 
     def _post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        segs = path_segments(path)  # split first, then decode each segment, as on GET
+        if is_project_route(segs):
+            from hermes_studio import http_engine
+
+            return http_engine.rest_post(self, segs)
         if path == "/api/design" or path.startswith("/api/design/"):
             return self._design_post(path)
         if path == "/api/jobs":
@@ -790,6 +868,12 @@ def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
         pass
     _start_worker()
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
+    from hermes_studio import http_engine
+
+    engine = http_engine.start(httpd.server_address[1])  # the timeline engine: locks its projects (D5, D6)
     print(f"Hermes Studio  http://{host}:{port}/", flush=True)
     print("Library  Create  Jobs  — loopback only. Does not post.", flush=True)
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        http_engine.stop(engine)

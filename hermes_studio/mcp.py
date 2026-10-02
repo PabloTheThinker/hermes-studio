@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -19,7 +20,20 @@ from pathlib import Path
 from typing import Any
 
 from hermes_studio import __version__
+from hermes_studio import mcp_timeline as MT
 from hermes_studio.api import ASPECTS, CAPTION_POS, FILTERS, LAYOUTS, MODES, STYLES, HermesStudioError
+from hermes_studio.jsonrpc import (
+    DRAIN_CHUNK,
+    DRAIN_MAX,
+    INVALID_REQUEST,
+    MAX_BODY,
+    PARSE_ERROR,
+    content_length,
+    dumps,
+    parse_message,
+)
+
+_DRAINED = object()
 
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 
@@ -242,6 +256,7 @@ TOOLS: list[dict] = [
         "annotations": {"title": "Edit a photo", **_WRITE, "openWorldHint": False},
     },
 ]
+TOOLS += MT.TOOLS  # the timeline tools (S3 + Wire's registry)
 _BY_NAME = {t["name"]: t for t in TOOLS}
 # Older names still work so existing agent configs keep running.
 _ALIASES = {"captions": "run"}
@@ -264,9 +279,22 @@ def _look(args: dict) -> dict:
 # --------------------------------------------------------------------------- transport
 
 
+HEADER_LINE_MAX = 8192  # one header line; longer is a broken stream
+_HEADER_NAME = re.compile(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
+class BrokenFraming(Exception):
+    """The Content-Length stream can't be trusted any more: the session closes (D27)."""
+
+
 class Transport:
     """stdio JSON-RPC. Protocol output goes to a private copy of stdout; fd 1 is pointed at stderr
-    so a stray print (ours, a library's or a child process's) can never corrupt the stream."""
+    so a stray print (ours, a library's or a child process's) can never corrupt the stream.
+
+    Framing is whichever the client sends first: one JSON message per line, or Content-Length
+    headers. Once a stream has used Content-Length it stays in that mode, and what follows a
+    body is read as the next header block (D27(c)): even a blank line there is a malformed
+    header block (Ada, 8:29 PM). No resync ever scans bytes for a header."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
@@ -280,30 +308,104 @@ class Transport:
         except OSError:
             self.out = sys.stdout.buffer
 
-    def read(self) -> dict | None:
+    def read(self) -> tuple[bool, Any] | None:
+        """The next message as ``(parsed, value)``, or None at EOF. A body that doesn't parse is
+        answered here with -32700 and the loop goes on; a broken Content-Length stream raises
+        BrokenFraming after the -32700 went out."""
         while True:
-            line = self.inp.readline()
+            if self.framing == "lsp":
+                line = self.inp.readline(HEADER_LINE_MAX + 1)
+                if not line:
+                    return None
+                got = self._frame(line)
+                if got is None:
+                    return None
+                if got is _DRAINED:
+                    continue
+                ok, msg = parse_message(got)
+                if ok:
+                    return True, msg
+                self.write(PARSE_ERROR)
+                continue
+            line = self.inp.readline(MAX_BODY + 1)  # O1: at most one capped body per line
             if not line:
                 return None
+            if len(line) > MAX_BODY and not line.endswith(b"\n"):
+                self.write(PARSE_ERROR)  # never parsed; the rest of the line can't be trusted
+                print(f"mcp: line over {MAX_BODY} bytes; closing session", file=sys.stderr, flush=True)
+                raise BrokenFraming("line too long")
             s = line.strip()
             if not s:
                 continue
             if s.lower().startswith(b"content-length:"):
                 self.framing = "lsp"
-                length = int(s.split(b":", 1)[1].strip())
-                while True:  # rest of the header block
-                    h = self.inp.readline()
-                    if not h or not h.strip():
-                        break
-                body = self.inp.read(length)
-                return json.loads(body.decode("utf-8"))
-            try:
-                return json.loads(s.decode("utf-8"))
-            except json.JSONDecodeError:
-                self.write({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}})
+                got = self._frame(line)
+                if got is None:
+                    return None
+                if got is _DRAINED:
+                    continue
+                ok, msg = parse_message(got)
+                if ok:
+                    return True, msg
+                self.write(PARSE_ERROR)
+                continue
+            ok, msg = parse_message(s)
+            if ok:
+                return True, msg
+            self.write(PARSE_ERROR)
+
+    def _broken(self, reason: str) -> BrokenFraming:
+        self.write(PARSE_ERROR)
+        print(f"mcp: broken Content-Length framing: {reason}; closing session", file=sys.stderr, flush=True)
+        return BrokenFraming(reason)
+
+    def _frame(self, first: bytes) -> Any:
+        """Read one header block starting at ``first`` and its body: the body bytes, _DRAINED
+        for an over-cap body that was answered and drained, or None at EOF."""
+        lengths: list[bytes] = []
+        line = first
+        while True:
+            if len(line) > HEADER_LINE_MAX or not line.endswith(b"\n"):
+                if not line.endswith(b"\n") and len(line) <= HEADER_LINE_MAX:
+                    return None  # EOF inside a header block
+                raise self._broken("header line too long")
+            text = line[:-2] if line.endswith(b"\r\n") else line[:-1]  # exactly one terminator
+            if not text:
+                break  # end of the header block
+            name, colon, value = text.partition(b":")
+            if not colon or not _HEADER_NAME.fullmatch(name):
+                raise self._broken("not a header line")
+            if name.lower() == b"content-length":
+                lengths.append(value)
+            line = self.inp.readline(HEADER_LINE_MAX + 1)
+            if not line:
+                return None
+        if len(lengths) != 1:
+            raise self._broken("no Content-Length header" if not lengths else "duplicate Content-Length headers")
+        n, why = content_length(lengths[0])
+        if n is None:
+            raise self._broken(why)
+        if n > DRAIN_MAX:
+            raise self._broken(f"Content-Length {n} is over {DRAIN_MAX}")
+        if n > MAX_BODY:  # answer first, then drain exactly n bytes, unscanned (D27(b))
+            self.write(PARSE_ERROR)
+            left = n
+            while left:
+                chunk = self.inp.read(min(DRAIN_CHUNK, left))
+                if not chunk:
+                    return None
+                left -= len(chunk)
+            return _DRAINED
+        body = b""
+        while len(body) < n:
+            chunk = self.inp.read(n - len(body))
+            if not chunk:
+                return None
+            body += chunk
+        return body
 
     def write(self, msg: dict) -> None:
-        raw = json.dumps(msg, ensure_ascii=False, default=str).encode("utf-8")
+        raw = dumps(msg)
         with self.lock:
             if self.framing == "lsp":
                 self.out.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw)
@@ -425,24 +527,46 @@ def _summary(name: str, res: dict) -> str:
     return ""
 
 
+def check_request(msg: Any) -> tuple[dict | None, dict | None]:
+    """D15: ``(error reply, None)`` or ``(None, params)``. A message that isn't an object, or has
+    no string ``method``, is -32600 with id null; ``params`` present but not an object is -32602
+    (a reply only when the message has an id). Only a missing ``params`` becomes {}."""
+    if not isinstance(msg, dict) or not isinstance(msg.get("method"), str):
+        return dict(INVALID_REQUEST), None
+    if "params" not in msg:
+        return None, {}
+    if not isinstance(msg["params"], dict):
+        err = {"jsonrpc": "2.0", "id": msg.get("id"), "error": {"code": -32602, "message": "params must be an object"}}
+        return (err if "id" in msg else {}), None
+    return None, msg["params"]
+
+
 def serve() -> int:
     t = Transport()
     calls: list[threading.Thread] = []
+    subs = _Subscriptions(t)
     while True:
-        msg = t.read()
-        if msg is None:  # client closed stdin: finish what it asked for, then exit
+        try:
+            got = t.read()
+        except BrokenFraming:
+            return 1  # the -32700 and the stderr line went out in Transport._broken
+        if got is None:  # client closed stdin: finish what it asked for, then exit
             for th in calls:
                 th.join()
+            subs.stop()
             return 0
-        if not isinstance(msg, dict):
+        _, msg = got
+        bad, params = check_request(msg)
+        if bad is not None:
+            if bad:
+                t.write(bad)
             continue
         mid, method = msg.get("id"), msg.get("method")
-        params = msg.get("params") or {}
         if method == "initialize":
             asked = str(params.get("protocolVersion") or "")
             t.write({"jsonrpc": "2.0", "id": mid, "result": {
                 "protocolVersion": asked if asked in PROTOCOLS else PROTOCOLS[0],
-                "capabilities": {"tools": {"listChanged": False}},
+                "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": True, "listChanged": False}},
                 "serverInfo": {"name": "hermes-studio", "title": "Hermes Studio", "version": __version__},
                 "instructions": INSTRUCTIONS,
             }})
@@ -456,15 +580,32 @@ def serve() -> int:
             th = threading.Thread(target=_handle_call, args=(t, mid, params), daemon=True)
             th.start()
             calls[:] = [c for c in calls if c.is_alive()] + [th]
-        elif method in ("resources/list", "prompts/list"):
-            t.write({"jsonrpc": "2.0", "id": mid, "result": {method.split("/")[0]: []}})
+        elif method == "resources/list":
+            t.write({"jsonrpc": "2.0", "id": mid, "result": {"resources": _resources()}})
+        elif method == "resources/read":
+            t.write(_resource_read(mid, params))
+        elif method in ("resources/subscribe", "resources/unsubscribe"):
+            uri = params.get("uri")
+            if method == "resources/subscribe":
+                subs.add(uri)
+            else:
+                subs.remove(uri)
+            t.write({"jsonrpc": "2.0", "id": mid, "result": {}})
+        elif method == "prompts/list":
+            t.write({"jsonrpc": "2.0", "id": mid, "result": {"prompts": []}})
         elif mid is not None:
             t.write({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"Method not found: {method}"}})
 
 
 def _handle_call(t: Transport, mid, params: dict) -> None:
     name = str(params.get("name") or "")
-    args = params.get("arguments") or {}
+    if "arguments" in params and not isinstance(params["arguments"], dict):  # D15: only a missing key is {}
+        t.write({"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "arguments must be an object"}})
+        return
+    args = params.get("arguments", {})
+    if name in MT.BY_NAME:
+        t.write({"jsonrpc": "2.0", "id": mid, "result": timeline_call(name, args)})
+        return
     if name == "captions":  # legacy tool name
         args = {**args, "mode": "captions"}
     token = (params.get("_meta") or {}).get("progressToken")
@@ -485,13 +626,137 @@ def _handle_call(t: Transport, mid, params: dict) -> None:
         res, is_error = e.as_dict(), True
     except Exception as e:  # never kill the server on one bad call
         res, is_error = {"ok": False, "error": f"{type(e).__name__}: {str(e)[-800:]}", "code": "failed"}, True
-    text = json.dumps(res, ensure_ascii=False, default=str)
+    text = json.dumps(res, ensure_ascii=True, default=str)
     head = _summary(real, res) if not is_error else f"Error: {res.get('error')}" + (f"\nHint: {res['hint']}" if res.get("hint") else "")
     content = ([{"type": "text", "text": head}] if head else []) + [{"type": "text", "text": text}]
     result = {"content": content, "isError": is_error}
     if not is_error:
         result["structuredContent"] = json.loads(text)
     t.write({"jsonrpc": "2.0", "id": mid, "result": result})
+
+
+# --------------------------------------------------------------------------- timeline tools on stdio
+
+
+def _attached(project_id: Any) -> tuple[str, int, str] | None:
+    """(host, port, token) of the engine holding this project, read from .lock and .attach
+    (both opened read-only), or None when the app is closed."""
+    from hermes_studio import project as P
+
+    d = P.project_dir(project_id) if isinstance(project_id, str) else None
+    if d is None or not d.is_dir():
+        return None
+    held = P.engine_holding(d)
+    if not held or not isinstance(held.get("port"), int):
+        return None
+    try:
+        with open(d / ".attach", "rb") as f:
+            token = f.read().decode("ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return "127.0.0.1", held["port"], token
+
+
+def _post_mcp(where: tuple[str, int, str], msg: dict) -> dict | None:
+    import http.client
+
+    host, port, token = where
+    body = dumps(msg)
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=600)
+        conn.request("POST", "/mcp", body=body, headers={"Host": f"{host}:{port}", "Content-Type": "application/json",
+                                                           "Authorization": f"Bearer {token}"})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+    except OSError:
+        return None
+    ok, reply = parse_message(data)
+    return reply if ok and isinstance(reply, dict) else None
+
+
+def timeline_call(name: str, args: dict) -> dict:
+    """A timeline tool from the stdio server: forwarded to the running engine (it is the only
+    writer), or served read-only from the files when the app is closed (D28(a))."""
+    where = _attached(args.get("project_id")) if name != "validate_timeline" else None
+    if where is not None:
+        reply = _post_mcp(where, {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})
+        if reply is not None and isinstance(reply.get("result"), dict):
+            return reply["result"]
+    return MT.call(name, args, MT.ClosedBackend())
+
+
+def _resources() -> list[dict]:
+    from hermes_studio import project as P
+
+    root = P.projects_root()
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return []
+    return [{"uri": f"timeline://{n}", "name": n, "mimeType": "application/json"}
+            for n in names if P.project_dir(n) is not None and (root / n / "base.json").is_file()]
+
+
+def _resource_read(mid: Any, params: dict) -> dict:
+    uri = params.get("uri")
+    pid = uri[len("timeline://"):] if isinstance(uri, str) and uri.startswith("timeline://") else None
+    if pid is None:
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "unknown resource uri"}}
+    res = timeline_call("get_timeline", {"project_id": pid})
+    text = res["content"][-1]["text"]
+    if res.get("isError"):
+        return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32002, "message": "Resource not found", "data": json.loads(text)}}
+    return {"jsonrpc": "2.0", "id": mid, "result": {"contents": [{"uri": uri, "mimeType": "application/json", "text": text}]}}
+
+
+class _Subscriptions:
+    """D12 on stdio: for each subscribed timeline://<id> whose engine is running, follow the
+    engine's SSE feed and send notifications/resources/updated on every new entry."""
+
+    def __init__(self, t: Transport) -> None:
+        self.t = t
+        self.live: dict[str, Any] = {}
+
+    def add(self, uri: Any) -> None:
+        if not isinstance(uri, str) or not uri.startswith("timeline://") or uri in self.live:
+            return
+        where = _attached(uri[len("timeline://"):])
+        if where is None:
+            return  # app closed: nothing can change until it opens
+        stop = threading.Event()
+        self.live[uri] = stop
+        threading.Thread(target=self._follow, args=(uri, where, stop), daemon=True).start()
+
+    def remove(self, uri: Any) -> None:
+        stop = self.live.pop(uri, None) if isinstance(uri, str) else None
+        if stop is not None:
+            stop.set()
+
+    def stop(self) -> None:
+        for s in self.live.values():
+            s.set()
+
+    def _follow(self, uri: str, where: tuple[str, int, str], stop: threading.Event) -> None:
+        import http.client
+        from urllib.parse import quote
+
+        host, port, token = where
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=30)
+            conn.request("GET", f"/api/projects/{quote(uri[len('timeline://'):])}/events",
+                         headers={"Host": f"{host}:{port}", "Authorization": f"Bearer {token}"})
+            resp = conn.getresponse()
+            if resp.status != 200:
+                return
+            while not stop.is_set():
+                line = resp.fp.readline()
+                if not line:
+                    return
+                if line.startswith(b"event: op."):
+                    self.t.write({"jsonrpc": "2.0", "method": "notifications/resources/updated", "params": {"uri": uri}})
+        except OSError:
+            return
 
 
 # --------------------------------------------------------------------------- client wiring
