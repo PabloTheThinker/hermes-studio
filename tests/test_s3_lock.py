@@ -23,11 +23,12 @@ from hermes_studio import project as P
 ROOT = Path(__file__).resolve().parent.parent
 
 HOLDER = """
+import os
 import sys
 from hermes_studio import project as P
 eng = P.Engine(port=4242)
 p = eng.open("p1")
-print("ready", flush=True)
+print("ready", os.getpid(), flush=True)
 sys.stdin.readline()
 if sys.argv[1] == "clean":
     eng.close()
@@ -58,7 +59,10 @@ def holder(home: Path, mode: str) -> subprocess.Popen:
         text=True,
     )
     line = p.stdout.readline()
-    assert line.strip() == "ready", (line, p.stderr.read() if p.poll() is not None else "")
+    assert line.split()[:1] == ["ready"], (line, p.stderr.read() if p.poll() is not None else "")
+    # the engine's own pid: on Windows sys.executable can be a launcher (uv, venv) that runs the
+    # interpreter as a child, so Popen.pid isn't the pid the engine writes to .lock
+    p.engine_pid = int(line.split()[1])
     return p
 
 
@@ -89,7 +93,7 @@ def test_lock_is_exclusive_across_processes_and_lock_file_stays_readable(home):
             P.Engine(port=5555).open("p1")
         assert getattr(e.value, "code", None) == "failed" and e.value.hint == P.LOCKED_HINT
         # ... and the refusal names the holder, which means .lock was read while it was locked
-        assert f"pid {h.pid}" in e.value.message and "port 4242" in e.value.message
+        assert f"pid {h.engine_pid}" in e.value.message and "port 4242" in e.value.message
         # a raw exclusive or shared lock attempt from this process fails too
         fd = os.open(str(d / ".lock"), os.O_RDWR)
         try:
@@ -98,16 +102,16 @@ def test_lock_is_exclusive_across_processes_and_lock_file_stays_readable(home):
             os.close(fd)
         # the stdio proxy's attach path: engine_holding reads .lock under the holder's lock
         info = P.engine_holding(d)
-        assert info is not None and info["pid"] == h.pid and info["port"] == 4242
+        assert info is not None and info["pid"] == h.engine_pid and info["port"] == 4242
         assert len(info["attach_token_sha256"]) == 64
         raw = (d / ".lock").read_bytes()  # a plain read of the whole file works
-        assert json.loads(raw)["pid"] == h.pid
+        assert json.loads(raw)["pid"] == h.engine_pid
         attach = (d / ".attach").read_text()
         assert P._sha(attach) == info["attach_token_sha256"]
         # closed-app reads still work while the engine holds the project (D28)
         c = P.ClosedProject("p1")
         st = c.status()
-        assert st["version"] == 0 and st["engine"]["pid"] == h.pid
+        assert st["version"] == 0 and st["engine"]["pid"] == h.engine_pid
         # the holder releases cleanly: .attach goes, and the next engine opens it
         h.stdin.write("\n")
         h.stdin.flush()
