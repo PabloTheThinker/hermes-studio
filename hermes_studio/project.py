@@ -145,7 +145,7 @@ def _fsync_dir(d: Path) -> None:
         os.close(fd)
 
 
-def _write_atomic(path: Path, data: bytes, mode: int = 0o644) -> None:
+def _write_atomic(path: Path, data: bytes, mode: int = 0o600) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     try:
