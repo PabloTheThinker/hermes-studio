@@ -1,0 +1,72 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--bg:#0b0b0c;--panel:#111112;--ink:#f2efe8;--mute:rgba(242,239,232,.64);--dim:rgba(242,239,232,.5);--line:rgba(242,239,232,.12);--line2:rgba(242,239,232,.2);--amber:#ffc83d;--amber-ink:#110c00;--ember:#cd8032;--bad:#ff6b5b;--mono:"JetBrains Mono",ui-monospace,monospace;--sans:"Archivo",system-ui,sans-serif}
+*{box-sizing:border-box;margin:0}body{width:1280px;height:800px;background:var(--bg);color:var(--ink);font:12px/1.35 var(--sans);display:grid;grid-template-columns:56px 1fr 360px;overflow:hidden}
+.rail{border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:14px}.rail b{width:34px;height:34px;border-radius:9px;border:1px solid var(--line);display:grid;place-items:center;color:var(--dim);font-size:10px}.rail b.on{background:var(--amber);color:var(--amber-ink);border:0;font-weight:700}
+.main{display:grid;grid-template-rows:40px 1fr 250px;min-width:0}
+.top{display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line)}.top .t{font-weight:700}.pill{border:1px solid var(--line2);border-radius:99px;padding:3px 9px;color:var(--mute);font-size:11px}.sp{flex:1}.btn{background:var(--amber);color:var(--amber-ink);border-radius:7px;padding:5px 11px;font-weight:700}
+.mid{display:grid;grid-template-columns:270px 1fr;min-height:0;border-bottom:1px solid var(--line)}
+.bin{border-right:1px solid var(--line);padding:10px;overflow:hidden}.tabs{display:flex;gap:14px;margin-bottom:10px;color:var(--dim)}.tabs .on{color:var(--ink);border-bottom:2px solid var(--amber);padding-bottom:3px}
+.tx p{color:var(--mute);margin-bottom:8px;font-size:12.5px}.tx s{color:var(--dim);text-decoration:line-through}.tx mark{background:rgba(205,128,50,.22);color:var(--ink);border-bottom:1px solid var(--ember)}.tx .sel{background:rgba(255,200,61,.18);color:var(--ink);outline:1px solid var(--amber)}.ts{font-family:var(--mono);color:var(--dim);font-size:10px;margin-right:6px}
+.pv{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}.frame{width:190px;height:338px;border-radius:8px;background:linear-gradient(160deg,#2a2622,#141312);border:1px solid var(--line2);position:relative}.cap{position:absolute;bottom:60px;left:14px;right:14px;text-align:center;font-weight:800;font-size:15px}.cap em{color:var(--amber);font-style:normal}.ctl{display:flex;gap:10px;align-items:center;font-family:var(--mono);color:var(--mute);font-size:11px}
+.follow{position:absolute;top:8px;left:8px;font-size:10px;background:rgba(205,128,50,.9);color:#140b00;border-radius:5px;padding:2px 6px;font-weight:700}
+.tl{padding:8px 12px;position:relative}.ruler{font-family:var(--mono);font-size:10px;color:var(--dim);display:flex;justify-content:space-between;margin:0 0 6px 70px}
+.trk{display:flex;align-items:center;height:36px;margin-bottom:6px}.lab{width:70px;color:var(--dim);font-size:10.5px;font-family:var(--mono)}.lane{flex:1;position:relative;height:100%;background:rgba(242,239,232,.03);border-radius:5px}
+.c{position:absolute;top:3px;bottom:3px;border-radius:5px;background:#26313d;border:1px solid var(--line2);padding:3px 6px;font-size:10px;color:var(--mute);overflow:hidden;white-space:nowrap}
+.c.a{background:#2f3a2c}.c.t{background:#3a2f22}.c.au{background:#22303a}
+.c.ag{outline:2px solid var(--ember);outline-offset:1px}.c.ag::after{content:"H · step 3";position:absolute;right:4px;top:3px;font-size:9px;background:var(--ember);color:#140b00;border-radius:3px;padding:0 4px;font-weight:700}
+.c.me{outline:2px solid var(--ink);outline-offset:1px}.ph{position:absolute;top:22px;bottom:8px;left:520px;width:2px;background:var(--amber)}
+.side{border-left:1px solid var(--line);background:var(--panel);display:grid;grid-template-rows:auto 1fr auto;min-height:0}
+.sh{padding:10px 12px;border-bottom:1px solid var(--line)}.row{display:flex;align-items:center;gap:8px}.dot{width:8px;height:8px;border-radius:50%;background:var(--ember);box-shadow:0 0 0 3px rgba(205,128,50,.25)}.stop{border:1px solid var(--bad);color:var(--bad);border-radius:7px;padding:4px 10px;font-weight:700}
+.seg{display:flex;margin-top:8px;border:1px solid var(--line2);border-radius:8px;overflow:hidden}.seg span{flex:1;text-align:center;padding:4px 0;color:var(--mute)}.seg .on{background:var(--amber);color:var(--amber-ink);font-weight:700}
+.thread{padding:10px 12px;overflow:hidden;display:flex;flex-direction:column;gap:9px}
+.um{align-self:flex-end;background:#1d1c1a;border:1px solid var(--line);border-radius:10px 10px 2px 10px;padding:7px 9px;max-width:85%}.chk{font-size:10px;color:var(--dim);text-align:right;margin-top:3px}
+.plan{border:1px solid var(--line);border-radius:9px;padding:8px}.plan h4{font-size:11px;color:var(--dim);font-weight:600;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}.st{display:flex;gap:7px;padding:2px 0;color:var(--mute)}.st i{font-style:normal;width:14px;font-family:var(--mono)}.st.done i{color:#8fd18f}.st.now{color:var(--ink)}.st.now i{color:var(--ember)}
+.card{border:1px solid var(--line2);border-radius:9px;padding:8px;background:#151514}.card .hd{display:flex;justify-content:space-between;font-size:10.5px;color:var(--dim);margin-bottom:5px}.card p{margin-bottom:6px}.ba{display:flex;gap:6px;align-items:center;margin-bottom:7px}.th{width:60px;height:34px;border-radius:4px;background:linear-gradient(135deg,#3a342e,#1b1a19);border:1px solid var(--line)}.ar{color:var(--dim)}
+.acts{display:flex;gap:6px}.ghost{border:1px solid var(--line2);border-radius:6px;padding:3px 8px;color:var(--mute)}.pri{background:var(--amber);color:var(--amber-ink);border-radius:6px;padding:3px 9px;font-weight:700}
+.card.ask{border-color:var(--amber)}
+.comp{border-top:1px solid var(--line);padding:10px 12px}.chip{display:inline-block;border:1px solid var(--amber);color:var(--amber);border-radius:99px;padding:2px 8px;font-size:10.5px;margin-bottom:6px}.in{border:1px solid var(--line2);border-radius:9px;padding:9px;color:var(--dim)}
+.status{font-size:10.5px;color:var(--ember);font-family:var(--mono)}
+.note{position:absolute;font:700 10px var(--mono);color:#140b00;background:#7fd3ff;border-radius:50%;width:16px;height:16px;display:grid;place-items:center}
+</style></head><body>
+<div class="rail"><b>Clips</b><b class="on">Edit</b><b>Des</b><b>Lib</b><b>Jobs</b></div>
+<div class="main">
+ <div class="top"><span class="t">Talk highlight · 9:16</span><span class="pill">v14 · saved</span><span class="pill">Undo ⌘Z · Redo ⇧⌘Z</span><span class="sp"></span><span class="pill">History</span><span class="btn">Render MP4</span></div>
+ <div class="mid">
+  <div class="bin"><div class="tabs"><span>Media</span><span class="on">Transcript</span><span>Scenes</span></div>
+   <div class="tx">
+    <p><span class="ts">0:00</span>So today I want to talk about <s>um, like,</s> why local tools win.</p>
+    <p><span class="ts">0:09</span><mark>The cloud is rented. Your laptop is owned.</mark> That's the whole pitch.</p>
+    <p><span class="ts">0:17</span><span class="sel">Nothing you make here leaves the machine</span> unless you say so.</p>
+    <p><span class="ts">0:26</span><s>You know, basically,</s> it's yours.</p>
+   </div></div>
+  <div class="pv"><div class="frame"><span class="follow">Following Hermes</span><div class="cap">Your laptop is <em>owned.</em></div></div>
+   <div class="ctl"><span>◀◀</span><span>▶</span><span>0:12.40 / 0:58.00</span></div></div>
+ </div>
+ <div class="tl"><div class="ruler"><span>0:00</span><span>0:10</span><span>0:20</span><span>0:30</span><span>0:40</span><span>0:50</span></div>
+  <div class="trk"><span class="lab">T1 text</span><div class="lane"><div class="c t ag" style="left:300px;width:300px">Captions · Bold Pop</div></div></div>
+  <div class="trk"><span class="lab">V1 main</span><div class="lane"><div class="c" style="left:0;width:200px">talk.mp4 · 0:00–0:09</div><div class="c" style="left:204px;width:180px">talk.mp4 · 1:42</div><div class="c me" style="left:388px;width:230px">talk.mp4 · 3:05 (you trimmed)</div><div class="c" style="left:622px;width:170px">talk.mp4 · 7:10</div></div></div>
+  <div class="trk"><span class="lab">A1 voice</span><div class="lane"><div class="c au" style="left:0;width:792px">voice ▁▃▅▂▆▃▁▄▆▂▃▅▁</div></div></div>
+  <div class="trk"><span class="lab">A2 music</span><div class="lane"><div class="c au" style="left:0;width:600px;opacity:.6">bed.mp3 · −18 dB</div></div></div>
+  <div class="ph"></div>
+ </div>
+</div>
+<div class="side">
+ <div class="sh"><div class="row"><span class="dot"></span><b>Hermes</b><span class="status">waiting on step 3</span><span class="sp"></span><span class="stop">■ Stop</span></div>
+  <div class="seg"><span>Ask</span><span class="on">Propose</span><span>Auto</span></div></div>
+ <div class="thread">
+  <div><div class="um">Cut a 60-second highlight, remove filler, add captions, 9:16.</div><div class="chk">↺ Restore to here</div></div>
+  <div class="plan"><h4>Plan · 5 steps</h4>
+   <div class="st done"><i>✓</i>Pick 4 strongest moments</div>
+   <div class="st done"><i>✓</i>Remove filler (11 words, −6.2 s)</div>
+   <div class="st now"><i>●</i>Add captions, Bold Pop style</div>
+   <div class="st"><i>○</i>Reframe to 9:16 on speaker</div>
+   <div class="st"><i>○</i>Add music bed at −18 dB</div></div>
+  <div class="card"><div class="hd"><span>Step 2 · applied</span><span>v12 → v13</span></div><p>Removed 11 filler words. Everything after 0:04 moved left 6.2 s.</p>
+   <div class="ba"><div class="th"></div><span class="ar">→</span><div class="th"></div></div>
+   <div class="acts"><span class="ghost">Undo</span><span class="ghost">Show on timeline</span></div></div>
+  <div class="card ask"><div class="hd"><span>Step 3 · waiting for you</span><span>adds track T1</span></div><p>Add captions over 0:12–0:42 in Bold Pop.</p>
+   <div class="acts"><span class="pri">Apply</span><span class="ghost">Skip</span><span class="ghost">Apply the rest</span></div></div>
+ </div>
+ <div class="comp"><span class="chip">＋ Transcript 0:17–0:21 ✕</span><div class="in">Ask Hermes about this selection…</div></div>
+</div>
+</body></html>
