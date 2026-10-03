@@ -39,7 +39,8 @@ READ_TOOLS = (
 )
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
 MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS
+FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -173,6 +174,43 @@ TOOLS: list[dict] = [
         "Words on the timeline: each {w, at, end, at_s, end_s, clip, media, src_in, src_out}, sorted by time, mapped through "
         "every clip that shows them. Only media imported with 'words' have any.",
         {"media_id": _S},
+        _RO,
+    ),
+    _tool(
+        "timeline_frames",
+        "Look at the timeline",
+        "Still frames of the edit at given times (at_s: up to 12 seconds values, or at: ticks), as JPEG images plus "
+        "refs {at, key, cached}. width 32-1080 (default 320). images:false returns refs only. Frames are cached by what is "
+        "visible at that time, so unchanged moments come back instantly. Needs the app running and the render scope.",
+        {
+            "at_s": {"type": "array", "items": {"type": "number"}},
+            "at": {"type": "array", "items": {"type": "integer"}},
+            "width": {"type": "integer"},
+            "images": {"type": "boolean"},
+        },
+        _RO,
+    ),
+    _tool(
+        "timeline_contact_sheet",
+        "Contact sheet",
+        "One image of count frames (default 12, up to 48) spread over from_s..to_s (default the whole timeline), tiled cols "
+        "across (default 4) with each frame's time. The cheapest way to see a whole edit.",
+        {
+            "count": {"type": "integer"},
+            "from_s": {"type": "number"},
+            "to_s": {"type": "number"},
+            "cols": {"type": "integer"},
+            "width": {"type": "integer"},
+            "images": {"type": "boolean"},
+        },
+        _RO,
+    ),
+    _tool(
+        "history_frames",
+        "Before and after",
+        "The frame just before and just after one history entry (op_id), at the first time it changed: "
+        "{at, at_s, before:{key}, after:{key}, before_version, after_version} plus the two images.",
+        {"op_id": _S, "width": {"type": "integer"}, "images": {"type": "boolean"}},
         _RO,
     ),
 ]
@@ -414,7 +452,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
     writes = name in WRITE_TOOLS or name in ("export_otio", "import_media")
-    _need_scope(backend, "write" if writes else "read")
+    _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
@@ -426,10 +464,15 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if e.code != "not_found":
             raise
         proj = None
+    extra = MEDIA_TOOLS + FRAME_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
-        raise O.Oplog.precheck(
-            name if name not in MEDIA_TOOLS else "get_hash", args if name not in MEDIA_TOOLS else {"project_id": pid}
-        )
+        raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
+    if name in FRAME_TOOLS:
+        from hermes_studio import frame_tools as FT
+
+        if not backend.writable:
+            raise P.offline()  # making a frame writes the cache; a closed-app read never writes
+        return FT.TOOLS[name](proj, {k: v for k, v in args.items() if k != "project_id"})
     if name in MEDIA_TOOLS:
         return _media(name, args, proj, backend)
     if writes:
@@ -508,8 +551,14 @@ def as_result(res: dict | None, err: HermesStudioError | None) -> dict:
             "content": [{"type": "text", "text": head}, {"type": "text", "text": json.dumps(body, ensure_ascii=True)}],
             "isError": True,
         }
+    images = res.pop("_images", []) if isinstance(res, dict) else []  # S5: pixels only as image content
     text = json.dumps(res, ensure_ascii=True)
-    return {"content": [{"type": "text", "text": text}], "isError": False, "structuredContent": json.loads(text)}
+    content: list[dict] = [{"type": "text", "text": text}]
+    if images:
+        import base64
+
+        content += [{"type": "image", "mimeType": mime, "data": base64.b64encode(b).decode("ascii")} for mime, b in images]
+    return {"content": content, "isError": False, "structuredContent": json.loads(text)}
 
 
 def call(name: str, args: dict, backend: Backend) -> dict:

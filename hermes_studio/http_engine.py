@@ -151,6 +151,8 @@ def get(h: Any, segs: list[str], query: str) -> None:
             return _events(h, proj)
         if rest == ["status"]:
             return _json(h, 200, proj.status())
+        if rest == ["frame"]:
+            return _frame_get(h, tok, proj, query)
         if rest == ["transcript"]:
             q = parse_qs(query, keep_blank_values=True)
             args = {"media_id": q["media_id"][-1]} if "media_id" in q else {}
@@ -170,6 +172,37 @@ def get(h: Any, segs: list[str], query: str) -> None:
         return _json(h, 200, body)
     except HermesStudioError as e:
         return _error(h, e)
+
+
+def _frame_get(h: Any, tok: P.Token, proj: P.Project, query: str) -> None:
+    """S5: GET /api/projects/<id>/frame?at=<ticks>[&width=<px>] -> one cached JPEG (render scope).
+    ``X-Frame-Key`` carries the cache key, ``X-Frame-Cached`` whether it was a hit."""
+    from hermes_studio import frame_tools as FT
+
+    if "render" not in tok.scopes:
+        return _error(h, _denied("render"))
+    q = parse_qs(query, keep_blank_values=True)
+    args: dict[str, Any] = {}
+    for name in ("at", "width"):
+        if name in q:
+            raw = q[name][-1]
+            if not _QUERY_INT.fullmatch(raw) or len(raw) > 18:
+                raise O.OplogError("invalid_op", f"'{name}' must be a whole number", rule="bad_arg", path=f"/{name}")
+            args[name] = [int(raw)] if name == "at" else int(raw)
+    if "at" not in args:
+        raise O.OplogError("invalid_op", "'at' (ticks) is required", rule="missing_arg", path="/at")
+    out = FT.timeline_frames(proj, {**args, "images": False})
+    ref = out["frames"][0]
+    path = FT._cache(proj).path(ref["key"])
+    data = path.read_bytes()
+    h.send_response(200)
+    h.send_header("Content-Type", "image/jpeg")
+    h.send_header("Content-Length", str(len(data)))
+    h.send_header("Cache-Control", "private, max-age=86400")  # a key never changes its pixels
+    h.send_header("X-Frame-Key", ref["key"])
+    h.send_header("X-Frame-Cached", "1" if ref["cached"] else "0")
+    h.end_headers()
+    h.wfile.write(data)
 
 
 def _media_get(h: Any, proj: P.Project, mid: str, name: str | None) -> None:
