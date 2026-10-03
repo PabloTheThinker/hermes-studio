@@ -70,7 +70,7 @@ def test_89_schemas_enforce_nothing_the_engine_does_not():
         s = json.dumps(t["inputSchema"])
         for banned in ('additionalProperties": false', "minItems", "maxItems", "minLength", "maxLength", '"required"'):
             assert banned not in s, (t["name"], banned)
-    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 17  # 11 timeline + 3 S4 media + 3 S5 frame tools
+    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 19  # 11 timeline + 3 media (S4) + 3 frames (S5) + 2 render (S6)
 
 
 # Addendum (test 89): every public op, with args the engine would accept, so a non-string `id`

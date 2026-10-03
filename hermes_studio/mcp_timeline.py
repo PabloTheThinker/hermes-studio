@@ -40,7 +40,8 @@ READ_TOOLS = (
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
 MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
 FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS
+RENDER_TOOLS = ("render_timeline", "render_status")  # S6
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -211,6 +212,25 @@ TOOLS: list[dict] = [
         "The frame just before and just after one history entry (op_id), at the first time it changed: "
         "{at, at_s, before:{key}, after:{key}, before_version, after_version} plus the two images.",
         {"op_id": _S, "width": {"type": "integer"}, "images": {"type": "boolean"}},
+        _RO,
+    ),
+    _tool(
+        "render_timeline",
+        "Render the video",
+        "Render the current version to an MP4 (H.264 + AAC) in the project's exports/ folder, in the background: "
+        "{render_id, state, progress, path, version}. width/height default to the timeline's size (even, 16-3840). "
+        "captions (default true) burns in the words from get_transcript when there are any. The same version, size and "
+        "captions return the existing render. Poll render_status or watch render.progress / render.ready events. "
+        "Needs the app running and the render scope. Never uploads or posts.",
+        {"width": {"type": "integer"}, "height": {"type": "integer"}, "captions": {"type": "boolean"}},
+        {**_W, "idempotentHint": True},
+    ),
+    _tool(
+        "render_status",
+        "Render status",
+        "{render_id, state: queued|running|ready|failed|cancelled|interrupted|missing, progress, path, version, size, "
+        "seconds, bytes, error}. Works with the app closed.",
+        {"render_id": _S},
         _RO,
     ),
 ]
@@ -452,21 +472,32 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
     writes = name in WRITE_TOOLS or name in ("export_otio", "import_media")
-    _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS else "read")
+    _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
     if name in ("media_status", "get_transcript"):
         _no_unknown(args, {"project_id", "media_id"})
+    if name == "render_status":
+        _no_unknown(args, {"project_id", "render_id"})
     try:
         proj = backend.project(pid) if isinstance(pid, str) else None
     except O.OplogError as e:
         if e.code != "not_found":
             raise
         proj = None
-    extra = MEDIA_TOOLS + FRAME_TOOLS
+    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
         raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
+    if name in RENDER_TOOLS:
+        from hermes_studio import render_jobs as RJ
+
+        rest = {k: v for k, v in args.items() if k != "project_id"}
+        if name == "render_status":
+            return RJ.render_status(proj, rest, backend.engine.renders if isinstance(backend, EngineBackend) else None)
+        if not backend.writable:
+            raise P.offline()
+        return RJ.render_timeline(proj, rest, backend.engine.renders)
     if name in FRAME_TOOLS:
         from hermes_studio import frame_tools as FT
 

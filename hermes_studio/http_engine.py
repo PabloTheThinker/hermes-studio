@@ -41,7 +41,7 @@ STATUS = {
     "failed": 500,
 }
 _QUERY_INT = re.compile(r"\A(0|[1-9][0-9]*)\Z")  # ASCII only (D26)
-WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media")
+WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media", "render_timeline")
 MEDIA_FILES = {
     "proxy": ("proxy", "video/mp4"),
     "thumbs": ("thumbs", "image/jpeg"),
@@ -151,6 +151,17 @@ def get(h: Any, segs: list[str], query: str) -> None:
             return _events(h, proj)
         if rest == ["status"]:
             return _json(h, 200, proj.status())
+        if len(rest) in (2, 3) and rest[0] == "renders":
+            from hermes_studio import render_jobs as RJ
+
+            st = RJ.render_status(proj, {"render_id": rest[1]}, ENGINE.renders)
+            if len(rest) == 2:
+                return _json(h, 200, st)
+            if rest[2] != "file":
+                return _json(h, 404, {"ok": False, "error": "unknown project route"})
+            if st["state"] != "ready":
+                return _json(h, 409, {"ok": False, "error": f"render is {st['state']}", "code": "conflict"})
+            return h._file(RJ._paths(proj, rest[1])[0], "video/mp4")
         if rest == ["frame"]:
             return _frame_get(h, tok, proj, query)
         if rest == ["transcript"]:
@@ -324,6 +335,12 @@ def rest_post(h: Any, segs: list[str]) -> None:
         return _error(h, _denied("write"))
     try:
         proj = ENGINE.get(parts[0])
+        if parts[1] == "render_timeline":
+            if "render" not in tok.scopes:
+                return _error(h, _denied("render"))
+            from hermes_studio import render_jobs as RJ
+
+            return _json(h, 200, RJ.render_timeline(proj, body, ENGINE.renders))
         if parts[1] == "import_media":
             stripped, _ = O.strip_forged(body) if isinstance(body, dict) else (body, [])
             return _json(h, 200, MJ.import_media(proj, tok.session, stripped, ENGINE.media))

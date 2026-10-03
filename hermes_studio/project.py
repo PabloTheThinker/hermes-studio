@@ -572,6 +572,7 @@ class Engine:
     # callables(event) that hear every project, including ones opened later (GET /mcp, D12)
     listeners: list[Any] = field(default_factory=list)
     _media: Any = None
+    _renders: Any = None
 
     def __post_init__(self) -> None:
         if not self.attach_token:
@@ -579,6 +580,16 @@ class Engine:
 
     def info(self) -> dict:
         return {"pid": os.getpid(), "port": self.port, "started_at": self.started_at}
+
+    @property
+    def renders(self) -> Any:
+        """The S6 render worker, started on first use."""
+        with self._lock:
+            if self._renders is None:
+                from hermes_studio.render_jobs import RenderJobs
+
+                self._renders = RenderJobs()
+            return self._renders
 
     @property
     def media(self) -> Any:
@@ -657,6 +668,8 @@ class Engine:
             for p in self.projects.values():
                 if self._media is not None:
                     self._media.cancel_project(p.id)  # a running ffmpeg is killed; its status reads cancelled
+                if self._renders is not None:
+                    self._renders.cancel_project(p.id)
                 p.close()
             self.projects.clear()
 
