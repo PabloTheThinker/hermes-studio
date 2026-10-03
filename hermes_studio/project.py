@@ -523,6 +523,20 @@ class Project:
             self._publish(event_of(self.id, entry))
         return res
 
+    def keep_locked(self, session: O.Session, args: dict, body: dict) -> dict:
+        """Phase 2 drafts: ``Oplog.call(..., "keep_body")`` with the same commit side effects as a write
+        (cache, snapshot, ``op.applied``). A person's act, so the mode gate doesn't apply."""
+        log = self.oplog()
+        before = len(log._entries)
+        res = log.call(session, "keep_body", {**args, "body": body})
+        if len(log._entries) > before:
+            doc = log.doc
+            self._write_cache(doc)
+            if doc["version"] % SNAPSHOT_EVERY == 0:
+                self._write_snapshot(doc)
+            self._publish(event_of(self.id, log._entries[-1]))
+        return res
+
     def _publish(self, event: dict) -> None:
         keep = []
         for s in self.subscribers:

@@ -357,7 +357,11 @@
     document.getElementById("ed-undo").disabled = !E.undoTarget;
     document.getElementById("ed-redo").disabled = !E.redoTarget;
   }
-  async function approvals() { const a = await P("approval_list"); E.pending = a.pending; E.mode = a.mode; }
+  async function approvals() {
+    const a = await P("approval_list"); E.pending = a.pending; E.mode = a.mode;
+    try { E.drafts = E.pid.includes(".d") ? [] : (await P("draft_list")).drafts.filter((d) => d.draft.state === "open"); } catch { E.drafts = []; }
+    E.draftOf = /\.d[0-9a-f]{6}$/.test(E.pid) ? E.pid.replace(/\.d[0-9a-f]{6}$/, "") : null;
+  }
   async function mediaStatus() {
     await Promise.all(Object.keys(E.doc.media).map(async (mid) => { try { E.media[mid] = await P("media_status", { media_id: mid }); } catch {} }));
   }
@@ -696,6 +700,12 @@
     el.innerHTML = `<div class="side-h"><span class="dot ${pend.length ? "live" : ""}"></span><b>Hermes</b><span class="hint">${pend.length ? "waiting for you" : "idle"}</span>
         <label class="hint chk" style="display:inline-flex;gap:.3rem;align-items:center"><input type="checkbox" id="ed-follow" ${E.follow ? "checked" : ""} style="width:auto;margin:0" /> follow</label>
         <span class="seg">${["ask", "propose", "auto"].map((m) => `<button data-mode="${m}" class="${E.mode === m ? "on" : ""}">${m}</button>`).join("")}</span></div>
+      ${E.draftOf ? `<div class="card wait"><div class="who">draft</div><div class="sum">A draft of ${esc(E.draftOf)}</div>
+        <div class="v">Edits here don't touch the main timeline until you keep them.</div>
+        <div class="acts"><button class="ed-btn amber" id="dr-keep">Keep (one undo)</button><button class="ed-btn" id="dr-drop">Discard</button></div></div>` : ""}
+      ${(E.drafts || []).map((d) => `<div class="card"><div class="who">draft · ${esc(d.items)} items</div><div class="sum">${esc(d.project_id)}</div>
+        <div class="v">from v${esc(d.draft.from_version)} · now v${esc(d.version)}</div><div class="acts"><a class="ed-btn" href="#/edit/${encodeURIComponent(d.project_id)}">Open</a></div></div>`).join("")}
+      ${!E.draftOf ? `<p style="margin:.6rem .7rem 0"><button class="ed-btn" id="dr-new">Start a draft</button></p>` : ""}
       ${pend.map((p) => `<div class="card wait"><div class="who agent">${esc(p.actor.id)}${p.step != null ? " · step " + esc(p.step) : ""} · waiting</div>
         <div class="sum">${esc(p.summary)}</div><div class="v">${esc(p.tool)} · ${esc(p.n_ops)} op${p.n_ops === 1 ? "" : "s"} · on v${esc(p.base_version)}</div>
         <div class="acts"><button class="ed-btn amber" data-apply="${esc(p.pending_id)}">Apply</button><button class="ed-btn" data-skip="${esc(p.pending_id)}">Skip</button>
@@ -706,6 +716,12 @@
         <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
       <p class="hint" style="padding:.8rem .9rem">Agents edit this timeline through MCP (<span class="mono">hermes-studio mcp install claude</span>). In Propose mode each edit waits here for Apply or Skip.</p>`;
     document.getElementById("ed-follow").onchange = (e) => { E.follow = e.target.checked; };
+    const dn = document.getElementById("dr-new");
+    if (dn) dn.onclick = async () => { try { const d = await P("draft_new"); go(d.project_id); } catch (e) { fail(e); } };
+    const dk = document.getElementById("dr-keep");
+    if (dk) dk.onclick = async () => { const main = E.draftOf; try { await P("draft_keep"); toast("Kept: one entry on " + main, true); go(main); } catch (e) { fail(e); } };
+    const dd = document.getElementById("dr-drop");
+    if (dd) dd.onclick = async () => { const main = E.draftOf; if (!confirm("Delete this draft?")) return; try { await P("draft_discard"); go(main); } catch (e) { fail(e); } };
     el.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = async () => { try { await P("set_mode", { mode: b.dataset.mode }); E.mode = b.dataset.mode; side(); } catch (e) { fail(e); } }));
     const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
     el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));

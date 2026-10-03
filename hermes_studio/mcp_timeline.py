@@ -45,8 +45,18 @@ CUT_TOOLS = ("transcript_cut",)  # S7
 GATE_TOOLS = ("approval_list", "approval_status", "approval_resolve", "set_mode")  # S8
 PROJECT_TOOLS = ("project_list", "project_new")  # the Edit page; they take no project_id
 PRESET_TOOLS = ("apply_preset",)  # Phase 2 Q3
+DRAFT_TOOLS = ("draft_new", "draft_list", "draft_keep", "draft_discard")  # Phase 2 Q2
 NAMES = (
-    READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PROJECT_TOOLS + PRESET_TOOLS
+    READ_TOOLS
+    + WRITE_TOOLS
+    + MEDIA_TOOLS
+    + FRAME_TOOLS
+    + RENDER_TOOLS
+    + CUT_TOOLS
+    + GATE_TOOLS
+    + PROJECT_TOOLS
+    + PRESET_TOOLS
+    + DRAFT_TOOLS
 )
 
 _S = {"type": "string"}
@@ -330,6 +340,26 @@ TOOLS: list[dict] = [
         },
         _W,
     ),
+    _tool(
+        "draft_new",
+        "Start a draft",
+        "Copy the timeline into a draft project (its own project_id, Auto mode, its own history) to try edits without "
+        "touching the main one. A person later keeps it (one undoable entry on the main) or discards it.",
+        {},
+        _W,
+    ),
+    _tool("draft_list", "List drafts", "The drafts of a main project and their state (open | kept).", {}, _RO),
+    _tool(
+        "draft_keep",
+        "Keep a draft",
+        "A person makes the main timeline equal to this draft (project_id = the draft) as ONE entry. conflict if the main "
+        "changed since the draft was made. Agents can't call this.",
+        {"summary": _S, "client_op_id": _S},
+        _W,
+    ),
+    _tool(
+        "draft_discard", "Discard a draft", "A person deletes this draft (project_id = the draft). The main is untouched.", {}, _W
+    ),
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
 
@@ -598,7 +628,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if e.code != "not_found":
             raise
         proj = None
-    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PRESET_TOOLS
+    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PRESET_TOOLS + DRAFT_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
         raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
     if name in GATE_TOOLS:
@@ -615,6 +645,17 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if name == "set_mode":
             return G.set_mode(proj, backend.session, rest)
         return G.resolve(proj, backend.session, rest)
+    if name in DRAFT_TOOLS:
+        from hermes_studio import drafts as DR
+
+        rest = {k: v for k, v in args.items() if k != "project_id"}
+        if name == "draft_list":
+            _no_unknown(rest, set())
+            return DR.draft_list(backend.engine if isinstance(backend, EngineBackend) else None, proj)
+        if not backend.writable:
+            raise P.offline()
+        fn = {"draft_new": DR.draft_new, "draft_keep": DR.draft_keep, "draft_discard": DR.draft_discard}[name]
+        return fn(backend.engine, backend.session, proj, rest)
     if name == "apply_preset":
         from hermes_studio import presets as PR
 

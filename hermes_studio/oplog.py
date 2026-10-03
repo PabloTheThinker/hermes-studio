@@ -419,6 +419,18 @@ def op_insert_media(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "delete_media", "id": a["id"]}]
 
 
+BODY_KEYS = ("media", "tracks", "markers")
+
+
+def op_replace_body(ctx: _Ctx, a: dict) -> list[dict]:
+    """Internal (Phase 2 drafts): the doc's media, tracks and markers become ``a``'s; the inverse
+    puts the old ones back. Only the engine's ``keep_body`` tool logs it."""
+    old = {k: copy.deepcopy(ctx.doc[k]) for k in BODY_KEYS}
+    for k in BODY_KEYS:
+        ctx.doc[k] = copy.deepcopy(a[k])
+    return [{"op": "replace_body", **old}]
+
+
 def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
     role = a["role"]
     if not isinstance(role, str) or role not in T.ROLES:  # S1's role rule: a non-string is bad_track_role
@@ -755,6 +767,7 @@ INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "insert_item": (op_insert_item, frozenset({"track", "index", "item"}), frozenset()),
     "insert_marker": (op_insert_marker, frozenset({"index", "marker"}), frozenset()),
     "insert_track": (op_insert_track, frozenset({"index", "track"}), frozenset()),
+    "replace_body": (op_replace_body, frozenset(BODY_KEYS), frozenset()),
     "delete_media": (op_delete_media, frozenset({"id"}), frozenset()),
     "insert_media": (op_insert_media, frozenset({"id", "media"}), frozenset()),
     "join_clips": (op_join_clips, frozenset({"a", "b", "item", "index", "transitions", "anchors"}), frozenset()),
@@ -987,6 +1000,8 @@ class Oplog:
             return self._apply(session, args, warnings)
         if tool in ("history_undo", "history_redo"):
             return self._undo(session, args, warnings, redo=tool == "history_redo")
+        if tool == "keep_body":  # Phase 2 drafts: the engine's own tool, never sent by an agent
+            return self._keep_body(session, args)
         raise OplogError("invalid_op", f"unknown write tool {tool!r}", rule="unknown_tool", path="")
 
     # ---- internals
@@ -1267,6 +1282,27 @@ class Oplog:
             raise OplogError("invalid_op", "group_id must be a string; omit it for no group", rule="bad_arg", path="/group_id")
         self._base_version_type(args)  # every shape check runs before dedupe
         self._ops_shape(args["ops"])
+
+    def _keep_body(self, session: Session, args: dict) -> dict:
+        """``call(session, "keep_body", ...)`` (Phase 2 drafts): make this doc's media, tracks and markers ``body``'s as ONE entry (one
+        ``replace_body`` op; its inverse restores the old body, so undo works as for any entry).
+        ``args``: ``client_op_id``, ``summary``, ``base_version``, ``body``, ``group_id?``. A retry
+        with the same ``client_op_id`` returns the first result."""
+        self._check_args(args, {"client_op_id", "summary", "base_version", "body"}, {"group_id"})
+        body = args["body"]
+        if not (isinstance(body, dict) and all(k in body for k in BODY_KEYS)):
+            raise OplogError("invalid_op", "body must hold media, tracks and markers", rule="bad_arg", path="/body")
+        if "group_id" in args and args["group_id"] is None:
+            raise OplogError("invalid_op", "group_id must be a string; omit it for no group", rule="bad_arg", path="/group_id")
+        self._base_version_type(args)
+        key = (session.actor.kind, session.actor.id, args["client_op_id"])
+        if key in self._results:
+            out = copy.deepcopy(self._results[key])
+            out["warnings"] = []
+            return out
+        self._base_version(args, required=True)
+        new, logged, inverse = self._run([{"op": "replace_body", **{k: body[k] for k in BODY_KEYS}}], internal=True)
+        return self._commit(session, args, new, logged, inverse, None, args["summary"], [], "timeline_apply")
 
     def _apply(self, session: Session, args: dict, warnings: list[dict]) -> dict:
         self.check_apply_envelope(args)
