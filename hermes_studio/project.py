@@ -785,8 +785,20 @@ def new_project(engine: Engine, args: Any) -> dict:
     return engine.get(pid).status()
 
 
+def _modified(d: Path) -> float:
+    """When the project last changed (its log or base), in seconds since the epoch."""
+    times = []
+    for f in ("oplog.jsonl", "base.json"):
+        try:
+            times.append((d / f).stat().st_mtime)
+        except OSError:
+            pass
+    return round(max(times, default=0.0), 3)
+
+
 def list_projects(engine: Engine | None) -> dict:
-    """Every project folder with a ``base.json``: its status (open in this engine) or a closed read."""
+    """Every project folder with a ``base.json``: its status (open in this engine) or a closed read,
+    with ``modified`` (when its log or base last changed, epoch seconds), in name order."""
     out = []
     root = projects_root()
     try:
@@ -811,6 +823,7 @@ def list_projects(engine: Engine | None) -> dict:
                     "media": len(doc["media"]),
                     "items": sum(len(t["items"]) for t in doc["tracks"]),
                     "end": max((e for _, e in T.resolve(doc).values()), default=0),
+                    "modified": _modified(root / name),
                 }
             )
         except HermesStudioError as e:

@@ -207,8 +207,8 @@
         <p class="lede">A real timeline you and your agents edit together. Every change is one entry you can undo; agent edits wait for you in Propose mode.</p>
         <p><select id="ed-shape" class="ed-btn">${["9:16", "16:9", "1:1", "4:5"].map((s) => `<option>${s}</option>`).join("")}</select>
         <button class="ed-btn amber" id="ed-new">New project</button></p>
-        <div class="plist">${list.map((p) => p.error ? `<div class="row"><span class="nm">${esc(p.project_id)}</span><span class="meta">${esc(p.error.error)}</span></div>` :
-          `<div class="row" data-pid="${esc(p.project_id)}"><span class="nm">${esc(p.project_id)}</span><span class="hint">${esc(p.size[0])}×${esc(p.size[1])} · ${esc(p.media)} media · ${esc(p.items)} items</span><span class="meta">v${esc(p.version)} · ${tc(p.end)} · ${esc(p.mode)}</span></div>`).join("") || `<p class="hint">No projects yet.</p>`}</div>`;
+        <div class="plist">${order(list).map((p) => p.error ? `<div class="row"><span class="nm">${esc(p.project_id)}</span><span class="meta">${esc(p.error.error)}</span></div>` :
+          `<div class="row" data-pid="${esc(p.project_id)}"><span class="nm">${esc(p.project_id)}</span><span class="hint">${esc(p.size[0])}×${esc(p.size[1])} · ${esc(p.media)} media · ${esc(p.items)} items</span><span class="meta">${p.drafts ? `${p.drafts} draft${p.drafts > 1 ? "s" : ""} · ` : ""}v${esc(p.version)} · ${tc(p.end)} · ${esc(p.mode)} · ${ago(p.modified)}</span></div>`).join("") || `<p class="hint">No projects yet.</p>`}</div>`;
       root.querySelectorAll("[data-pid]").forEach((r) => (r.onclick = () => go(r.dataset.pid)));
       document.getElementById("ed-new").onclick = async () => {
         try { const p = await rpc("project_new", { shape: document.getElementById("ed-shape").value }); go(p.project_id); } catch (e) { fail(e); }
@@ -216,6 +216,18 @@
     });
   }
   function go(pid) { location.hash = "#/edit/" + encodeURIComponent(pid); }
+  // Newest first; a draft (<main>.d<hex>) is counted on its main project's row, not listed (open
+  // it from the main's sidebar).
+  function order(list) {
+    const isDraft = (p) => /\.d[0-9a-f]{6}$/.test(p.project_id), mains = list.filter((p) => !isDraft(p));
+    list.filter(isDraft).forEach((d) => { const m = mains.find((p) => d.project_id.startsWith(p.project_id + ".d")); if (m) m.drafts = (m.drafts || 0) + 1; else mains.push(d); });
+    return mains.sort((a, b) => (b.modified || 0) - (a.modified || 0));
+  }
+  function ago(t) {
+    if (!t) return "";
+    const s = Math.max(0, Date.now() / 1000 - t);
+    return s < 60 ? "edited just now" : s < 3600 ? `edited ${Math.floor(s / 60)} min ago` : s < 86400 ? `edited ${Math.floor(s / 3600)} h ago` : `edited ${new Date(t * 1000).toLocaleDateString()}`;
+  }
 
   /* ---------------------------------------------------------------- resolve (timeline.resolve in JS) */
   function resolve(doc) {

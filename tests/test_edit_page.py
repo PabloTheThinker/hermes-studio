@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 import pytest
 from s3_app import App
@@ -62,6 +63,13 @@ def test_project_list_and_new_over_mcp(app):
     assert doc["size"] == [1920, 1080] and doc["fps"] == [25, 1] and doc["media"] == {}
     ok, lst = app.mcp("project_list", {})
     assert {p["project_id"] for p in lst["projects"]} == {"p1", new["project_id"]}
+    m0 = {p["project_id"]: p["modified"] for p in lst["projects"]}
+    assert all(isinstance(t, float) and t > 0 for t in m0.values())
+    time.sleep(0.05)
+    ok, _ = app.mcp_apply({"op": "add_marker", "at": 0, "label": "x"}, token=app.ui)  # an edit moves p1's time on
+    ok, lst = app.mcp("project_list", {})
+    m1 = {p["project_id"]: p["modified"] for p in lst["projects"]}
+    assert ok and m1["p1"] > m0["p1"] and m1[new["project_id"]] == m0[new["project_id"]]
 
 
 @pytest.mark.parametrize(

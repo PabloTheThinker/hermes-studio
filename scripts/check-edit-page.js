@@ -248,7 +248,11 @@ let PAGE = null;
   if (!shown || !/^p-[0-9a-f]+\/exports\/[^/]+-540x960\.mp4$/.test(shown)) errs.push("show in folder: asked for " + shown);
   if (!/540x960$/.test(rendered)) errs.push("render: " + rendered + ", want a 540x960 render without captions");
   await page.screenshot({ path: path.join(OUT, "10-rendered.png") });
+  // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
+  await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");
+  const row = await page.textContent(".plist .row");
+  if (!/edited just now/.test(row)) errs.push("projects list: " + row);
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
