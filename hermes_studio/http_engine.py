@@ -193,7 +193,13 @@ def get(h: Any, segs: list[str], query: str) -> None:
             return _json(h, 200, MJ.get_scenes(proj, {"media_id": q["media_id"][-1]} if "media_id" in q else {}))
         if rest == ["transcript"]:
             q = parse_qs(query, keep_blank_values=True)
-            args = {"media_id": q["media_id"][-1]} if "media_id" in q else {}
+            args: dict = {k: q[k][-1] for k in ("media_id", "format") if k in q}
+            for k in ("from_s", "to_s"):
+                if k in q:
+                    try:
+                        args[k] = float(q[k][-1])
+                    except ValueError:
+                        args[k] = q[k][-1]  # refused by get_transcript with its own path
             return _json(h, 200, MJ.get_transcript(proj, args))
         if len(rest) in (2, 3) and rest[0] == "media":
             return _media_get(h, proj, rest[1], rest[2] if len(rest) == 3 else None)

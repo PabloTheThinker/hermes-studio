@@ -212,8 +212,15 @@ TOOLS: list[dict] = [
         "get_transcript",
         "Get the transcript",
         "Words on the timeline: each {w, at, end, at_s, end_s, clip, media, src_in, src_out}, sorted by time, mapped through "
-        "every clip that shows them. Only media imported with 'words' have any.",
-        {"media_id": _S},
+        "every clip that shows them. Only media imported with 'words' have any. from_s / to_s keep the words said in "
+        'that window of the timeline; format:"text" returns {count, text} with lines of "[start_s] words" (a line per '
+        "pause, sentence or 12 words) instead of one row per word: far cheaper for a long talk.",
+        {
+            "media_id": _S,
+            "from_s": {"type": "number"},
+            "to_s": {"type": "number"},
+            "format": {"type": "string", "enum": ["words", "text"]},
+        },
         _RO,
     ),
     _tool(
@@ -666,7 +673,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "timeline_outline", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
-    if name in ("media_status", "get_transcript", "get_scenes"):
+    if name in ("media_status", "get_scenes"):
         _no_unknown(args, {"project_id", "media_id"})
     if name in ("render_status", "render_cancel"):
         _no_unknown(args, {"project_id", "render_id"})

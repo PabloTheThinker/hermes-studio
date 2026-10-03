@@ -12,6 +12,7 @@ events. Those carry no ``id`` (they are not log entries), so ``Last-Event-ID`` n
 from __future__ import annotations
 
 import contextlib
+import math
 import queue
 import secrets
 import threading
@@ -291,11 +292,52 @@ def media_status(proj: Any, args: Any, live: set[str]) -> dict:
     return st or {"media_id": mid, "state": "none", "progress": 0.0, "stages": {}}
 
 
+TEXT_LINE_PAUSE_S = 0.7  # format "text": a pause this long, a sentence end or 12 words starts a line
+TEXT_LINE_WORDS = 12
+
+
+def _secs(args: dict, k: str) -> float | None:
+    if k not in args:
+        return None
+    v = args[k]
+    if isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(v) or v < 0:
+        raise _bad(f"/{k}", "bad_arg", f"'{k}' must be a number of seconds, 0 or more")
+    return float(v)
+
+
+def _as_text(rows: list[dict]) -> str:
+    """Lines of ``[start_s] words``: a new line at a pause, a sentence end or every 12 words."""
+    lines: list[list[dict]] = []
+    for r in rows:
+        cur = lines[-1] if lines else None
+        if (
+            cur is None
+            or r["at_s"] - cur[-1]["end_s"] > TEXT_LINE_PAUSE_S
+            or cur[-1]["w"][-1:] in ".!?"
+            or len(cur) >= TEXT_LINE_WORDS
+        ):
+            lines.append([r])
+        else:
+            cur.append(r)
+    return "\n".join(f"[{ln[0]['at_s']:.2f}] " + " ".join(r["w"] for r in ln) for ln in lines)
+
+
 def get_transcript(proj: Any, args: Any) -> dict:
     """Words on the timeline (``media.timeline_words``) from every media that has a words file,
-    with ``seconds`` beside the ticks. ``media_id`` limits it to one media."""
+    with ``seconds`` beside the ticks. ``media_id`` limits it to one media; ``from_s`` / ``to_s``
+    to the words said in that window of the timeline; ``format: "text"`` gives lines of
+    ``[start_s] words`` instead of one row per word (far fewer tokens for a long talk)."""
     if not isinstance(args, dict):
         raise _bad("", "bad_arg", "arguments must be an object")
+    for k in sorted(args, key=repr):
+        if k not in ("media_id", "from_s", "to_s", "format"):
+            raise _bad(f"/{k}", "unknown_arg", f"unknown argument '{k}'")
+    lo, hi = _secs(args, "from_s"), _secs(args, "to_s")
+    if lo is not None and hi is not None and hi <= lo:
+        raise _bad("/to_s", "bad_arg", "'to_s' must be after 'from_s'")
+    fmt = args.get("format", "words")
+    if fmt not in ("words", "text"):
+        raise _bad("/format", "bad_arg", "format is words or text")
     with _locked(proj):
         doc = proj.oplog().doc
     only = args.get("media_id")
@@ -314,7 +356,12 @@ def get_transcript(proj: Any, args: Any) -> dict:
     sec = T.TICK_RATE
     for r in rows:
         r["at_s"], r["end_s"] = r["at"] / sec, r["end"] / sec
-    return {"version": doc["version"], "hash": doc["hash"], "media": sorted(words), "words": rows}
+    if lo is not None or hi is not None:
+        rows = [r for r in rows if (hi is None or r["at_s"] < hi) and (lo is None or r["end_s"] > lo)]
+    out = {"version": doc["version"], "hash": doc["hash"], "media": sorted(words)}
+    if fmt == "text":
+        return {**out, "count": len(rows), "text": _as_text(rows)}
+    return {**out, "words": rows}
 
 
 def after_import(proj: P.Project, after: dict) -> None:
