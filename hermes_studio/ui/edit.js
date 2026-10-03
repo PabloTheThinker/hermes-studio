@@ -312,6 +312,7 @@
       else if (e.key === "Home") { e.preventDefault(); E.follow = false; seek(0); }
       else if (e.key === "End") { e.preventDefault(); E.follow = false; seek(endOf(E.spans)); }
       else if (e.key.toLowerCase() === "m") addMarker();
+      else if (["j", "k", "l"].includes(e.key.toLowerCase()) && !e.altKey) { e.preventDefault(); shuttle(e.key.toLowerCase()); }
       else if ((e.code === "Comma" || e.code === "Period") && E.sel && E.by[E.sel] && E.by[E.sel].type === "clip") {
         e.preventDefault(); const id = E.sel;
         coalesce("slip:" + id, (e.code === "Comma" ? -1 : 1) * (e.shiftKey ? Math.round(E.doc.fps[0] / E.doc.fps[1]) : 1), (n) => slip(id, n));
@@ -643,7 +644,7 @@
     timeline();
   }
   function keysHelp() {
-    const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
+    const rows = [["Space", "play / pause"], ["J K L", "slower or back a second / stop / play, faster each press (to 4×)"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
       ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl / Shift click", "add or remove one from the selection"], ["Ctrl A", "select every clip and text item"], ["Esc", "clear the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
@@ -741,7 +742,7 @@
         let a = E.auds[p.track];
         if (!a) { a = E.auds[p.track] = Object.assign(document.createElement("audio"), { preload: "auto" }); a.dataset.track = p.track; document.getElementById("ed-screen").appendChild(a); }
         const fresh = !a.src.endsWith(p.url); if (fresh) a.src = p.url;
-        a.playbackRate = p.rate; a.volume = p.volume;
+        a.playbackRate = p.rate * (E.rate || 1); a.volume = p.volume;
         // re-seek only for a new source or clip, or real drift: V1's cuts must not make the music skip
         if (fresh || a.dataset.clip !== p.clip || Math.abs(a.currentTime - p.at) > 0.25) { a.currentTime = p.at; a.dataset.clip = p.clip; }
         if (a.paused) a.play().catch(() => {});
@@ -797,7 +798,7 @@
       E.cur = it.id;
       v.style.visibility = "visible"; img.style.visibility = "hidden"; over.style.visibility = "visible";
       if (!v.src.endsWith(url)) v.src = url;
-      v.playbackRate = frac((it.props || {}).speed); v.volume = gain(it, E.t);
+      v.playbackRate = frac((it.props || {}).speed) * (E.rate || 1); v.volume = gain(it, E.t);
       if (force || Math.abs(v.currentTime - want) > 0.08) v.currentTime = want;
       return;
     }
@@ -822,10 +823,10 @@
     seek(t);
   }
   function gapPlay() {
-    const t0 = performance.now(), from = E.t, end = endOf(E.spans);
+    const t0 = performance.now(), from = E.t, end = endOf(E.spans), rate = E.rate || 1, gen = E.gen;
     const step = () => {
-      if (!E || !E.playing) return;
-      const t = from + ticks((performance.now() - t0) / 1000);
+      if (!E || !E.playing || E.gen !== gen) return; // a newer play() owns the clock
+      const t = from + ticks((performance.now() - t0) / 1000 * rate);
       if (t >= end) { pause(); return; }
       seek(t);
       if (clipAt(t) && E.cur) { document.getElementById("ed-video").play().catch(() => {}); return; }
@@ -836,25 +837,37 @@
   function play() {
     if (!E) return;
     if (E.t >= endOf(E.spans)) seek(0, true);
-    E.playing = true; document.getElementById("ed-play").textContent = "Pause";
+    E.playing = true; E.gen = (E.gen || 0) + 1; document.getElementById("ed-play").textContent = (E.rate || 1) === 1 ? "Pause" : `Pause · ${E.rate}×`;
     seek(E.t, true);
     if (!H264) return stillPlay();
     if (E.cur) document.getElementById("ed-video").play().catch(() => {}); else gapPlay();
   }
   function stillPlay() {
-    const t0 = performance.now(), from = E.t, end = endOf(E.spans);
+    const t0 = performance.now(), from = E.t, end = endOf(E.spans), rate = E.rate || 1, gen = E.gen;
     const step = () => {
-      if (!E || !E.playing) return;
-      const t = from + ticks((performance.now() - t0) / 1000);
+      if (!E || !E.playing || E.gen !== gen) return;
+      const t = from + ticks((performance.now() - t0) / 1000 * rate);
       if (t >= end) { pause(); return; }
       seek(t);
       setTimeout(step, 1000 / 6); // about 6 stills a second
     };
     step();
   }
+  // J / K / L: L plays, and each press doubles the speed up to 4x; K stops; J halves the speed, and
+  // at 1x steps back a second (the page can't play backwards).
+  function shuttle(k) {
+    if (k === "k") return pause();
+    if (k === "l") {
+      const was = E.playing ? E.rate || 1 : 0;
+      if (was) { pause(); E.rate = Math.min(4, was * 2); } else E.rate = 1;
+      return play();
+    }
+    if (E.playing && (E.rate || 1) > 1) { const r = E.rate / 2; pause(); E.rate = r; return play(); }
+    const was = E.playing; pause(); E.follow = false; seek(Math.max(0, E.t - TICK), true); if (was) play();
+  }
   function pause() {
     if (!E) return;
-    E.playing = false; const b = document.getElementById("ed-play"); if (b) b.textContent = "Play";
+    E.playing = false; E.rate = 1; const b = document.getElementById("ed-play"); if (b) b.textContent = "Play";
     const v = document.getElementById("ed-video"); if (v) v.pause();
     syncAudio();
   }

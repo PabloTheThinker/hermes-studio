@@ -76,6 +76,16 @@ let PAGE = null;
   await page.screenshot({ path: path.join(OUT, "4-applied.png") });
   await page.click("#ed-play"); await sleep(2000); await page.click("#ed-play");
   const t = await page.textContent("#ed-tc");
+  // J/K/L: L L plays at 2x (the playhead runs about twice as fast), K stops, J at rest steps back a second
+  await page.click("#ed-tc"); await page.keyboard.press("Home");
+  await page.keyboard.press("l"); await page.keyboard.press("l");
+  const lbl = await page.textContent("#ed-play"); await sleep(1500); await page.keyboard.press("k");
+  const fast = await page.textContent("#ed-tc");
+  const fastS = +fast.split(":")[1];
+  if (lbl !== "Pause · 2×" || !(fastS > 2.2 && fastS < 4)) errs.push(`shuttle: ${lbl}, ran to ${fast} in 1.5 s at 2x`);
+  await page.keyboard.press("j");
+  const back = +(await page.textContent("#ed-tc")).split(":")[1];
+  if (Math.abs(fastS - back - 1) > 0.02) errs.push(`shuttle: J went from ${fastS} to ${back}`);
   await page.click("[data-frames]");
   await page.waitForSelector(".ba img", { timeout: 15000 });
   await page.screenshot({ path: path.join(OUT, "5-played.png") });
