@@ -68,18 +68,19 @@ def test_roll_at_speed_needs_whole_ticks():
 @pytest.mark.parametrize(
     "op, want",
     [
-        ({"op": "slip_clip", "id": "c1", "by": -1}, ("out_of_range", "/ops/0/by")),
-        ({"op": "slip_clip", "id": "c1", "by": 597 * S}, ("out_of_range", "/ops/0/by")),
+        ({"op": "slip_clip", "id": "c1", "by": -1}, ("negative_time", "/ops/0/by")),
+        ({"op": "slip_clip", "id": "c1", "by": 597 * S}, ("src_out_of_media", "/ops/0/by")),
         ({"op": "slip_clip", "id": "x1", "by": S}, ("bad_arg", "/ops/0/id")),
         ({"op": "slip_clip", "id": "c1", "by": 0}, ("bad_arg", "/ops/0/by")),
         ({"op": "slip_clip", "id": "c1", "by": 0.5}, ("not_integer_ticks", "/ops/0/by")),
         ({"op": "slip_clip", "id": "zz", "by": S}, ("not_found", "/ops/0/id")),
         ({"op": "roll_edit", "id": "c2", "by": S}, ("bad_arg", "/ops/0/id")),  # c3 starts 2 s after c2 ends
         ({"op": "roll_edit", "id": "c3", "by": S}, ("bad_arg", "/ops/0/id")),  # the last clip
-        ({"op": "roll_edit", "id": "c1", "by": -4 * S}, ("bad_arg", "/ops/0/by")),
-        ({"op": "roll_edit", "id": "c1", "by": 4 * S}, ("bad_arg", "/ops/0/by")),
-        ({"op": "roll_edit", "id": "c1", "by": -11 * S}, ("out_of_range", "/ops/0/by")),
+        ({"op": "roll_edit", "id": "c1", "by": -4 * S}, ("empty_range", "/ops/0/by")),
+        ({"op": "roll_edit", "id": "c1", "by": 4 * S}, ("empty_range", "/ops/0/by")),
+        ({"op": "roll_edit", "id": "c1", "by": -11 * S}, ("negative_time", "/ops/0/by")),
         ({"op": "roll_edit", "id": "c1", "by": 0}, ("bad_arg", "/ops/0/by")),
+        ({"op": "roll_edit", "id": "c1", "by": 597 * S}, ("src_out_of_media", "/ops/0/by")),
         ({"op": "roll_edit", "id": "c1"}, ("missing_arg", "/ops/0/by")),
     ],
 )
@@ -107,4 +108,4 @@ def test_mcp_takes_seconds(app):
     d = app.proj.log.doc
     assert item(d, "c1")["src"] == [0, 5 * S // 2] and item(d, "c3")["src"] == [22 * S, 26 * S]
     ok, e = app.mcp_apply({"op": "slip_clip", "id": "c3", "by_s": -1000})
-    assert not ok and (e["rule"], e["path"]) == ("out_of_range", "/ops/0/by"), e
+    assert not ok and (e["rule"], e["path"]) == ("negative_time", "/ops/0/by"), e

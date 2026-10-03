@@ -77,7 +77,7 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `add_transition` | `between, dur, id?, track?=V1, kind?=xfade` | `delete_item{id}` |
 | `add_marker` / `remove_marker` | `at, label, id?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
 | `edit_marker` | `id, at?, label?` (at least one) | `edit_marker` with the old values |
-| `slip_clip` | `id, by` (signed source ticks, not 0) | `set_fields` with the old `src`; refused (`out_of_range` @ `by`) past either end of the media |
+| `slip_clip` | `id, by` (signed source ticks, not 0) | `set_fields` with the old `src`; refused before the media starts (`negative_time` @ `by`) or past its end (`src_out_of_media` @ `by`), the validator's own rules |
 | `roll_edit` | `id, by` (signed timeline ticks, not 0) | `set_fields` on both clips; the next clip on the track must start where `id` ends (or their crossfade starts); both keep at least their crossfades' length; the total length stays |
 | `add_track` / `remove_track` | `role, id?` / `id` | `remove_track` / `insert_track{index, track}` |
 | `add_media` (S4) | `path, dur, fps, id?=m<n>, proxy?` (values checked by the validator at `/media/<id>/…`) | `delete_media{id}` (internal; its inverse is `insert_media{id, media}`). Undo is `undo_blocked` while a clip uses the media |

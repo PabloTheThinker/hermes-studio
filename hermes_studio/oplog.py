@@ -547,7 +547,7 @@ def _fits_crossfades(tr: dict, it: dict, new_dur: int) -> None:
     if new_dur <= 0 or new_dur <= max(din, dout) or new_dur < din + dout:
         culprit = xout if xout and new_dur <= dout else xin if xin and new_dur <= din else xout or xin
         if culprit is None:
-            raise _OpError("bad_arg", f"that leaves {it['id']!r} with no length", "by", item_id=it["id"])
+            raise _OpError("empty_range", f"that leaves {it['id']!r} with no length", "by", item_id=it["id"])
         raise _OpError(
             "transition_too_long",
             f"that leaves {it['id']!r} {new_dur} ticks long, too short for crossfade {culprit['id']!r} ({culprit['dur']} ticks)",
@@ -556,10 +556,12 @@ def _fits_crossfades(tr: dict, it: dict, new_dur: int) -> None:
 
 
 def _in_media(ctx: _Ctx, it: dict, src: list[int], k: str) -> None:
+    """The validator's own rules, at the op's path: ``negative_time`` before the media starts,
+    ``src_out_of_media`` past its end."""
     mdur = ctx.doc["media"][it["media"]]["dur"]
     if src[0] < 0 or src[1] > mdur:
         raise _OpError(
-            "out_of_range",
+            "negative_time" if src[0] < 0 else "src_out_of_media",
             f"{it['id']!r} would need source {src[0]}..{src[1]} ticks; {it['media']!r} runs 0..{mdur}",
             k,
             item_id=it["id"],
