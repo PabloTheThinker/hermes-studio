@@ -300,7 +300,7 @@
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
       <div class="ed-left"><div class="tabs" role="tablist" aria-label="Panels"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div><div class="cap" id="ed-cap"></div></div></div>
-        <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
+        <div class="transport"><button class="ed-btn" id="ed-play">Play</button><button class="ed-btn" id="ed-shot" title="Save the frame at the playhead as a JPEG (up to 1080 px wide), e.g. for a cover">Save frame</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split" title="Split at the playhead (S)">Split</button><button class="ed-btn" id="ed-del">Delete</button>
         <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><label class="hint chk" title="Edges snap to cuts, markers and the playhead; hold Shift to drag freely"><input type="checkbox" id="ed-snapon" checked /> snap</label><button class="ed-btn" id="ed-text" title="Text at the playhead">+ Text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">+ Marker</button>
         <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets</option><option value="title_card">Title card</option>
@@ -328,6 +328,7 @@
       sc.scrollLeft = Math.max(0, 40 + t * E.zoom - x); // the second under the pointer stays under it
     }, { passive: false });
     $("ed-render").onclick = render;
+    $("ed-shot").onclick = saveFrame;
     $("ed-cstyle").onchange = () => drawCaption();
     $("ed-preset").onchange = async (e) => {
       const preset = e.target.value; e.target.value = ""; if (!preset || !E) return;
@@ -1341,6 +1342,17 @@
     if (!E) return;
     const text = prompt("Text"); if (!text) return;
     write([{ op: "add_text", text, style: "pop", at: E.t, dur: 2 * TICK }], `Add text`);
+  }
+  // The engine's frame at the playhead (what agents see: clips, looks and text; word captions are
+  // the render's), at the edit's width up to 1080 px, saved as <project>-<time>.jpg.
+  async function saveFrame() {
+    try {
+      const w = Math.min(1080, E.doc.size[0] - (E.doc.size[0] % 2)), at = E.t;
+      const res = await authed(`/api/projects/${encodeURIComponent(E.pid)}/frame?at=${at}&width=${w}`);
+      const url = URL.createObjectURL(await res.blob()), a = document.createElement("a");
+      a.href = url; a.download = `${E.pid}-${tc(at).replace(/[:.]/g, "-")}.jpg`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { fail(e); }
   }
   async function render() {
     try {

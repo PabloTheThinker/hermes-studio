@@ -289,6 +289,12 @@ let PAGE = null;
   const fits = await page.evaluate(() => { const ed = document.querySelector(".ed").getBoundingClientRect(), r = document.getElementById("ed-render"); r.scrollIntoView({ inline: "nearest" }); const rb = r.getBoundingClientRect(); return { bottom: ed.bottom - window.innerHeight, render: rb.right <= window.innerWidth + 1 && rb.left >= -1 }; });
   if (fits.bottom > 1 || !fits.render) errs.push("small window: " + JSON.stringify(fits));
   await page.setViewportSize({ width: 1440, height: 900 });
+  // Save frame: a 1080 px wide JPEG of the playhead's frame, named for the project and time
+  await page.click("#ed-tc"); await page.keyboard.press("Home");
+  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 15000 }), page.click("#ed-shot")]);
+  const shotPath = path.join(OUT, "frame.jpg"); await dl.saveAs(shotPath);
+  const shotInfo = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height,codec_name", "-of", "csv=p=0", shotPath]).toString().trim();
+  if (!/^mjpeg,1080,1920$/.test(shotInfo) || !/-0-00-00\.jpg$/.test(dl.suggestedFilename())) errs.push(`save frame: ${dl.suggestedFilename()} ${shotInfo}`);
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");
