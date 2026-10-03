@@ -880,12 +880,28 @@
     v.style.visibility = "hidden"; img.style.visibility = "visible";
     over.style.visibility = hit ? "hidden" : "visible"; // engine frames already carry the text
     if (!hit) { img.removeAttribute("src"); return; }
-    const key = `${E.doc.hash}:${E.t}`;
-    if (E.frames.want === key) return;
-    E.frames.want = key;
-    authed(`/api/projects/${encodeURIComponent(E.pid)}/frame?at=${E.t}&width=540`).then((r) => r.blob()).then((b) => {
-      if (E && E.frames.want === key) { if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(b); }
-    }).catch(() => {});
+    const w = E.playing ? 270 : 540; // smaller while playing: more frames a second; full when still
+    stillWant(`${E.doc.hash}:${E.t}:${w}`, E.t, w);
+  }
+  // Engine stills, one request at a time: the newest wanted time is fetched when the last one
+  // lands, and every frame that lands is shown if it is still for this doc. (Dropping each answer
+  // that a newer request had overtaken showed nothing at all while playing: a frame takes longer
+  // than the 1/6 s between requests.)
+  function stillWant(key, t, w) {
+    const f = E.frames;
+    if (f.shown === key || f.busy === key) return;
+    f.next = { key, t, w };
+    if (!f.busy) stillPump();
+  }
+  function stillPump() {
+    const s = E, f = E.frames, job = f.next; f.next = null;
+    if (!job) { f.busy = null; return; }
+    f.busy = job.key;
+    authed(`/api/projects/${encodeURIComponent(s.pid)}/frame?at=${job.t}&width=${job.w}`).then((r) => r.blob()).then((b) => {
+      if (E !== s) return;
+      const img = document.getElementById("ed-still");
+      if (img && job.key.startsWith(E.doc.hash + ":")) { if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(b); f.shown = job.key; }
+    }).catch(() => {}).finally(() => { if (E === s) stillPump(); });
   }
   function onTime() {
     if (!E || !E.playing || !E.cur) return;
@@ -943,6 +959,7 @@
     E.playing = false; E.rate = 1; const b = document.getElementById("ed-play"); if (b) b.textContent = "Play";
     const v = document.getElementById("ed-video"); if (v) v.pause();
     syncAudio();
+    if (E.doc && !E.cur) seek(E.t); // a paused still is the full-size frame, not the small playing one
   }
 
   /* ---------------------------------------------------------------- left panes */

@@ -89,7 +89,11 @@ let PAGE = null;
   await page.click("#ed-ruler", { position: { x: 40 + 2 * 60, y: 10 } });
   await sleep(1500);
   await page.screenshot({ path: path.join(OUT, "4-applied.png") });
+  // still-frame playback (this Chromium has no H.264): count the distinct frames shown in 2 s
+  await page.evaluate(() => { window.__stills = new Set(); const img = document.getElementById("ed-still"); new MutationObserver(() => window.__stills.add(img.src)).observe(img, { attributes: true, attributeFilter: ["src"] }); });
   await page.click("#ed-play"); await sleep(2000); await page.click("#ed-play");
+  const stills = await page.evaluate(() => window.__stills.size);
+  if (stills < 6) errs.push(`still playback: ${stills} frames shown in 2 s, want at least 6`);
   const t = await page.textContent("#ed-tc");
   // J/K/L: L L plays at 2x (the playhead runs about twice as fast), K stops, J at rest steps back a second
   await page.click("#ed-tc"); await page.keyboard.press("Home");
@@ -329,7 +333,7 @@ let PAGE = null;
   await page.waitForSelector("#ed-tc", { timeout: 15000 }).catch(() => errs.push("keyboard: Enter on a project row didn't open it"));
   await page.waitForSelector('[data-mode="propose"][aria-pressed="true"]', { timeout: 15000 }).catch(() => errs.push("a11y: the mode switch has no aria-pressed"));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
-  console.log(JSON.stringify({ out: OUT, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
+  console.log(JSON.stringify({ out: OUT, stills_in_2s: stills, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
   mcp.kill(); await browser.close(); srv.kill();
 })().catch(async (e) => {
