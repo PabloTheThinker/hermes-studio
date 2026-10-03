@@ -183,7 +183,8 @@ def get(h: Any, segs: list[str], query: str) -> None:
         if len(rest) == 2 and rest[0] == "approvals":
             from hermes_studio import gate as G
 
-            return _json(h, 200, G.status(proj, {"pending_id": rest[1]}))
+            q = parse_qs(query, keep_blank_values=True)
+            return _json(h, 200, G.status(proj, {"pending_id": rest[1], "preview": q.get("preview", [""])[-1] == "1"}))
         if rest == ["frame"]:
             return _frame_get(h, tok, proj, query)
         if rest == ["scenes"]:

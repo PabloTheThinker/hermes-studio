@@ -314,8 +314,9 @@ TOOLS: list[dict] = [
         "Waiting edit status",
         "One parked edit: state pending | applied | skipped | failed, with result {op_id, new_version, ...} or error. "
         "In Propose mode an agent's write returns needs_approval with a pending_id; poll this (or watch events) until it "
-        "isn't pending. Don't resend the write with a new client_op_id.",
-        {"pending_id": _S},
+        "isn't pending. Don't resend the write with a new client_op_id. preview:true adds, for a pending edit, what "
+        "Apply would do now: {would_apply, changed_ids, length_s, outline} or {would_apply: false, error}.",
+        {"pending_id": _S, "preview": {"type": "boolean"}},
         _RO,
     ),
     _tool(
@@ -676,7 +677,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if name == "approval_list":
             return G.listing(proj, rest)
         if name == "approval_status":
-            _no_unknown(rest, {"pending_id"})
+            _no_unknown(rest, {"pending_id", "preview"})
             return G.status(proj, rest)
         if not backend.writable:
             raise P.offline()

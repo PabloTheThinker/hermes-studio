@@ -34,6 +34,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-show-render` | desktop: **Show in folder** for a finished render (`show-render` IPC; only an .mp4 directly in that project's `exports/`, checked on real paths) | `check-edit-page.js` with the IPC stubbed; the Electron side is not run here | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-shuttle` | Edit page J/K/L shuttle (to 4×; J steps back at 1×), one clock per play | `check-edit-page.js` 2× run and J step | `EDIT-PAGE-SPEC.md` |
 | `feat/agents-timeline-check` | read tool `timeline_check` (34 tools): timeline_apply's whole path on a scratch log; `{would_apply, version, changed_ids, length_s, outline}` or the same refusal; works in Ask mode; `gate._dry_run` now returns the result and doc | `tests/test_timeline_check.py` | `mcp_timeline.py` `_check` docstring, AGENTS.md |
+| `feat/editor-pending-preview` | `approval_status {preview: true}` (REST `?preview=1`): a parked edit dry-run now, `{would_apply, changed_ids, length_s, outline}` or the refusal Apply would meet; the waiting card's **Preview** shows it and outlines the touched items | `test_s8_gate.py` preview test; `check-edit-page.js` Preview step | `EDIT-PAGE-SPEC.md`, AGENTS.md |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

@@ -2,7 +2,7 @@
 //   node scripts/check-edit-page.js [out-dir]
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video through Browse…, adds it to the timeline,
-// lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
+// lets an agent (the stdio MCP proxy) add a title in Propose mode, previews it on its card, applies it from the sidebar,
 // plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, multi-selects, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
@@ -68,6 +68,10 @@ let PAGE = null;
   const hd = JSON.parse(execFileSync("curl", ["-s", "-H", "Authorization: Bearer " + TOKEN, "-H", `Host: 127.0.0.1:${PORT}`, `${base}api/projects/${pid}/hash`]).toString());
   send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "timeline_apply", arguments: { project_id: pid, base_version: hd.version, client_op_id: "agent-1", summary: "Add a title", ops: [{ op: "add_text", text: "Hermes", style: "pop", at_s: 1, dur_s: 3 }] } } });
   await page.waitForSelector(".card.wait", { timeout: 15000 });
+  await page.click("[data-preview]");
+  await page.waitForFunction(() => /changed/.test((document.querySelector(".card .pv") || {}).textContent || ""), null, { timeout: 15000 });
+  const pvText = await page.textContent(".card .pv");
+  if (!/"Hermes" \(pop\)/.test(pvText)) errs.push("preview: the waiting card's outline doesn't show the title: " + pvText.slice(0, 200));
   await page.screenshot({ path: path.join(OUT, "3-waiting.png") });
   await page.click("[data-apply]");
   await page.waitForSelector(".it.text", { timeout: 15000 });

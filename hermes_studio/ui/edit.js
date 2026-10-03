@@ -132,6 +132,8 @@
     .mk.sel { background: var(--amber); color: #000; }
     .keys { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; font-size: 12px; line-height: 1.5; }
     .keys b { font: 600 11px var(--mono); color: var(--amber); white-space: nowrap; }
+    .card .pv { margin: .5rem 0 0; padding: .45rem .5rem; max-height: 14rem; overflow: auto; font: 500 10.5px/1.45 var(--mono); color: var(--mute); background: var(--bg); border: 1px solid var(--line); white-space: pre; }
+    .it.ghost { outline: 2px dashed var(--ember, #ff7a45); outline-offset: 1px; }
     .snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--amber); z-index: 4; pointer-events: none; display: none; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
@@ -1109,7 +1111,9 @@
       ${!E.draftOf ? `<p style="margin:.6rem .7rem 0"><button class="ed-btn" id="dr-new">Start a draft</button></p>` : ""}
       ${pend.map((p) => `<div class="card wait"><div class="who agent">${esc(p.actor.id)}${p.step != null ? " · step " + esc(p.step) : ""} · waiting</div>
         <div class="sum">${esc(p.summary)}</div><div class="v">${esc(p.tool)} · ${esc(p.n_ops)} op${p.n_ops === 1 ? "" : "s"} · on v${esc(p.base_version)}</div>
+        <pre class="pv" id="pv-${esc(p.pending_id)}" hidden></pre>
         <div class="acts"><button class="ed-btn amber" data-apply="${esc(p.pending_id)}">Apply</button><button class="ed-btn" data-skip="${esc(p.pending_id)}">Skip</button>
+        <button class="ed-btn" data-preview="${esc(p.pending_id)}">Preview</button>
         <button class="ed-btn" data-rest="${esc(p.pending_id)}">Apply the rest</button></div></div>`).join("")}
       ${recs.map((r) => `<div class="card ${E.cancelled.has(r.op_id) ? "undone" : ""}"><div class="who ${r.actor.kind === "agent" ? "agent" : ""}">${esc(r.actor.kind === "human" ? "you" : r.actor.id)}${r.step != null ? " · step " + esc(r.step) : ""}${r.undoes ? " · undo" : ""}</div>
         <div class="sum">${esc(r.summary)}</div><div class="v">v${esc(r.base_version)} → v${esc(r.new_version)} · ${esc(r.changed_ids.length)} changed</div>
@@ -1127,6 +1131,23 @@
     const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
     el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));
     el.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = () => res(b.dataset.skip, "skip")));
+    // Preview: what Apply would do now (the engine dry-runs the parked edit): the items it would
+    // touch get a dashed ember outline on the timeline, the playhead goes to the first, and the
+    // outline of the result shows on the card. A second click hides it.
+    el.querySelectorAll("[data-preview]").forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.preview, box = document.getElementById("pv-" + id);
+      document.querySelectorAll(".it.ghost").forEach((n) => n.classList.remove("ghost"));
+      if (!box.hidden) { box.hidden = true; return; }
+      try {
+        const st = await P("approval_status", { pending_id: id, preview: true }), pv = st.preview || {};
+        box.hidden = false;
+        if (!pv.would_apply) { box.textContent = "Apply would fail now: " + ((pv.error || {}).error || st.state); return; }
+        box.textContent = `${pv.changed_ids.length} changed · ${pv.length_s.toFixed(2)} s long after\n\n${pv.outline}`;
+        pv.changed_ids.forEach((cid) => { const n = document.querySelector(`.it[data-id="${CSS.escape(cid)}"]`); if (n) n.classList.add("ghost"); });
+        const ts = pv.changed_ids.map((cid) => (E.spans[cid] || [])[0]).filter((x) => x != null);
+        if (ts.length) seek(Math.min(...ts));
+      } catch (e) { fail(e); }
+    }));
     el.querySelectorAll("[data-rest]").forEach((b) => (b.onclick = () => res(b.dataset.rest, "apply", true)));
     el.querySelectorAll("[data-undo]").forEach((b) => (b.onclick = () => P("history_undo", { op_id: b.dataset.undo, client_op_id: rid() }).then(reload).catch(fail)));
     el.querySelectorAll("[data-frames]").forEach((b) => (b.onclick = async () => {

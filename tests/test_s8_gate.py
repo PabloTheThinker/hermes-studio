@@ -262,3 +262,25 @@ def test_import_parks_then_builds_after_apply(app, tmp_path):
     assert ok and r["resolved"]["state"] == "applied" and "m3" in app.proj.log.doc["media"]
     st = wait_ready(app, "m3")
     assert st["state"] == "ready" and set(st["stages"]) == {"wave"}
+
+
+def test_preview_says_what_apply_would_do(app):
+    pid = agent_apply(app, {"op": "delete_clip", "id": "c3", "ripple": False}, key="pv")[1]["pending_id"]
+    h0 = app.head()
+    ok, st = app.mcp("approval_status", {"project_id": "p1", "pending_id": pid, "preview": True})
+    assert ok and st["state"] == "pending", st
+    pv = st["preview"]
+    assert pv["would_apply"] and pv["changed_ids"] == ["c3"] and pv["length_s"] == 8.0 and "  c3 " not in pv["outline"]
+    assert app.head() == h0 and app.proj.log._entries == []  # a preview writes nothing
+    ok, plain = app.mcp("approval_status", {"project_id": "p1", "pending_id": pid})
+    assert ok and "preview" not in plain
+    st_code, _, rest = app.req("GET", f"/api/projects/p1/approvals/{pid}?preview=1", token=app.ui)
+    assert st_code == 200 and rest["preview"] == pv
+    ok, _ = app.mcp_apply(marker("human"), token=app.ui)  # now Apply would meet a conflict, and the preview says so
+    ok, st = app.mcp("approval_status", {"project_id": "p1", "pending_id": pid, "preview": True})
+    assert ok and not st["preview"]["would_apply"] and st["preview"]["error"]["code"] == "conflict"
+    resolve(app, pid, "skip")
+    ok, st = app.mcp("approval_status", {"project_id": "p1", "pending_id": pid, "preview": True})
+    assert ok and st["state"] == "skipped" and "preview" not in st
+    ok, e = app.mcp("approval_status", {"project_id": "p1", "pending_id": pid, "preview": "yes"})
+    assert not ok and (e["rule"], e["path"]) == ("bad_arg", "/preview")

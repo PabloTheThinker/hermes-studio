@@ -226,10 +226,33 @@ def status(proj: Any, args: Any) -> dict:
     pid = args.get("pending_id")
     if not isinstance(pid, str):
         raise _bad("/pending_id", "missing_arg" if "pending_id" not in args else "bad_arg", "'pending_id' must be a string")
+    preview = args.get("preview", False)
+    if not isinstance(preview, bool):
+        raise _bad("/preview", "bad_arg", "'preview' must be true or false")
     rec = _load(proj, pid)
     if rec is None:
         raise O.OplogError("not_found", f"no parked edit {pid!r}", rule="not_found", path="/pending_id", id=pid)
-    return _public(rec)
+    out = _public(rec)
+    if preview and rec["state"] == "pending":
+        out["preview"] = _preview(proj, rec)
+    return out
+
+
+def _preview(proj: Any, rec: dict) -> dict:
+    """What Apply would do now: the parked call dry-run as its agent on a scratch log, with the
+    items it would change and an outline of the result, or the refusal Apply would meet."""
+    import contextlib
+
+    from hermes_studio.outline import outline
+
+    session = O.Session(O.Actor(rec["actor"]["kind"], rec["actor"]["id"]))
+    with proj.mutex if hasattr(proj, "mutex") else contextlib.nullcontext():
+        try:
+            res, doc = _dry_run(proj.oplog(), session, rec["tool"], rec["args"])
+        except O.OplogError as e:
+            return {"would_apply": False, "error": e.as_dict()}
+    o = outline(doc)
+    return {"would_apply": True, "changed_ids": res["changed_ids"], "length_s": o["length_s"], "outline": o["text"]}
 
 
 def listing(proj: Any, args: Any) -> dict:
