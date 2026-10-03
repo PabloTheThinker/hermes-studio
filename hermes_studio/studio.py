@@ -369,6 +369,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio import http_engine
 
             return http_engine.get(self, segs, parsed.query)
+        if segs == ["", "api", "projects"]:
+            from hermes_studio import http_engine
+
+            return http_engine.projects_route(self, "GET")
+        if path in ("/edit/edit.js", "/sw.js"):  # the Edit page and its media header worker
+            return self._file(UI_DIR / path.rsplit("/", 1)[1], "text/javascript; charset=utf-8")
         if path.startswith("/api/probe"):
             qs = parse_qs(parsed.query)
             src = (qs.get("src") or [""])[0]
@@ -527,6 +533,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio import http_engine
 
             return http_engine.rest_post(self, segs)
+        if segs == ["", "api", "projects"]:
+            from hermes_studio import http_engine
+
+            return http_engine.projects_route(self, "POST")
         if path == "/api/design" or path.startswith("/api/design/"):
             return self._design_post(path)
         if path == "/api/jobs":
@@ -872,6 +882,8 @@ def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
 
     engine = http_engine.start(httpd.server_address[1])  # the timeline engine: locks its projects (D5, D6)
     print(f"Hermes Studio  http://{host}:{port}/", flush=True)
+    if not engine.ui_token_given:  # a browser has no app to hand it over: the person pastes it once
+        print(f"Edit page code (paste it when the Edit page asks; keep it private): {http_engine.UI_TOKEN}", flush=True)
     print("Library  Create  Jobs  — loopback only. Does not post.", flush=True)
     try:
         httpd.serve_forever()

@@ -9,11 +9,15 @@ const net = require("net");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 
 let win = null;
 let engine = null;
 let engineLog = [];
 let deskUrl = process.env.HERMES_STUDIO_URL || null;
+// The Edit page's token (S3 §13.3): made here, handed to the engine in its environment and to the
+// desk page over IPC, both in memory. Never a URL, a file, a cookie or web storage.
+let uiToken = null;
 
 function engineDir() {
   const packed = path.join(process.resourcesPath || "", "engine");
@@ -74,6 +78,8 @@ async function startEngine() {
   };
   delete env.PYTHONPATH;
   delete env.PYTHONHOME;
+  uiToken = crypto.randomBytes(32).toString("hex");
+  env.HERMES_STUDIO_UI_TOKEN = uiToken;
   engineLog = [];
   engine = spawn(
     py,
@@ -143,6 +149,16 @@ async function boot() {
 }
 
 ipcMain.handle("retry", () => boot());
+// Only the desk page this app loaded (same origin as the engine it started) gets the token.
+ipcMain.handle("ui-token", (event) => {
+  try {
+    const from = new URL(event.senderFrame.url);
+    if (!uiToken || !deskUrl || from.origin !== new URL(deskUrl).origin) return null;
+  } catch {
+    return null;
+  }
+  return uiToken;
+});
 
 function createWindow() {
   win = new BrowserWindow({

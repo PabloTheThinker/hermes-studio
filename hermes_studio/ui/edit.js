@@ -1,0 +1,609 @@
+/* Hermes Studio · Edit page: a timeline editor that people and agents drive through one engine.
+   Every change is a tool call on /mcp with the person's ui token (the engine is the only writer),
+   so the page and any agent see the same log, the same undo and the same cards.
+   The token comes from the desktop app in memory (window.studio.uiToken) or is pasted once; it is
+   kept in this page's memory and the media worker's, never in a URL, storage or a cookie. */
+(function () {
+  "use strict";
+  const TICK = 705600000;
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const sec = (t) => t / TICK;
+  const ticks = (s) => Math.round(s * TICK);
+  const tc = (t) => { const s = Math.max(0, sec(t)); const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(2).padStart(5, "0")}`; };
+  const rid = () => "ui-" + Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const frac = (v) => (Array.isArray(v) ? v[0] / v[1] : v == null ? 1 : v);
+
+  let TOKEN = "";
+  // Proxies are H.264: Chrome, Edge and the desktop app play them; a browser without the codec
+  // previews with cached still frames instead (the same frames agents see).
+  const H264 = (() => { try { return !!document.createElement("video").canPlayType('video/mp4; codecs="avc1.4d401f"'); } catch { return false; } })();
+  let E = null; // the open project session
+  let ROOT = null;
+
+  /* ---------------------------------------------------------------- engine calls */
+  async function getToken() {
+    if (TOKEN) return TOKEN;
+    if (window.studio && typeof window.studio.uiToken === "function") {
+      try { const t = await window.studio.uiToken(); if (/^[0-9a-f]{64}$/.test(t || "")) TOKEN = t; } catch {}
+    }
+    if (TOKEN) await armWorker();
+    return TOKEN;
+  }
+  async function armWorker() {
+    if (!("serviceWorker" in navigator)) return false;
+    try {
+      await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const reg = await navigator.serviceWorker.ready;
+      const w = navigator.serviceWorker.controller || reg.active;
+      if (!w) return false;
+      return await new Promise((ok) => { const ch = new MessageChannel(); ch.port1.onmessage = (e) => ok(!!(e.data && e.data.ok)); w.postMessage({ token: TOKEN }, [ch.port2]); setTimeout(() => ok(false), 1500); });
+    } catch { return false; }
+  }
+  async function rpc(name, args) {
+    const res = await fetch("/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + TOKEN },
+      body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name, arguments: args || {} } }),
+    });
+    if (res.status === 401) { TOKEN = ""; throw Object.assign(new Error("The Edit page code is not valid any more."), { code: "unauthorized" }); }
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message || "protocol error");
+    const r = j.result;
+    if (r.isError) {
+      let body = {};
+      try { body = JSON.parse(r.content[r.content.length - 1].text); } catch {}
+      throw Object.assign(new Error(body.error || "failed"), body);
+    }
+    return Object.assign(r.structuredContent || {}, { _images: r.content.filter((c) => c.type === "image").map((c) => `data:${c.mimeType};base64,${c.data}`) });
+  }
+  const P = (name, args) => rpc(name, Object.assign({ project_id: E.pid }, args || {}));
+  async function authed(path) {
+    const res = await fetch(path, { headers: { Authorization: "Bearer " + TOKEN } });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    return res;
+  }
+
+  /* ---------------------------------------------------------------- styles */
+  function css() {
+    if (document.getElementById("hs-edit-css")) return;
+    const st = document.createElement("style");
+    st.id = "hs-edit-css";
+    st.textContent = `
+    main.edit-full { padding: 0; overflow: hidden; }
+    main.edit-full .wrap { max-width: none; height: 100%; }
+    .ed { display: grid; grid-template-columns: 270px minmax(0,1fr) 340px; grid-template-rows: 48px minmax(0,1fr) 250px; height: calc(100vh - 64px); }
+    .ed-top { grid-column: 1 / -1; display: flex; align-items: center; gap: .9rem; padding: 0 1rem; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .ed-top .pid { font: 600 12px var(--mono); color: var(--mute); }
+    .ed-top .ver { font: 500 11px var(--mono); color: var(--dim); }
+    .ed-top .sp { flex: 1; }
+    .ed-btn { background: none; border: 1px solid var(--line-2); color: var(--ink); padding: .3rem .7rem; cursor: pointer; font: 600 12px var(--sans); }
+    .ed-btn:hover { border-color: var(--ink); }
+    .ed-btn.amber { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); }
+    .ed-btn[disabled] { opacity: .4; cursor: default; }
+    .seg { display: inline-flex; border: 1px solid var(--line-2); }
+    .seg button { background: none; border: 0; padding: .25rem .6rem; font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--mute); cursor: pointer; }
+    .seg button.on { background: var(--amber); color: var(--amber-ink); }
+    .ed-left { grid-row: 2; border-right: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tabs button { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: .55rem 0; font: 600 11px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); cursor: pointer; }
+    .tabs button.on { color: var(--ink); border-bottom-color: var(--amber); }
+    .pane { padding: .8rem; font-size: 13px; }
+    .pane input[type=text] { width: 100%; background: var(--panel); border: 1px solid var(--line-2); color: var(--ink); padding: .4rem .5rem; font: 400 12px var(--mono); }
+    .mrow { border-bottom: 1px solid var(--line); padding: .55rem 0; }
+    .mrow .nm { font-weight: 600; word-break: break-all; }
+    .mrow .meta { font: 500 11px var(--mono); color: var(--dim); }
+    .bar { height: 3px; background: var(--line); margin: .35rem 0; } .bar i { display: block; height: 100%; background: var(--ember); }
+    .words { line-height: 1.9; user-select: none; }
+    .words span { cursor: pointer; padding: 1px 2px; border-radius: 2px; }
+    .words span:hover { background: var(--line-2); }
+    .words span.fill { color: var(--ember); }
+    .words span.sel { background: var(--amber); color: var(--amber-ink); }
+    .words span.now { box-shadow: inset 0 -2px 0 var(--amber); }
+    .ed-mid { grid-row: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #050505; }
+    .stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
+    .screen { position: relative; height: 100%; max-height: 100%; aspect-ratio: var(--ar, 9/16); max-width: 100%; background: #000; overflow: hidden; }
+    .screen video, .screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .screen .txt { position: absolute; left: 6%; right: 6%; top: 72%; transform: translateY(-50%); text-align: center; font-weight: 800; font-size: clamp(12px, 3.2vh, 34px); color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke; text-shadow: 0 2px 6px rgba(0,0,0,.6); white-space: pre-wrap; pointer-events: none; }
+    .transport { display: flex; align-items: center; gap: .8rem; padding: .45rem .8rem; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); }
+    .ed-tl { grid-column: 1 / 3; grid-row: 3; border-top: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+    .tl-tools { display: flex; gap: .5rem; align-items: center; padding: .35rem .7rem; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .tl-scroll { flex: 1; overflow: auto; position: relative; }
+    .tl-inner { position: relative; min-height: 100%; }
+    .ruler { position: sticky; top: 0; height: 20px; border-bottom: 1px solid var(--line); background: var(--bg); z-index: 2; font: 500 10px var(--mono); color: var(--dim); }
+    .ruler span { position: absolute; top: 3px; border-left: 1px solid var(--line-2); padding-left: 3px; }
+    .trk { position: relative; height: 38px; border-bottom: 1px solid var(--line); }
+    .trk .lab { position: sticky; left: 0; z-index: 1; display: inline-block; width: 34px; height: 100%; font: 600 11px var(--mono); color: var(--dim); background: var(--bg); padding: 11px 0 0 6px; border-right: 1px solid var(--line); }
+    .it { position: absolute; top: 4px; height: 30px; background: #1c1c1e; border: 1px solid var(--line-2); font: 500 11px var(--sans); padding: 2px 5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: grab; color: var(--ink); }
+    .it.clip { background: #232018; } .it.text { background: #1f1a26; } .it.transition { background: repeating-linear-gradient(45deg,#3a2c14,#3a2c14 4px,#2a2010 4px,#2a2010 8px); }
+    .it.agent { outline: 1px solid var(--ember); } .it.mine { outline: 1px solid var(--ink); }
+    .it.sel { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+    .it .tag { font: 600 9px var(--mono); color: var(--ember); margin-right: 4px; }
+    .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
+    .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
+    .side-h { padding: .6rem .9rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .side-h .seg { margin-left: auto; }
+    .pane label.chk { display: flex; align-items: center; gap: .45rem; font-size: 12px; color: var(--mute); letter-spacing: 0; text-transform: none; margin: .5rem 0; }
+    .pane label.chk input { width: auto; margin: 0; }
+    .tl-tools label.chk { display: inline-flex; align-items: center; gap: .3rem; } .tl-tools label.chk input { width: auto; margin: 0; }
+    .side-h .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); } .side-h .dot.live { background: var(--ember); }
+    .card { margin: .6rem .7rem 0; border: 1px solid var(--line-2); padding: .55rem .65rem; font-size: 13px; }
+    .card.wait { border-color: var(--amber); }
+    .card .who { font: 600 10px var(--mono); letter-spacing: .06em; color: var(--dim); text-transform: uppercase; }
+    .card .who.agent { color: var(--ember); }
+    .card .sum { margin: .2rem 0 .35rem; font-weight: 600; }
+    .card .v { font: 500 11px var(--mono); color: var(--dim); }
+    .card .acts { display: flex; gap: .4rem; margin-top: .45rem; flex-wrap: wrap; }
+    .card .ba { display: flex; gap: 4px; margin-top: .4rem; } .card .ba img { width: 50%; border: 1px solid var(--line); }
+    .card.undone { opacity: .5; }
+    .toast { position: fixed; right: 1rem; bottom: 1rem; max-width: 420px; background: var(--panel); border: 1px solid var(--bad); color: var(--ink); padding: .6rem .8rem; z-index: 50; font-size: 13px; }
+    .toast.ok { border-color: var(--amber); }
+    .gate { max-width: 560px; }
+    .gate input { width: 100%; font: 400 13px var(--mono); padding: .5rem; background: var(--panel); color: var(--ink); border: 1px solid var(--line-2); }
+    .plist .row { display: flex; align-items: baseline; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+    .plist .row:hover .nm { color: var(--amber); }
+    .plist .nm { font-weight: 600; } .plist .meta { font: 500 11px var(--mono); color: var(--dim); margin-left: auto; }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function toast(msg, ok) {
+    const t = document.createElement("div");
+    t.className = "toast" + (ok ? " ok" : "");
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), ok ? 2500 : 6000);
+  }
+  function fail(e) {
+    if (e && e.code === "needs_approval") return toast("Waiting for approval: " + (e.error || ""), true);
+    toast((e && (e.error || e.message)) || String(e));
+  }
+
+  /* ---------------------------------------------------------------- the token gate */
+  async function needToken(root, then) {
+    if (await getToken()) return then();
+    root.innerHTML = `<div class="gate"><p class="kicker">Edit</p><h1>Connect the editor</h1>
+      <p class="lede">The desktop app connects this page by itself. In a browser, paste the <b>Edit page code</b> that
+      <span class="mono">hermes-studio studio</span> printed in the terminal. It stays in this tab's memory only.</p>
+      <input id="ed-code" type="password" autocomplete="off" spellcheck="false" placeholder="64-character code" />
+      <p style="margin-top:.8rem"><button class="ed-btn amber" id="ed-go">Connect</button></p><p class="hint" id="ed-why"></p></div>`;
+    const go = async () => {
+      const v = (document.getElementById("ed-code").value || "").trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(v)) { document.getElementById("ed-why").textContent = "That isn't a 64-character code."; return; }
+      TOKEN = v;
+      try { await rpc("project_list", {}); } catch (e) { TOKEN = ""; document.getElementById("ed-why").textContent = e.message; return; }
+      await armWorker();
+      then();
+    };
+    document.getElementById("ed-go").onclick = go;
+    document.getElementById("ed-code").onkeydown = (e) => { if (e.key === "Enter") go(); };
+  }
+
+  /* ---------------------------------------------------------------- home */
+  async function home(root) {
+    leave(); css(); ROOT = root;
+    document.getElementById("main").classList.remove("edit-full");
+    await needToken(root, async () => {
+      let list = [];
+      try { list = (await rpc("project_list", {})).projects || []; } catch (e) { fail(e); }
+      root.innerHTML = `<p class="kicker">Edit</p><h1>Timeline projects</h1>
+        <p class="lede">A real timeline you and your agents edit together. Every change is one entry you can undo; agent edits wait for you in Propose mode.</p>
+        <p><select id="ed-shape" class="ed-btn">${["9:16", "16:9", "1:1", "4:5"].map((s) => `<option>${s}</option>`).join("")}</select>
+        <button class="ed-btn amber" id="ed-new">New project</button></p>
+        <div class="plist">${list.map((p) => p.error ? `<div class="row"><span class="nm">${esc(p.project_id)}</span><span class="meta">${esc(p.error.error)}</span></div>` :
+          `<div class="row" data-pid="${esc(p.project_id)}"><span class="nm">${esc(p.project_id)}</span><span class="hint">${esc(p.size[0])}×${esc(p.size[1])} · ${esc(p.media)} media · ${esc(p.items)} items</span><span class="meta">v${esc(p.version)} · ${tc(p.end)} · ${esc(p.mode)}</span></div>`).join("") || `<p class="hint">No projects yet.</p>`}</div>`;
+      root.querySelectorAll("[data-pid]").forEach((r) => (r.onclick = () => go(r.dataset.pid)));
+      document.getElementById("ed-new").onclick = async () => {
+        try { const p = await rpc("project_new", { shape: document.getElementById("ed-shape").value }); go(p.project_id); } catch (e) { fail(e); }
+      };
+    });
+  }
+  function go(pid) { location.hash = "#/edit/" + encodeURIComponent(pid); }
+
+  /* ---------------------------------------------------------------- resolve (timeline.resolve in JS) */
+  function resolve(doc) {
+    const by = {}, out = {};
+    doc.tracks.forEach((tr) => tr.items.forEach((it) => (by[it.id] = it)));
+    const dur = (it) => (it.type === "clip" ? Math.round((it.src[1] - it.src[0]) / frac((it.props || {}).speed)) : it.dur);
+    Object.values(by).forEach((it) => {
+      if (it.type === "transition") return;
+      const s = "at" in it ? it.at : by[it.anchor.to].at + it.anchor.offset;
+      out[it.id] = [s, s + dur(it)];
+    });
+    Object.values(by).forEach((it) => { if (it.type === "transition") { const s = out[it.between[1]][0]; out[it.id] = [s, s + it.dur]; } });
+    return out;
+  }
+  const endOf = (spans) => Math.max(0, ...Object.values(spans).map((x) => x[1]));
+
+  /* ---------------------------------------------------------------- open */
+  async function open(root, pid) {
+    leave(); css(); ROOT = root;
+    await needToken(root, async () => {
+      document.getElementById("main").classList.add("edit-full");
+      E = { pid, doc: null, spans: {}, t: 0, zoom: 60, sel: null, tab: "media", media: {}, words: [], wsel: null, records: [], pending: [],
+            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {} };
+      root.innerHTML = layout();
+      bindStatic();
+      try { await reload(); } catch (e) { fail(e); if (e.code === "not_found") { location.hash = "#/edit"; return; } }
+      stream();
+    });
+  }
+
+  function layout() {
+    return `<div class="ed">
+      <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
+        <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)">Undo</button><button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+        <span class="sp"></span><span class="hint" id="ed-render-st"></span><button class="ed-btn amber" id="ed-render">Render MP4</button></div>
+      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button></div><div class="pane" id="ed-pane"></div></div>
+      <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
+        <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
+      <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
+        <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><button class="ed-btn" id="ed-text">Add text</button>
+        <span class="sp" style="flex:1"></span><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" /></div>
+        <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
+      <div class="ed-side" id="ed-side"></div></div>`;
+  }
+
+  function bindStatic() {
+    const $ = (id) => document.getElementById(id);
+    ROOT.querySelectorAll("[data-tab]").forEach((b) => (b.onclick = () => { E.tab = b.dataset.tab; pane(); }));
+    $("ed-undo").onclick = undo; $("ed-redo").onclick = redo;
+    $("ed-play").onclick = () => (E.playing ? pause() : play());
+    $("ed-split").onclick = split; $("ed-del").onclick = del; $("ed-text").onclick = addText;
+    $("ed-zoom").oninput = (e) => { E.zoom = +e.target.value; timeline(); };
+    $("ed-render").onclick = render;
+    $("ed-video").addEventListener("timeupdate", onTime);
+    E.keys = (e) => {
+      if (!E || /INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || "")) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if (e.key === " ") { e.preventDefault(); E.playing ? pause() : play(); }
+      else if ((e.key === "Delete" || e.key === "Backspace") && E.sel) { e.preventDefault(); del(); }
+      else if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey) split();
+    };
+    document.addEventListener("keydown", E.keys);
+  }
+
+  async function reload() {
+    const doc = await P("get_timeline");
+    E.doc = doc; E.spans = resolve(doc);
+    E.by = {}; doc.tracks.forEach((tr) => tr.items.forEach((it) => (E.by[it.id] = it)));
+    document.getElementById("ed-screen").style.setProperty("--ar", `${doc.size[0]}/${doc.size[1]}`);
+    document.getElementById("ed-ver").textContent = `v${doc.version}`;
+    if (E.sel && !E.by[E.sel]) E.sel = null;
+    await Promise.all([history(), approvals(), mediaStatus(), transcript()]);
+    timeline(); pane(); side(); seek(E.t, true);
+  }
+
+  /* ---------------------------------------------------------------- live events */
+  async function stream() {
+    let last = null;
+    for (;;) {
+      if (!E) return;
+      try {
+        const h = { Authorization: "Bearer " + TOKEN };
+        if (last != null) h["Last-Event-ID"] = String(last);
+        const res = await fetch(`/api/projects/${encodeURIComponent(E.pid)}/events`, { headers: h, signal: E.ctl.signal });
+        const rd = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+        for (;;) {
+          const { value, done } = await rd.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n\n")) >= 0) {
+            const chunk = buf.slice(0, i); buf = buf.slice(i + 2);
+            let id = null, data = null;
+            chunk.split("\n").forEach((l) => { if (l.startsWith("id: ")) id = +l.slice(4); else if (l.startsWith("data: ")) data = l.slice(6); });
+            if (id != null) last = id;
+            if (data) { try { onEvent(JSON.parse(data)); } catch {} }
+          }
+        }
+      } catch (e) { if (!E || e.name === "AbortError") return; }
+      await new Promise((ok) => setTimeout(ok, 1500));
+    }
+  }
+  let reloadTimer = null;
+  function soon(fn) { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => fn().catch(fail), 120); }
+  function onEvent(ev) {
+    if (!E) return;
+    const t = ev.type || "";
+    if (t === "op.applied" || t === "op.undone" || t === "stream.reset") soon(reload);
+    else if (t.startsWith("approval.")) approvals().then(side).catch(() => {});
+    else if (t === "mode.changed") { E.mode = ev.mode; side(); }
+    else if (t.startsWith("media.")) {
+      const m = E.media[ev.media_id] || (E.media[ev.media_id] = {});
+      if (t === "media.progress") Object.assign(m, { state: "running", progress: ev.progress, stage: ev.stage });
+      if (t === "media.ready") { mediaStatus().then(() => { pane(); seek(E.t, true); }); return; }
+      if (E.tab === "media") pane();
+    } else if (t.startsWith("render.")) {
+      E.render = Object.assign(E.render || {}, { state: t === "render.ready" ? "ready" : t === "render.failed" ? "failed" : "running", progress: ev.progress, render_id: ev.render_id, error: ev.error });
+      renderStatus();
+    }
+  }
+
+  /* ---------------------------------------------------------------- data */
+  async function history() {
+    const out = []; let since = 0;
+    for (;;) { const h = await P("history_diff", { since_version: since, limit: 500 }); out.push(...h.records); if (h.next_since_version == null) break; since = h.next_since_version; }
+    E.records = out;
+    const cancelled = new Set();
+    for (let i = out.length - 1; i >= 0; i--) { const r = out[i]; if (cancelled.has(r.op_id)) continue; (r.undoes || []).forEach((x) => cancelled.add(x)); }
+    E.cancelled = cancelled;
+    E.undoTarget = [...out].reverse().find((r) => !cancelled.has(r.op_id) && !r.undoes) || null;
+    E.redoTarget = [...out].reverse().find((r) => !cancelled.has(r.op_id) && r.undoes) || null;
+    const lastBy = {}; out.forEach((r) => r.changed_ids.forEach((id) => (lastBy[id] = r.actor)));
+    E.lastBy = lastBy;
+    document.getElementById("ed-undo").disabled = !E.undoTarget;
+    document.getElementById("ed-redo").disabled = !E.redoTarget;
+  }
+  async function approvals() { const a = await P("approval_list"); E.pending = a.pending; E.mode = a.mode; }
+  async function mediaStatus() {
+    await Promise.all(Object.keys(E.doc.media).map(async (mid) => { try { E.media[mid] = await P("media_status", { media_id: mid }); } catch {} }));
+  }
+  async function transcript() { try { E.words = (await P("get_transcript")).words; } catch { E.words = []; } }
+
+  async function write(ops, summary) {
+    try {
+      const r = await P("timeline_apply", { base_version: E.doc.version, client_op_id: rid(), summary, ops });
+      await reload();
+      return r;
+    } catch (e) { fail(e); if (e.code === "conflict") await reload(); return null; }
+  }
+
+  /* ---------------------------------------------------------------- timeline view */
+  const px = (t) => 40 + sec(t) * E.zoom;
+  function timeline() {
+    const el = document.getElementById("ed-tl"); if (!el || !E.doc) return;
+    const end = Math.max(endOf(E.spans) + 10 * TICK, 30 * TICK);
+    const w = px(end) + 40;
+    const step = E.zoom > 80 ? 1 : E.zoom > 30 ? 5 : E.zoom > 12 ? 10 : 30;
+    let ruler = "";
+    for (let s = 0; s <= sec(end); s += step) ruler += `<span style="left:${px(ticks(s))}px">${tc(ticks(s))}</span>`;
+    const rows = E.doc.tracks.map((tr) => `<div class="trk" data-trk="${esc(tr.id)}"><span class="lab">${esc(tr.id)}</span>${tr.items.map((it) => {
+      const [a, b] = E.spans[it.id]; const who = E.lastBy[it.id];
+      const cls = ["it", it.type, E.sel === it.id ? "sel" : "", who && who.kind === "agent" ? "agent" : who ? "mine" : ""].join(" ");
+      const tag = who && who.kind === "agent" ? `<span class="tag">${esc(who.id[0].toUpperCase())}${who.step != null ? " · step " + esc(who.step) : ""}</span>` : "";
+      const label = it.type === "clip" ? `${esc(it.media)} ${tc(it.src[0])}` : it.type === "text" ? esc(it.text) : "xfade";
+      return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${tag}${label}</div>`;
+    }).join("")}</div>`).join("");
+    el.style.width = w + "px";
+    el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div>`;
+    el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
+    el.querySelectorAll(".it").forEach((n) => dragItem(n));
+  }
+  function dragItem(n) {
+    n.onpointerdown = (e) => {
+      const id = n.dataset.id, it = E.by[id];
+      E.sel = id;
+      document.querySelectorAll(".it.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      if (!it || it.type === "transition" || !("at" in it)) return;
+      const x0 = e.clientX, left0 = parseFloat(n.style.left); let moved = false;
+      n.setPointerCapture(e.pointerId);
+      n.onpointermove = (m) => { const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true; n.style.left = Math.max(40, left0 + dx) + "px"; };
+      n.onpointerup = async () => {
+        n.onpointermove = n.onpointerup = null;
+        if (!moved) return; // a click only selects
+        const fr = TICK * E.doc.fps[1] / E.doc.fps[0];
+        const at = Math.max(0, Math.round(ticks((parseFloat(n.style.left) - 40) / E.zoom) / fr) * fr);
+        await write([{ op: "move_clip", id, at: Math.round(at) }], `Move ${id}`); // clips and text with their own 'at'
+      };
+    };
+  }
+
+  /* ---------------------------------------------------------------- preview */
+  function clipAt(t) {
+    const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
+    return v1 ? v1.items.filter((it) => it.type === "clip").map((it) => [it, E.spans[it.id]]).sort((a, b) => a[1][0] - b[1][0]).find(([, s]) => s[0] <= t && t < s[1]) : null;
+  }
+  const proxyUrl = (mid) => `/api/projects/${encodeURIComponent(E.pid)}/media/${encodeURIComponent(mid)}/proxy`;
+  function seek(t, force) {
+    if (!E || !E.doc) return;
+    E.t = Math.max(0, Math.round(t));
+    const ph = document.getElementById("ed-ph"); if (ph) ph.style.left = px(E.t) + "px";
+    document.getElementById("ed-tc").textContent = tc(E.t);
+    const txt = E.doc.tracks.filter((tr) => tr.role === "text").flatMap((tr) => tr.items).filter((it) => { const s = E.spans[it.id]; return s && s[0] <= E.t && E.t < s[1]; });
+    const over = document.getElementById("ed-txt");
+    over.textContent = txt.map((x) => x.text).join("\n");
+    const v = document.getElementById("ed-video"), img = document.getElementById("ed-still");
+    const hit = clipAt(E.t);
+    const ready = hit && E.media[hit[0].media] && E.media[hit[0].media].stages && (E.media[hit[0].media].stages.proxy || {}).state === "ready";
+    document.getElementById("ed-at").textContent = hit ? `${hit[0].id} · ${hit[0].media}` : "gap";
+    if (hit && ready && H264 && navigator.serviceWorker && navigator.serviceWorker.controller) {
+      const [it, [s]] = hit; const url = proxyUrl(it.media);
+      const want = (it.src[0] + (E.t - s) * frac((it.props || {}).speed)) / TICK;
+      E.cur = it.id;
+      v.style.visibility = "visible"; img.style.visibility = "hidden"; over.style.visibility = "visible";
+      if (!v.src.endsWith(url)) v.src = url;
+      v.playbackRate = frac((it.props || {}).speed);
+      if (force || Math.abs(v.currentTime - want) > 0.08) v.currentTime = want;
+      return;
+    }
+    E.cur = null;
+    if (!E.playing) { v.pause(); }
+    v.style.visibility = "hidden"; img.style.visibility = "visible";
+    over.style.visibility = hit ? "hidden" : "visible"; // engine frames already carry the text
+    if (!hit) { img.removeAttribute("src"); return; }
+    const key = `${E.doc.hash}:${E.t}`;
+    if (E.frames.want === key) return;
+    E.frames.want = key;
+    authed(`/api/projects/${encodeURIComponent(E.pid)}/frame?at=${E.t}&width=540`).then((r) => r.blob()).then((b) => {
+      if (E && E.frames.want === key) { if (img.src.startsWith("blob:")) URL.revokeObjectURL(img.src); img.src = URL.createObjectURL(b); }
+    }).catch(() => {});
+  }
+  function onTime() {
+    if (!E || !E.playing || !E.cur) return;
+    const it = E.by[E.cur]; const s = E.spans[E.cur]; if (!it || !s) return;
+    const v = document.getElementById("ed-video");
+    const t = s[0] + Math.round((v.currentTime * TICK - it.src[0]) / frac((it.props || {}).speed));
+    if (t >= s[1] - TICK / 60) { seek(s[1], true); if (!clipAt(E.t)) gapPlay(); else v.play().catch(() => {}); return; }
+    seek(t);
+  }
+  function gapPlay() {
+    const t0 = performance.now(), from = E.t, end = endOf(E.spans);
+    const step = () => {
+      if (!E || !E.playing) return;
+      const t = from + ticks((performance.now() - t0) / 1000);
+      if (t >= end) { pause(); return; }
+      seek(t);
+      if (clipAt(t) && E.cur) { document.getElementById("ed-video").play().catch(() => {}); return; }
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  function play() {
+    if (!E) return;
+    if (E.t >= endOf(E.spans)) seek(0, true);
+    E.playing = true; document.getElementById("ed-play").textContent = "Pause";
+    seek(E.t, true);
+    if (!H264) return stillPlay();
+    if (E.cur) document.getElementById("ed-video").play().catch(() => {}); else gapPlay();
+  }
+  function stillPlay() {
+    const t0 = performance.now(), from = E.t, end = endOf(E.spans);
+    const step = () => {
+      if (!E || !E.playing) return;
+      const t = from + ticks((performance.now() - t0) / 1000);
+      if (t >= end) { pause(); return; }
+      seek(t);
+      setTimeout(step, 1000 / 6); // about 6 stills a second
+    };
+    step();
+  }
+  function pause() {
+    if (!E) return;
+    E.playing = false; const b = document.getElementById("ed-play"); if (b) b.textContent = "Play";
+    const v = document.getElementById("ed-video"); if (v) v.pause();
+  }
+
+  /* ---------------------------------------------------------------- left panes */
+  function pane() {
+    const el = document.getElementById("ed-pane"); if (!el || !E.doc) return;
+    ROOT.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab));
+    if (E.tab === "media") {
+      el.innerHTML = `<label class="f">Import a file</label><input type="text" id="ed-path" placeholder="~/Videos/talk.mp4" />
+        <label class="chk"><input type="checkbox" id="ed-words" checked /> transcribe words (local Whisper)</label>
+        <p><button class="ed-btn amber" id="ed-import">Import</button></p>
+        ${Object.entries(E.doc.media).map(([mid, m]) => {
+          const st = E.media[mid] || {}; const p = Math.round((st.progress || 0) * 100);
+          return `<div class="mrow"><div class="nm">${esc(mid)} · ${esc(String(m.path).split(/[\\/]/).pop())}</div>
+            <div class="meta">${tc(m.dur)} · ${m.fps ? esc(m.fps[0] / m.fps[1]).slice(0, 5) + " fps" : "audio"} · ${esc(st.state || "none")}${st.stage ? " · " + esc(st.stage) : ""}</div>
+            ${st.state === "running" || st.state === "queued" ? `<div class="bar"><i style="width:${p}%"></i></div>` : ""}
+            <p style="margin:.35rem 0 0"><button class="ed-btn" data-add="${esc(mid)}">Add to end</button></p></div>`;
+        }).join("")}`;
+      document.getElementById("ed-import").onclick = async () => {
+        const path = document.getElementById("ed-path").value.trim(); if (!path) return;
+        const stages = ["proxy", "thumbs", "wave"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
+        try { await P("import_media", { path, stages, client_op_id: rid() }); toast("Importing", true); await reload(); } catch (e) { fail(e); }
+      };
+      el.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => {
+        const mid = b.dataset.add, m = E.doc.media[mid];
+        const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
+        const at = Math.max(0, ...v1.items.map((it) => E.spans[it.id][1]));
+        write([{ op: "insert_clip", track: "V1", media: mid, src: [0, m.dur], at }], `Add ${mid}`);
+      }));
+      return;
+    }
+    const ws = E.words;
+    el.innerHTML = `<p class="acts" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .7rem"><button class="ed-btn" id="ed-fill">Remove fillers</button><button class="ed-btn" id="ed-pause">Tighten pauses</button>
+      <button class="ed-btn" id="ed-cutsel" ${E.wsel ? "" : "disabled"}>Cut selection</button></p>
+      ${ws.length ? `<div class="words">${ws.map((w, i) => `<span data-w="${i}" class="${/^(um+|uh+|uhm|erm?|hm+|mm|mhm)$/i.test(w.w.replace(/[^a-z]/gi, "")) ? "fill" : ""}${E.wsel && i >= E.wsel[0] && i <= E.wsel[1] ? " sel" : ""}">${esc(w.w)}</span>`).join(" ")}</div>`
+        : `<p class="hint">No words yet. Import media with "transcribe words" on, then add it to the timeline.</p>`}`;
+    el.querySelectorAll("[data-w]").forEach((s) => (s.onclick = (e) => {
+      const i = +s.dataset.w;
+      if (e.shiftKey && E.wsel) E.wsel = [Math.min(E.wsel[0], i), Math.max(E.wsel[1], i)]; else E.wsel = [i, i];
+      seek(ws[i].at); pane();
+    }));
+    const cut = async (args, what) => {
+      try {
+        const p = await P("transcript_cut", Object.assign({ base_version: E.doc.version, client_op_id: rid(), preview: true }, args));
+        if (!p.cuts.length) return toast("Nothing to cut.", true);
+        if (!confirm(`${what}: ${p.cuts.length} cut${p.cuts.length > 1 ? "s" : ""}, ${p.removed_s.toFixed(1)} s. One undo brings it all back.`)) return;
+        await P("transcript_cut", Object.assign({ base_version: E.doc.version, client_op_id: rid() }, args));
+        E.wsel = null; await reload();
+      } catch (e) { fail(e); }
+    };
+    document.getElementById("ed-fill").onclick = () => cut({ fillers: true }, "Remove fillers");
+    document.getElementById("ed-pause").onclick = () => cut({ pauses: true }, "Tighten pauses");
+    document.getElementById("ed-cutsel").onclick = () => { if (!E.wsel) return; const a = ws[E.wsel[0]], b = ws[E.wsel[1]]; cut({ ranges: [{ from_s: sec(a.at), to_s: sec(b.end) }] }, "Cut selection"); };
+  }
+
+  /* ---------------------------------------------------------------- sidebar */
+  function side() {
+    const el = document.getElementById("ed-side"); if (!el || !E.doc) return;
+    const pend = E.pending || [];
+    const recs = [...E.records].reverse().slice(0, 40);
+    el.innerHTML = `<div class="side-h"><span class="dot ${pend.length ? "live" : ""}"></span><b>Hermes</b><span class="hint">${pend.length ? "waiting for you" : "idle"}</span>
+        <span class="seg">${["ask", "propose", "auto"].map((m) => `<button data-mode="${m}" class="${E.mode === m ? "on" : ""}">${m}</button>`).join("")}</span></div>
+      ${pend.map((p) => `<div class="card wait"><div class="who agent">${esc(p.actor.id)}${p.step != null ? " · step " + esc(p.step) : ""} · waiting</div>
+        <div class="sum">${esc(p.summary)}</div><div class="v">${esc(p.tool)} · ${esc(p.n_ops)} op${p.n_ops === 1 ? "" : "s"} · on v${esc(p.base_version)}</div>
+        <div class="acts"><button class="ed-btn amber" data-apply="${esc(p.pending_id)}">Apply</button><button class="ed-btn" data-skip="${esc(p.pending_id)}">Skip</button>
+        <button class="ed-btn" data-rest="${esc(p.pending_id)}">Apply the rest</button></div></div>`).join("")}
+      ${recs.map((r) => `<div class="card ${E.cancelled.has(r.op_id) ? "undone" : ""}"><div class="who ${r.actor.kind === "agent" ? "agent" : ""}">${esc(r.actor.kind === "human" ? "you" : r.actor.id)}${r.step != null ? " · step " + esc(r.step) : ""}${r.undoes ? " · undo" : ""}</div>
+        <div class="sum">${esc(r.summary)}</div><div class="v">v${esc(r.base_version)} → v${esc(r.new_version)} · ${esc(r.changed_ids.length)} changed</div>
+        <div class="ba" id="ba-${esc(r.op_id)}"></div>
+        <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
+      <p class="hint" style="padding:.8rem .9rem">Agents edit this timeline through MCP (<span class="mono">hermes-studio mcp install claude</span>). In Propose mode each edit waits here for Apply or Skip.</p>`;
+    el.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = async () => { try { await P("set_mode", { mode: b.dataset.mode }); E.mode = b.dataset.mode; side(); } catch (e) { fail(e); } }));
+    const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
+    el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));
+    el.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = () => res(b.dataset.skip, "skip")));
+    el.querySelectorAll("[data-rest]").forEach((b) => (b.onclick = () => res(b.dataset.rest, "apply", true)));
+    el.querySelectorAll("[data-undo]").forEach((b) => (b.onclick = () => P("history_undo", { op_id: b.dataset.undo, client_op_id: rid() }).then(reload).catch(fail)));
+    el.querySelectorAll("[data-frames]").forEach((b) => (b.onclick = async () => {
+      const id = b.dataset.frames, box = document.getElementById("ba-" + id);
+      try { const f = await P("history_frames", { op_id: id, width: 160 }); box.innerHTML = f._images.map((src) => `<img src="${src}" alt="" />`).join(""); seek(f.at); } catch (e) { fail(e); }
+    }));
+  }
+
+  /* ---------------------------------------------------------------- actions */
+  async function undo() { if (E && E.undoTarget) { try { await P("history_undo", { op_id: E.undoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }
+  async function redo() { if (E && E.redoTarget) { try { await P("history_redo", { op_id: E.redoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }
+  function split() {
+    if (!E) return;
+    const it = E.sel && E.by[E.sel] ? E.by[E.sel] : (clipAt(E.t) || [null])[0];
+    if (!it) return toast("Put the playhead over a clip, or select one.");
+    const s = E.spans[it.id];
+    if (!(s[0] < E.t && E.t < s[1])) return toast("The playhead isn't inside that item.");
+    const fr = TICK * E.doc.fps[1] / E.doc.fps[0];
+    write([{ op: "split_clip", id: it.id, at: Math.round(Math.round(E.t / fr) * fr) }], `Split ${it.id}`);
+  }
+  function del() {
+    if (!E || !E.sel) return toast("Select an item first.");
+    const ripple = document.getElementById("ed-ripple").checked && E.by[E.sel] && E.by[E.sel].type !== "transition";
+    const id = E.sel; E.sel = null;
+    write([{ op: "delete_clip", id, ripple }], `Delete ${id}`);
+  }
+  function addText() {
+    if (!E) return;
+    const text = prompt("Text"); if (!text) return;
+    write([{ op: "add_text", text, style: "pop", at: E.t, dur: 2 * TICK }], `Add text`);
+  }
+  async function render() {
+    try {
+      const r = await P("render_timeline", {});
+      E.render = r; renderStatus();
+    } catch (e) { fail(e); }
+  }
+  async function renderStatus() {
+    const el = document.getElementById("ed-render-st"); if (!el || !E.render) return;
+    const r = E.render;
+    if (r.state === "ready") {
+      el.innerHTML = `<a href="#" id="ed-dl">Download ${esc(r.render_id || "")}</a>`;
+      document.getElementById("ed-dl").onclick = async (e) => {
+        e.preventDefault();
+        try {
+          const st = await P("render_status", { render_id: r.render_id });
+          const res = await authed(`/api/projects/${encodeURIComponent(E.pid)}/renders/${encodeURIComponent(st.render_id)}/file`);
+          const url = URL.createObjectURL(await res.blob()); const a = document.createElement("a");
+          a.href = url; a.download = st.path.split("/").pop(); a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+        } catch (err) { fail(err); }
+      };
+    } else el.textContent = r.state === "failed" ? "Render failed: " + (r.error || "") : `Rendering ${Math.round((r.progress || 0) * 100)}%`;
+  }
+
+  function leave() {
+    if (E) { E.ctl.abort(); document.removeEventListener("keydown", E.keys); const v = document.getElementById("ed-video"); if (v) v.pause(); }
+    E = null;
+    const m = document.getElementById("main"); if (m) m.classList.remove("edit-full");
+  }
+
+  window.HSEdit = { home, open, leave, _resolve: resolve };
+})();

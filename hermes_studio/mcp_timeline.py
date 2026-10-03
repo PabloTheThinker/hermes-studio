@@ -43,7 +43,8 @@ FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  #
 RENDER_TOOLS = ("render_timeline", "render_status")  # S6
 CUT_TOOLS = ("transcript_cut",)  # S7
 GATE_TOOLS = ("approval_list", "approval_status", "approval_resolve", "set_mode")  # S8
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS
+PROJECT_TOOLS = ("project_list", "project_new")  # the Edit page; they take no project_id
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PROJECT_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -288,6 +289,25 @@ TOOLS: list[dict] = [
         {"mode": {"type": "string", "enum": ["ask", "propose", "auto"]}},
         _W,
     ),
+    {
+        "name": "project_list",
+        "title": "List projects",
+        "description": "Every timeline project on this machine: {projects:[{project_id, version, hash, mode, size, fps, media, "
+        "items, end, engine}]}. Works with the app closed.",
+        "inputSchema": {"type": "object", "properties": {}},
+        "annotations": {"title": "List projects", **_RO},
+    },
+    {
+        "name": "project_new",
+        "title": "New project",
+        "description": "Make an empty timeline project (shape 9:16 | 16:9 | 1:1 | 4:5, default 9:16; fps 24/25/30/50/60, "
+        "default 30) and return its status with the new project_id. Needs the app running.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"shape": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"]}, "fps": {"type": "integer"}},
+        },
+        "annotations": {"title": "New project", **_W},
+    },
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
 
@@ -524,6 +544,14 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if err is not None:
             raise err
         return {"ok": True, "hash": T.canonical_hash(args["doc"])}
+    if name in PROJECT_TOOLS:
+        _need_scope(backend, "write" if name == "project_new" else "read")
+        if name == "project_list":
+            _no_unknown(args, set())
+            return P.list_projects(backend.engine if isinstance(backend, EngineBackend) else None)
+        if not backend.writable:
+            raise P.offline()
+        return P.new_project(backend.engine, args)
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
     writes = name in WRITE_TOOLS or name in ("export_otio", "import_media", "transcript_cut", "approval_resolve", "set_mode")

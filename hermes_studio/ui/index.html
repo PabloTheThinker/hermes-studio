@@ -364,6 +364,7 @@
         <p class="rail-h">Desk</p>
         <nav class="rail" id="pages">
           <button data-page="clips" class="on"><span class="nm">Clips</span><span class="ct" id="clip-ct" title="Clip runs"></span></button>
+          <button data-page="edit"><span class="nm">Edit</span></button>
           <button data-page="design"><span class="nm">Design</span><span class="ct" id="design-ct"></span></button>
           <button data-page="create"><span class="nm">Other tools</span></button>
           <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct" title="Saved runs"></span></button>
@@ -381,6 +382,7 @@
   </div>
   <script src="/design/fabric.min.js"></script>
   <script src="/design/design.js"></script>
+  <script src="/edit/edit.js"></script>
   <script>
     const FALLBACK_TOOLS = [
       { id: "clip", name: "Clips", verb: "Find the moments", line: "Long video in. Hook-first shorts out, scored and captioned.", output: "3–8 short clips", defaults: { aspect: "9:16", layout: "auto", captions: true, hook: true, pacing: "tight" }, settings: ["hunt","range","format","length","captions"] },
@@ -477,7 +479,7 @@
         if (live && JSON.stringify(live.clips.map(c => [c.file, c.title])) !== JSON.stringify(state.open.clips.map(c => [c.file, c.title]))) { state.open = live; render(); }
         return;
       }
-      if (state.page === "create" || state.page === "design") return;
+      if (state.page === "create" || state.page === "design" || state.page === "edit") return;
       if (state.page === "library" && state.open) return;
       const sig = JSON.stringify([state.page, state.q, state.jobs.map(j => [j.id, j.status, j.progress, j.message]), state.library.length]);
       if (sig === state.sig) return;
@@ -495,6 +497,7 @@
       state.err = ""; state.tx = null;
       if (page === "tools") { state.page = "create"; state.open = null; if (arg && toolById(arg)) { state.tool = arg; Object.assign(state, toolById(arg).defaults || {}); } else state.tool = null; }
       else if (page === "design") { state.page = "design"; state.designId = arg; state.open = null; }
+      else if (page === "edit") { state.page = "edit"; state.editId = arg; state.open = null; }
       else if (page === "library" || page === "jobs" || page === "settings") { state.page = page; state.open = arg ? (state.library.find(j => j.id === arg) || null) : null; }
       else { state.page = "clips"; state.open = arg ? (state.library.find(j => j.id === arg) || { id: arg, clips: [], pending: true }) : null; if (!state.clipInit) { Object.assign(state, (toolById("clip") || {}).defaults || {}); state.clipInit = true; } }
       renderRail(); render();
@@ -506,8 +509,12 @@
     function render() {
       const main = $("#main .wrap");
       if (window.HSDesign) {
-        if (state.page === "design") { state.designId ? HSDesign.open(main, state.designId) : HSDesign.home(main); return; }
+        if (state.page === "design") { if (window.HSEdit) HSEdit.leave(); state.designId ? HSDesign.open(main, state.designId) : HSDesign.home(main); return; }
         HSDesign.leave();
+      }
+      if (window.HSEdit) {
+        if (state.page === "edit") { state.editId ? HSEdit.open(main, state.editId) : HSEdit.home(main); return; }
+        HSEdit.leave();
       }
       main.innerHTML = state.page === "clips" ? clipsPage() : state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : state.page === "settings" ? settingsPage() : jobsPage();
       bind();

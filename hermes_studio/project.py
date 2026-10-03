@@ -358,7 +358,15 @@ class Tokens:
             session = None
         else:
             raise ValueError(f"unknown token kind {kind!r}")
-        raw = secrets.token_hex(32)
+        return self.adopt(kind, secrets.token_hex(32), scopes=scopes, session=session)
+
+    def adopt(self, kind: str, raw: str, *, scopes: frozenset | set = SCOPES, session: O.Session | None = None) -> str:
+        """Register a token made elsewhere (the desktop app makes the ``ui`` token and hands it to
+        the engine and the Edit page in memory, S3 §13.3). It must be 64 hex characters."""
+        if not (isinstance(raw, str) and re.fullmatch(r"[0-9a-f]{64}", raw)):
+            raise ValueError("a token is 64 lowercase hex characters")
+        if session is None and kind == "ui":
+            session = O.Session(O.Actor("human", "user"))
         with self._lock:
             self._by_hash[_sha(raw)] = Token(kind, frozenset(scopes) & SCOPES, session)
         return raw
@@ -590,6 +598,7 @@ class Engine:
     # callables(event) that hear every project, including ones opened later (GET /mcp, D12)
     listeners: list[Any] = field(default_factory=list)
     _media: Any = None
+    ui_token_given: bool = False  # the desktop app supplied the ui token (nothing to print)
     _renders: Any = None
 
     def __post_init__(self) -> None:
@@ -736,6 +745,63 @@ def list_markers(doc: dict) -> dict:
         "tick_rate": T.TICK_RATE,
         "markers": [{"id": m["id"], "at": {"ticks": m["at"], "seconds": _seconds(m["at"])}, "label": m["label"]} for m in marks],
     }
+
+
+PRESETS = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350)}
+
+
+def new_project(engine: Engine, args: Any) -> dict:
+    """``project_new {shape?: 9:16 | 16:9 | 1:1 | 4:5, fps?: 24 | 25 | 30 | 50 | 60}``: an empty
+    timeline with an engine-picked id (``p-<hex>``), opened at once. Returns its status."""
+    if not isinstance(args, dict):
+        raise O.OplogError("invalid_op", "arguments must be an object", rule="bad_arg", path="")
+    for k in sorted(args, key=repr):
+        if k not in ("shape", "fps"):
+            raise O.OplogError("invalid_op", f"unknown argument '{k}'", rule="unknown_arg", path=f"/{k}")
+    shape = args.get("shape", "9:16")
+    if shape not in PRESETS:
+        raise O.OplogError("invalid_op", "shape is one of " + ", ".join(PRESETS), rule="bad_arg", path="/shape")
+    fps = args.get("fps", 30)
+    if not O._int_arg(fps) or fps not in (24, 25, 30, 50, 60):
+        raise O.OplogError("invalid_op", "fps is 24, 25, 30, 50 or 60", rule="bad_arg", path="/fps")
+    pid = "p-" + secrets.token_hex(4)
+    doc = T.new_timeline(pid)
+    doc["size"], doc["fps"] = list(PRESETS[shape]), [fps, 1]
+    create_project(doc)
+    return engine.get(pid).status()
+
+
+def list_projects(engine: Engine | None) -> dict:
+    """Every project folder with a ``base.json``: its status (open in this engine) or a closed read."""
+    out = []
+    root = projects_root()
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        names = []
+    for name in names:
+        if not (T.ID_RE.fullmatch(name) and name not in (".", "..") and (root / name / "base.json").is_file()):
+            continue
+        try:
+            proj = engine.get(name) if engine is not None else ClosedProject(name)
+            st = proj.status()
+            doc = proj.oplog().doc if engine is None else None
+            if doc is None:
+                with proj.mutex:
+                    doc = proj.oplog().doc
+            out.append(
+                {
+                    **st,
+                    "size": doc["size"],
+                    "fps": doc["fps"],
+                    "media": len(doc["media"]),
+                    "items": sum(len(t["items"]) for t in doc["tracks"]),
+                    "end": max((e for _, e in T.resolve(doc).values()), default=0),
+                }
+            )
+        except HermesStudioError as e:
+            out.append({"project_id": name, "error": e.as_dict()})
+    return {"projects": out}
 
 
 def create_project(base: dict) -> Path:

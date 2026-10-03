@@ -8,6 +8,7 @@ Every refusal of a request body closes the connection (D27(d)).
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import threading
@@ -65,7 +66,9 @@ def start(port: int) -> P.Engine:
     global ENGINE, UI_TOKEN
     engine = P.Engine(port=port)
     engine.open_all()  # a project held by another engine is a startup error (D6)
-    UI_TOKEN = engine.tokens.mint("ui")
+    given = os.environ.pop("HERMES_STUDIO_UI_TOKEN", "")  # the desktop app's, in memory (S3 §13.3)
+    UI_TOKEN = engine.tokens.adopt("ui", given) if given else engine.tokens.mint("ui")
+    engine.ui_token_given = bool(given)
     ENGINE = engine
     return engine
 
@@ -331,6 +334,30 @@ def _mcp_stream(h: Any, tok: P.Token) -> None:
 
 
 # --------------------------------------------------------------------------- REST writes
+
+
+def projects_route(h: Any, method: str) -> None:
+    """GET /api/projects (list) and POST /api/projects (new; a person only)."""
+    tok = _token(h)
+    if tok is None:
+        return _unauthorized(h)
+    if method == "GET":
+        if "read" not in tok.scopes or tok.session is None:
+            return _error(h, _denied("read"))
+        return _json(h, 200, P.list_projects(ENGINE))
+    n = body_length(h)
+    if n > MAX_BODY:
+        raise BodyRefused("request body too large")
+    raw = h.rfile.read(n) if n else b"{}"
+    ok, body = parse_message(raw)
+    if not ok:
+        raise ValueError("invalid JSON body")
+    if tok.session is None or "write" not in tok.scopes:
+        return _error(h, _denied("write"))
+    try:
+        return _json(h, 200, P.new_project(ENGINE, body))
+    except HermesStudioError as e:
+        return _error(h, e)
 
 
 def rest_post(h: Any, segs: list[str]) -> None:
