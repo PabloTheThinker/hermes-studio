@@ -69,6 +69,12 @@ hermes-studio photo cutout me.jpg                                     # transpar
 
 Background removal uses U²-Net small (Apache-2.0, 4.5 MB, bundled; runs offline). The editor uses [Fabric.js](https://fabricjs.com) (MIT), bundled.
 
+## Edit (a timeline you and your agent share)
+
+Pick **Edit** in the desk to cut a video on a real timeline: import files (proxies, thumbnails, waveforms and local Whisper words are made in the background), drag, trim and split clips, add text, remove fillers or long pauses from the transcript in one step, and render an MP4. Every change is one entry in the history with Undo.
+
+Your AI app edits the same timeline over MCP. In **Propose** mode (the default) each agent edit waits in the sidebar until you Apply or Skip it; **Ask** lets agents only look, **Auto** lets them edit directly. Before/after frames show what each edit did. In a browser, paste the Edit page code that `hermes-studio studio` prints; the desktop app connects by itself.
+
 ## Command line only (Python developers)
 
 If you'd rather install it as a Python package: you need Python 3.11+ and FFmpeg with libass (the app above has both built in).
