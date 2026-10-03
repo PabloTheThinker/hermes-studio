@@ -38,8 +38,19 @@ let PAGE = null;
   await page.uncheck("#ed-words");
   await page.fill("#ed-path", vid); await page.click("#ed-import");
   await page.waitForFunction(() => /ready/.test(document.querySelector("#ed-pane").textContent), null, { timeout: 60000 });
+  // words for m1, as the Whisper stage would write them (media ticks), so the preview can caption them
+  const pidNow = (await page.evaluate(() => location.hash)).split("/").pop();
+  const S1 = 705600000, wd = path.join(HOME, ".hermes/clips/projects", pidNow, "cache/words");
+  fs.mkdirSync(wd, { recursive: true });
+  fs.writeFileSync(path.join(wd, "m1.json"), JSON.stringify({ words: [["hello", 0, 0.4], ["world", 0.45, 0.9], ["this", 0.95, 1.3], ["is", 1.35, 1.6], ["hermes.", 1.65, 2.2]].map(([w, a, b]) => ({ w, in: Math.round(a * S1), out: Math.round(b * S1) })) }));
   await page.click("[data-add]");
   await page.waitForSelector(".it.clip");
+  // the preview captions the words in the render's pop style: the line, and the word being said in pop's highlight
+  await page.click("#ed-ruler", { position: { x: 40 + 30, y: 10 } });
+  await page.waitForFunction(() => /hello world this/.test(document.getElementById("ed-cap").textContent), null, { timeout: 15000 })
+    .catch(() => errs.push("captions: the preview shows " + JSON.stringify("?")));
+  const capHi = await page.evaluate(() => [...document.querySelectorAll("#ed-cap span")].map((x) => [x.textContent, getComputedStyle(x).color]));
+  if (!capHi.length || capHi[1][1] !== "rgb(255, 229, 0)") errs.push("captions: highlight " + JSON.stringify(capHi));
   await page.click('[data-tab="scenes"]');
   await page.waitForFunction(() => /shot change/i.test(document.getElementById("ed-pane").textContent), null, { timeout: 15000 });
   await page.click('[data-tab="media"]');
@@ -209,7 +220,7 @@ let PAGE = null;
   await page.screenshot({ path: path.join(OUT, "10-rendered.png") });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
-  console.log(JSON.stringify({ out: OUT, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
+  console.log(JSON.stringify({ out: OUT, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
   mcp.kill(); await browser.close(); srv.kill();
 })().catch(async (e) => {

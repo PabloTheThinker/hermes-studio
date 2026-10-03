@@ -105,6 +105,7 @@
     .stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
     .screen { position: relative; height: 100%; max-height: 100%; aspect-ratio: var(--ar, 9/16); max-width: 100%; background: #000; overflow: hidden; }
     .screen video, .screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .screen .cap { position: absolute; left: 5%; right: 5%; text-align: center; font-weight: 800; font-family: "DejaVu Sans", var(--sans); paint-order: stroke; pointer-events: none; line-height: 1.15; }
     .screen .txt { position: absolute; left: 6%; right: 6%; top: 72%; transform: translateY(-50%); text-align: center; font-weight: 800; font-size: clamp(12px, 3.2vh, 34px); color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke; text-shadow: 0 2px 6px rgba(0,0,0,.6); white-space: pre-wrap; pointer-events: none; }
     .transport { display: flex; align-items: center; gap: .8rem; padding: .45rem .8rem; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); }
     .ed-tl { grid-column: 1 / 3; grid-row: 3; border-top: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
@@ -236,6 +237,7 @@
             mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, follow: true, sels: new Set() };
       root.innerHTML = layout();
       bindStatic();
+      fetch("/api/caption-styles").then((r) => r.json()).then((j) => { if (E && j.ok) { E.capStyles = j; drawCaption(); } }).catch(() => {});
       try { await reload(); } catch (e) { fail(e); if (e.code === "not_found") { location.hash = "#/edit"; return; } }
       stream();
     });
@@ -250,7 +252,7 @@
         <select class="ed-btn" id="ed-rsize" title="Render size"><option value="1">full size</option><option value="2">half size</option></select>
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
       <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
-      <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
+      <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div><div class="cap" id="ed-cap"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split" title="Split at the playhead (S)">Split</button><button class="ed-btn" id="ed-del">Delete</button>
         <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><label class="hint chk" title="Edges snap to cuts, markers and the playhead; hold Shift to drag freely"><input type="checkbox" id="ed-snapon" checked /> snap</label><button class="ed-btn" id="ed-text" title="Text at the playhead">+ Text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">+ Marker</button>
@@ -279,6 +281,7 @@
       sc.scrollLeft = Math.max(0, 40 + t * E.zoom - x); // the second under the pointer stays under it
     }, { passive: false });
     $("ed-render").onclick = render;
+    $("ed-cstyle").onchange = () => drawCaption();
     $("ed-preset").onchange = async (e) => {
       const preset = e.target.value; e.target.value = ""; if (!preset || !E) return;
       const args = { preset, base_version: E.doc.version, client_op_id: rid() };
@@ -745,10 +748,38 @@
     }
     Object.entries(E.auds).forEach(([id, a]) => { if (!live.has(id) && !a.paused) a.pause(); });
   }
+  /* captions in the preview, drawn the way the render burns them (captions.build_ass): words
+     grouped into lines of the style's length, broken at a pause or a sentence end, the word
+     being said in the highlight colour. The style list comes from /api/caption-styles. */
+  function capGroups(style) {
+    const key = `${style}:${E.doc.hash}:${E.words.length}`;
+    if (E.capKey === key) return E.capCache;
+    const st = E.capStyles.styles[style], gap = ticks(E.capStyles.gap_s), out = [];
+    let cur = [];
+    E.words.forEach((w) => {
+      if (cur.length && (cur.length >= st.words_per_line || w.at - cur[cur.length - 1].end > gap || /[.!?]$/.test(cur[cur.length - 1].w))) { out.push(cur); cur = []; }
+      cur.push(w);
+    });
+    if (cur.length) out.push(cur);
+    E.capKey = key; E.capCache = out;
+    return out;
+  }
+  function drawCaption() {
+    const el = document.getElementById("ed-cap"); if (!el) return;
+    const style = document.getElementById("ed-cstyle").value;
+    const st = style && E.capStyles && E.capStyles.styles[style];
+    if (!st || !E.words.length) { el.textContent = ""; return; }
+    const g = capGroups(style).find((g) => g[0].at <= E.t && E.t < Math.max(g[g.length - 1].end, g[0].at + ticks(0.08)));
+    if (!g) { el.textContent = ""; return; }
+    let i = g.findIndex((w, j) => E.t < (j + 1 < g.length ? Math.max(w.end, g[j + 1].at) : w.end)); if (i < 0) i = g.length - 1;
+    const k = document.getElementById("ed-screen").clientHeight / E.capStyles.play_y;
+    Object.assign(el.style, { fontSize: st.size * k + "px", bottom: st.margin_v * k + "px", WebkitTextStroke: `${Math.max(1, st.outline_w * k * 2)}px ${st.outline}` });
+    el.innerHTML = g.map((w, j) => `<span style="color:${j === i ? st.highlight : st.primary}">${esc(st.uppercase ? w.w.toUpperCase() : w.w)}</span>`).join(" ");
+  }
   function seek(t, force) {
     if (!E || !E.doc) return;
     E.t = Math.max(0, Math.round(t));
-    syncAudio();
+    syncAudio(); drawCaption();
     const ph = document.getElementById("ed-ph"); if (ph) ph.style.left = px(E.t) + "px";
     if (E.playing) { const sc = document.getElementById("ed-scroll"), x = px(E.t); if (sc && (x > sc.scrollLeft + sc.clientWidth - 40 || x < sc.scrollLeft)) sc.scrollLeft = Math.max(0, x - 80); }
     document.getElementById("ed-tc").textContent = tc(E.t);

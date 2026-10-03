@@ -84,3 +84,22 @@ def test_cache_sizes_and_clear(app, capsys):
     assert M.cache_paths(d, "m1")["words"].exists()  # Whisper words are never cleared
     assert (d / "oplog.jsonl").exists() and (d / "base.json").exists()
     assert main(["cache", "--all", "--json"]) == 2  # --all needs --clear
+
+
+def test_caption_preview_styles_match_the_render():
+    from hermes_studio import captions as C
+
+    p = C.preview_styles()
+    assert set(p["styles"]) == set(C.STYLES) and p["gap_s"] == C.GROUP_GAP_S and p["play_y"] == 1920
+    pop = p["styles"]["pop"]
+    assert pop == {
+        "words_per_line": 3,
+        "uppercase": False,
+        "primary": "#ffffff",
+        "highlight": "#ffe500",
+        "outline": "#000000",
+        "outline_w": 3,
+        "size": 48,
+        "margin_v": 88,
+    }
+    assert p["styles"]["impact"]["uppercase"] and p["styles"]["boxed"]["outline"] == "#2020e0"

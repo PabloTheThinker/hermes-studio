@@ -451,6 +451,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio.tools import catalogue
 
             return _json(self, 200, {"ok": True, **catalogue()})
+        if path == "/api/caption-styles":
+            from hermes_studio.captions import preview_styles
+
+            return _json(self, 200, {"ok": True, **preview_styles()})
         if path == "/api/library":
             jobs = [asdict(j) for j in list_jobs() if j.status == "completed"]
             counts: dict[str, int] = {}
