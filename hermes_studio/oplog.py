@@ -1269,10 +1269,14 @@ class Oplog:
         last = max((by_id[t] for t in e["undoes"]), key=lambda x: x["seq"])
         return e["summary"] == ((("Redo: " if tool == "history_redo" else "Undo: ") + last["summary"])[:SUMMARY_MAX])
 
-    def _run(self, ops: list, *, internal: bool, base: dict | None = None) -> tuple[dict, list[dict], list[dict]]:
-        """Apply ``ops`` to a copy of the doc; return (new doc, logged ops, inverse) or raise."""
+    def _run(
+        self, ops: list, *, internal: bool, base: dict | None = None, check: bool = True
+    ) -> tuple[dict, list[dict], list[dict]]:
+        """Apply ``ops`` to a copy of the doc; return (new doc, logged ops, inverse) or raise.
+        ``check=False`` (``load`` only) skips validating the whole new doc: the caller compares
+        its hash with the stored one, which was stamped on a doc validated when it was written."""
         start = base if base is not None else self._doc
-        ctx = _Ctx(copy.deepcopy(start), self._retired, public=not internal)
+        ctx = _Ctx(T.clone(start), self._retired, public=not internal)
         logged: list[dict] = []
         inverse: list[dict] = []
         for k, op in enumerate(ops):
@@ -1287,7 +1291,7 @@ class Oplog:
         new = ctx.doc
         new["version"] = start["version"] + 1
         new.pop("hash", None)
-        found = T.validate(new)
+        found = T.validate(new) if check else []
         if found:
             raise OplogError(
                 "invalid_op",
@@ -1299,7 +1303,7 @@ class Oplog:
                 **({"id": found[0]["id"]} if "id" in found[0] else {}),
                 problems=found,
             )
-        new, _ = T.stamp_hash(new)
+        T.stamp_hash_valid(new)  # validated in full just above, and ours: no second pass, no copy
         return new, logged, inverse
 
     def _checkpoint(self) -> None:
@@ -1544,7 +1548,10 @@ class Oplog:
     @classmethod
     def load(cls, base: dict, path: str | os.PathLike, **kw: Any) -> Oplog:
         """Rebuild from ``base`` and the ``oplog.jsonl`` at ``path`` (which stays the log file).
-        Every entry is replayed and must reproduce its stored ``hash`` and versions."""
+        Every entry is replayed and must reproduce its stored ``hash`` and versions. A stored hash
+        was stamped on a doc validated in full when the entry was written, so a replayed doc that
+        reproduces it is that doc: replay skips re-validating each one (on a long edit that was
+        nearly all of the time, quadratic in the log) and the final doc is validated once."""
         log = cls(base, **kw)
         with open(path, encoding="utf-8") as f:
             lines = [json.loads(x) for x in f if x.strip()]
@@ -1552,7 +1559,7 @@ class Oplog:
             _check_line(e)
             if e["seq"] != len(log._entries) + 1 or e["base_version"] != log.version:
                 raise ValueError(f"oplog line {e.get('seq')}: out of sequence")
-            new, logged, inverse = log._run(e["ops"], internal=True)
+            new, logged, inverse = log._run(e["ops"], internal=True, check=False)
             if new["hash"] != e["hash"] or new["version"] != e["new_version"] or inverse != e["inverse"]:
                 raise ValueError(f"oplog line {e['seq']}: replay does not reproduce the entry")
             log._entries.append(e)
@@ -1562,6 +1569,10 @@ class Oplog:
             key = (e["actor"]["kind"], e["actor"]["id"], e["client_op_id"])
             log._results[key] = _result(e, e.get("warnings", []))
             log._tools[key] = _tool_of(e, log._entries)
+        if lines:
+            found = T.validate(log._doc)
+            if found:
+                raise ValueError(f"oplog: the timeline it builds is not valid: {found[0]['message']} at {found[0]['path']}")
         log._path = os.fspath(path)
         return log
 
