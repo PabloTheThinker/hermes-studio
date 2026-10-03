@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -151,9 +151,16 @@ let PAGE = null;
   await page.click(".it.text", { position: { x: 20, y: 8 } }); await page.keyboard.press("Control+c");
   await page.keyboard.press("Home"); await page.keyboard.press("Control+v");
   await page.waitForFunction(() => document.querySelectorAll(".it.text").length === 2, null, { timeout: 15000 });
+  // the music track plays in the preview: add m1 as music; at 1 s the audio plan has it at 1 s of source, 25%
+  // (this Chromium has no AAC, so the plan is checked, not the sound)
+  await page.click('[data-tab="media"]'); await page.click("[data-music]");
+  await page.waitForFunction(() => window.HSEdit._audioPlan(705600000).length > 0, null, { timeout: 15000 }).catch(() => {});
+  const aud = await page.evaluate(() => window.HSEdit._audioPlan(705600000));
+  const mus = aud.find((a) => a.track !== "V1" && Math.abs(a.at - 1) < 1e-6);
+  if (!mus || Math.abs(mus.volume - 0.25) > 1e-9) errs.push("preview audio: " + JSON.stringify(aud));
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
-  console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
+  console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
   mcp.kill(); await browser.close(); srv.kill();
 })().catch(async (e) => {

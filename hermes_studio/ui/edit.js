@@ -615,9 +615,52 @@
     return v1 ? v1.items.filter((it) => it.type === "clip").map((it) => [it, E.spans[it.id]]).sort((a, b) => a[1][0] - b[1][0]).find(([, s]) => s[0] <= t && t < s[1]) : null;
   }
   const proxyUrl = (mid) => `/api/projects/${encodeURIComponent(E.pid)}/media/${encodeURIComponent(mid)}/proxy`;
+  // A clip's loudness at t, as the render mixes it: its volume times its linear fades (the page
+  // can't play above 100%, so louder clips play at full volume here).
+  function gain(it, t) {
+    const [s0, s1] = E.spans[it.id]; let g = frac((it.props || {}).volume);
+    if (it.fade_in && t - s0 < it.fade_in) g *= Math.max(0, (t - s0) / it.fade_in);
+    if (it.fade_out && s1 - t < it.fade_out) g *= Math.max(0, (s1 - t) / it.fade_out);
+    return Math.min(1, Math.max(0, g));
+  }
+  // What the other tracks (music, voice: any track but V1 and text) should sound like at t:
+  // per track the clip under t, its proxy, the source second to be at, the rate and the volume.
+  function audioPlan(t) {
+    const out = [];
+    E.doc.tracks.forEach((tr) => {
+      if (tr.role === "text" || tr.id === "V1") return;
+      const it = tr.items.find((x) => x.type === "clip" && E.spans[x.id][0] <= t && t < E.spans[x.id][1]);
+      const st = it && E.media[it.media] && E.media[it.media].stages;
+      if (!it || !st || (st.proxy || {}).state !== "ready") return;
+      const sp = frac((it.props || {}).speed);
+      out.push({ track: tr.id, clip: it.id, url: proxyUrl(it.media), at: (it.src[0] + (t - E.spans[it.id][0]) * sp) / TICK, rate: sp, volume: gain(it, t) });
+    });
+    return out;
+  }
+  // Plays the plan while the preview plays: one hidden <audio> per track on the S4 proxy
+  // (audio-only media get an AAC proxy), kept within 0.25 s of the playhead.
+  const AAC = (() => { try { return !!document.createElement("audio").canPlayType('audio/mp4; codecs="mp4a.40.2"'); } catch { return false; } })();
+  function syncAudio() {
+    if (!E.auds) E.auds = {};
+    const live = new Set();
+    if (E.playing && AAC && navigator.serviceWorker && navigator.serviceWorker.controller) {
+      audioPlan(E.t).forEach((p) => {
+        live.add(p.track);
+        let a = E.auds[p.track];
+        if (!a) { a = E.auds[p.track] = Object.assign(document.createElement("audio"), { preload: "auto" }); a.dataset.track = p.track; document.getElementById("ed-screen").appendChild(a); }
+        const fresh = !a.src.endsWith(p.url); if (fresh) a.src = p.url;
+        a.playbackRate = p.rate; a.volume = p.volume;
+        // re-seek only for a new source or clip, or real drift: V1's cuts must not make the music skip
+        if (fresh || a.dataset.clip !== p.clip || Math.abs(a.currentTime - p.at) > 0.25) { a.currentTime = p.at; a.dataset.clip = p.clip; }
+        if (a.paused) a.play().catch(() => {});
+      });
+    }
+    Object.entries(E.auds).forEach(([id, a]) => { if (!live.has(id) && !a.paused) a.pause(); });
+  }
   function seek(t, force) {
     if (!E || !E.doc) return;
     E.t = Math.max(0, Math.round(t));
+    syncAudio();
     const ph = document.getElementById("ed-ph"); if (ph) ph.style.left = px(E.t) + "px";
     document.getElementById("ed-tc").textContent = tc(E.t);
     const txt = E.doc.tracks.filter((tr) => tr.role === "text").flatMap((tr) => tr.items).filter((it) => { const s = E.spans[it.id]; return s && s[0] <= E.t && E.t < s[1]; });
@@ -633,7 +676,7 @@
       E.cur = it.id;
       v.style.visibility = "visible"; img.style.visibility = "hidden"; over.style.visibility = "visible";
       if (!v.src.endsWith(url)) v.src = url;
-      v.playbackRate = frac((it.props || {}).speed);
+      v.playbackRate = frac((it.props || {}).speed); v.volume = gain(it, E.t);
       if (force || Math.abs(v.currentTime - want) > 0.08) v.currentTime = want;
       return;
     }
@@ -692,6 +735,7 @@
     if (!E) return;
     E.playing = false; const b = document.getElementById("ed-play"); if (b) b.textContent = "Play";
     const v = document.getElementById("ed-video"); if (v) v.pause();
+    syncAudio();
   }
 
   /* ---------------------------------------------------------------- left panes */
@@ -1011,10 +1055,10 @@
   }
 
   function leave() {
-    if (E) { E.ctl.abort(); document.removeEventListener("keydown", E.keys); const v = document.getElementById("ed-video"); if (v) v.pause(); }
+    if (E) { E.ctl.abort(); document.removeEventListener("keydown", E.keys); const v = document.getElementById("ed-video"); if (v) v.pause(); Object.values(E.auds || {}).forEach((a) => { a.pause(); a.removeAttribute("src"); }); }
     E = null;
     const m = document.getElementById("main"); if (m) m.classList.remove("edit-full");
   }
 
-  window.HSEdit = { home, open, leave, _resolve: resolve };
+  window.HSEdit = { home, open, leave, _resolve: resolve, _audioPlan: (t) => (E ? audioPlan(t) : []) };
 })();
