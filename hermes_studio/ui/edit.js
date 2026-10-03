@@ -421,6 +421,7 @@
   function onEvent(ev) {
     if (!E) return;
     const t = ev.type || "";
+    if (t === "stream.reset") E.histHead = null; // read the whole history again
     if (t === "op.applied" || t === "op.undone" || t === "stream.reset") {
       if (t !== "stream.reset" && E.doc && ev.new_version <= E.doc.version) return; // our own write: already reloaded
       if (E.follow && ev.actor && ev.actor.kind === "agent" && ev.changed_ids) E.followTo = ev.changed_ids; // jump to the agent's change
@@ -440,10 +441,17 @@
   }
 
   /* ---------------------------------------------------------------- data */
+  // The log only grows (an undo is a new entry), so after the first read only the new records are
+  // fetched; a stream reset or a head behind what we hold starts over from version 0.
   async function history() {
-    const out = []; let since = 0;
-    for (;;) { const h = await P("history_diff", { since_version: since, limit: 500 }); out.push(...h.records); if (h.next_since_version == null) break; since = h.next_since_version; }
-    E.records = out;
+    let out = E.histHead == null ? [] : E.records.slice(), since = E.histHead == null ? 0 : E.histHead, head = since;
+    for (;;) {
+      const h = await P("history_diff", { since_version: since, limit: 500 });
+      if (h.head_version < since) { E.histHead = null; return history(); }
+      out.push(...h.records); head = h.head_version;
+      if (h.next_since_version == null) break; since = h.next_since_version;
+    }
+    E.records = out; E.histHead = head;
     const cancelled = new Set();
     for (let i = out.length - 1; i >= 0; i--) { const r = out[i]; if (cancelled.has(r.op_id)) continue; (r.undoes || []).forEach((x) => cancelled.add(x)); }
     E.cancelled = cancelled;

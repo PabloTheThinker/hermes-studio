@@ -33,6 +33,8 @@ let PAGE = null;
   await page.addInitScript((t) => {
     window.studio = { uiToken: async () => t, retry: async () => {}, pickFile: async () => window.__pick, pathOf: () => null, showRender: async (pid, f) => { window.__shown = pid + "/" + f; return true; } };
     window.__toasts = []; // every toast, for the failure report
+    window.__hist = []; // since_version of every history_diff the page asks for
+    const f0 = window.fetch; window.fetch = (u, o) => { try { const b = o && o.body && JSON.parse(o.body); if (b && b.params && b.params.name === "history_diff") window.__hist.push(b.params.arguments.since_version); } catch {} return f0(u, o); };
     new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("toast")) window.__toasts.push(n.textContent); }))).observe(document, { childList: true, subtree: true });
   }, TOKEN);
   await page.addInitScript((v) => { window.__pick = v; }, vid); // what the desktop app's file dialog would return
@@ -323,6 +325,9 @@ let PAGE = null;
   const otioShown = await page.waitForFunction(() => window.__shown, null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
   if (!otioShown || !/^p-[0-9a-f]+\/exports\/p-[0-9a-f]+-v\d{6}\.otio$/.test(otioShown)) errs.push("export otio: " + otioShown);
   else if (!fs.existsSync(path.join(HOME, ".hermes/clips/projects", otioShown))) errs.push("export otio: no file at " + otioShown);
+  // the history is read incrementally: after the first read, history_diff starts past version 0
+  const hist = await page.evaluate(() => window.__hist);
+  if (hist.length < 5 || hist.slice(1).filter((v) => v === 0).length > 2) errs.push("history reads: " + JSON.stringify(hist.slice(0, 40)));
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");
