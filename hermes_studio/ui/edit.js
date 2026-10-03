@@ -76,7 +76,9 @@
     .ed-top .pid { font: 600 12px var(--mono); color: var(--mute); }
     .ed-top .ver { font: 500 11px var(--mono); color: var(--dim); }
     .ed-top .sp { flex: 1; }
-    .ed-btn { background: none; border: 1px solid var(--line-2); color: var(--ink); padding: .3rem .7rem; cursor: pointer; font: 600 12px var(--sans); }
+    .ed-btn { background: none; border: 1px solid var(--line-2); color: var(--ink); padding: .3rem .7rem; cursor: pointer; font: 600 12px var(--sans); white-space: nowrap; }
+    .ed-top select.ed-btn, .tl-tools select.ed-btn { width: auto; flex: none; }
+    .ed-top .pid, .ed-top .ver, .tl-tools .hint { white-space: nowrap; }
     .ed-btn:hover { border-color: var(--ink); }
     .ed-btn.amber { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); }
     .ed-btn[disabled] { opacity: .4; cursor: default; }
@@ -124,6 +126,10 @@
     .it canvas.wv { position: absolute; left: 0; bottom: 0; width: 100%; height: 12px; opacity: .8; pointer-events: none; }
     .it .th { position: absolute; left: 0; top: 0; bottom: 0; width: 40px; background-size: cover; opacity: .55; pointer-events: none; }
     .it.clip .lbl { position: relative; z-index: 1; }
+    .mk { position: absolute; top: 0; height: 20px; padding: 3px 6px 0 5px; margin-left: -1px; border-left: 2px solid var(--amber); color: var(--amber); font: 600 10px var(--sans, inherit); white-space: nowrap; cursor: grab; z-index: 3; background: var(--bg); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+    .mk.sel { background: var(--amber); color: #000; }
+    .keys { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; font-size: 12px; line-height: 1.5; }
+    .keys b { font: 600 11px var(--mono); color: var(--amber); white-space: nowrap; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
     .side-h { padding: .6rem .9rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
@@ -245,11 +251,11 @@
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
-        <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><button class="ed-btn" id="ed-text">Add text</button>
+        <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><button class="ed-btn" id="ed-text">Add text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">Add marker</button>
         <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets…</option><option value="title_card">Title card</option>
           <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option>
           <option value="duck_music">Duck the music</option></select>
-        <span class="sp" style="flex:1"></span><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" /></div>
+        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
       <div class="ed-side" id="ed-side"></div></div>`;
   }
@@ -260,6 +266,7 @@
     $("ed-undo").onclick = undo; $("ed-redo").onclick = redo;
     $("ed-play").onclick = () => (E.playing ? pause() : play());
     $("ed-split").onclick = split; $("ed-del").onclick = del; $("ed-text").onclick = addText;
+    $("ed-marker").onclick = addMarker; $("ed-keys").onclick = keysHelp;
     $("ed-zoom").oninput = (e) => { E.zoom = +e.target.value; timeline(); };
     $("ed-render").onclick = render;
     $("ed-preset").onchange = async (e) => {
@@ -274,7 +281,18 @@
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (e.key === " ") { e.preventDefault(); E.playing ? pause() : play(); }
       else if ((e.key === "Delete" || e.key === "Backspace") && E.sel) { e.preventDefault(); del(); }
-      else if (e.key.toLowerCase() === "s" && !e.ctrlKey && !e.metaKey) split();
+      else if (e.ctrlKey || e.metaKey) return;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const dir = e.key === "ArrowLeft" ? -1 : 1;
+        if (e.altKey) nudge(dir * (e.shiftKey ? 10 : 1)); else step(dir * (e.shiftKey ? E.doc.fps[0] / E.doc.fps[1] : 1));
+      }
+      else if (e.key === "[" || e.key === "]") { e.preventDefault(); jump(e.key === "]" ? 1 : -1); }
+      else if (e.key === "Home") { e.preventDefault(); E.follow = false; seek(0); }
+      else if (e.key === "End") { e.preventDefault(); E.follow = false; seek(endOf(E.spans)); }
+      else if (e.key.toLowerCase() === "m") addMarker();
+      else if (e.key === "?") keysHelp();
+      else if (e.key.toLowerCase() === "s") split();
     };
     document.addEventListener("keydown", E.keys);
   }
@@ -285,7 +303,7 @@
     E.by = {}; doc.tracks.forEach((tr) => tr.items.forEach((it) => (E.by[it.id] = it)));
     document.getElementById("ed-screen").style.setProperty("--ar", `${doc.size[0]}/${doc.size[1]}`);
     document.getElementById("ed-ver").textContent = `v${doc.version}`;
-    if (E.sel && !E.by[E.sel]) E.sel = null;
+    if (E.sel && !E.by[E.sel] && !isMarker(E.sel)) E.sel = null;
     await Promise.all([history(), approvals(), mediaStatus(), transcript()]);
     await mediaArt();
     if (E.followTo) { const ids = E.followTo; E.followTo = null; const ts = ids.map((i) => (E.spans[i] || [])[0]).filter((x) => x != null); if (ts.length) E.t = Math.min(...ts); }
@@ -379,6 +397,8 @@
   const px = (t) => 40 + sec(t) * E.zoom;
   function timeline() {
     const el = document.getElementById("ed-tl"); if (!el || !E.doc) return;
+    if (E.dragging) { E.stale = true; return; } // a reload mid-drag would pull the node from under the pointer
+    E.stale = false;
     const end = Math.max(endOf(E.spans) + 10 * TICK, 30 * TICK);
     const w = px(end) + 40;
     const step = E.zoom > 80 ? 1 : E.zoom > 30 ? 5 : E.zoom > 12 ? 10 : 30;
@@ -396,9 +416,11 @@
       return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}${it.type === "text" ? " · double-click to edit" : ""}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${th}${wv}${hs}<span class="lbl">${tag}${label}</span></div>`;
     }).join("")}</div>`).join("");
     el.style.width = w + "px";
-    el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div>`;
+    const mks = (E.doc.markers || []).map((m) => `<b class="mk${E.sel === m.id ? " sel" : ""}" data-mk="${esc(m.id)}" title="${esc(m.label || m.id)} · ${tc(m.at)} · drag to move, double-click to rename" style="left:${px(m.at)}px">${esc(m.label || "◆")}</b>`).join("");
+    el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}${mks}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div>`;
     el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); E.follow = false; side(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
     el.querySelectorAll(".it").forEach((n) => dragItem(n));
+    el.querySelectorAll(".mk").forEach((n) => dragMarker(n));
     el.querySelectorAll("canvas[data-wave]").forEach(drawWave);
     el.querySelectorAll(".it.text").forEach((n) => (n.ondblclick = () => editText(n.dataset.id)));
   }
@@ -432,18 +454,88 @@
     const text = prompt("Text", it.text); if (text == null || text === it.text) return;
     await write([{ op: "edit_text", id, text }], `Edit ${id}`);
   }
+  const frameT = () => TICK * E.doc.fps[1] / E.doc.fps[0];
+  const snapT = (t) => Math.max(0, Math.round(Math.round(t / frameT()) * frameT()));
+  // Hold timeline re-renders while the pointer drags n; draw the latest doc once it lets go.
+  function holdDrag(n, e) {
+    E.dragging = true;
+    n.setPointerCapture(e.pointerId);
+    const release = () => { if (!E || !E.dragging) return; E.dragging = false; if (E.stale) timeline(); };
+    n.addEventListener("pointerup", () => setTimeout(release), { once: true }); // after the drop handler has read the node
+    n.addEventListener("lostpointercapture", release, { once: true });
+  }
+  function dragMarker(n) {
+    const id = n.dataset.mk;
+    n.onclick = (e) => e.stopPropagation();
+    n.ondblclick = (e) => { e.stopPropagation(); renameMarker(id); };
+    n.onpointerdown = (e) => {
+      e.stopPropagation();
+      const m = (E.doc.markers || []).find((x) => x.id === id); if (!m) return;
+      E.sel = id;
+      document.querySelectorAll(".it.sel, .mk.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      E.tab = "item"; pane();
+      const x0 = e.clientX, left0 = parseFloat(n.style.left); let moved = false;
+      holdDrag(n, e);
+      n.onpointermove = (mv) => { const dx = mv.clientX - x0; if (Math.abs(dx) > 3) moved = true; if (moved) n.style.left = Math.max(40, left0 + dx) + "px"; };
+      n.onpointerup = () => {
+        n.onpointermove = n.onpointerup = null;
+        if (!moved) { E.follow = false; side(); seek(m.at); return; }
+        const at = snapT(ticks((parseFloat(n.style.left) - 40) / E.zoom));
+        if (at !== m.at) write([{ op: "edit_marker", id, at }], `Move marker ${m.label || id}`);
+      };
+    };
+  }
+  function renameMarker(id) {
+    const m = (E.doc.markers || []).find((x) => x.id === id); if (!m) return;
+    const label = prompt("Marker name", m.label); if (label == null || label === m.label) return;
+    write([{ op: "edit_marker", id, label: label.normalize("NFC") }], `Rename marker ${m.label || id}`);
+  }
+  function addMarker() {
+    if (!E) return;
+    const n = (E.doc.markers || []).length + 1;
+    write([{ op: "add_marker", at: snapT(E.t), label: `Marker ${n}` }], "Add marker");
+  }
+  function isMarker(id) { return !!(E && (E.doc.markers || []).some((m) => m.id === id)); }
+  // Edit points the [ and ] keys jump between: every item's start and end, and every marker.
+  function editPoints() {
+    const pts = new Set([0]);
+    Object.values(E.spans).forEach(([a, b]) => { pts.add(a); pts.add(b); });
+    (E.doc.markers || []).forEach((m) => pts.add(m.at));
+    return [...pts].sort((a, b) => a - b);
+  }
+  function jump(dir) {
+    const pts = editPoints();
+    const t = dir > 0 ? pts.find((p) => p > E.t) : [...pts].reverse().find((p) => p < E.t);
+    if (t != null) { E.follow = false; seek(t); }
+  }
+  function step(frames) { if (E && E.doc) { pause(); E.follow = false; seek(Math.max(0, snapT(E.t) + Math.round(frames * frameT()))); } }
+  function nudge(frames) {
+    if (!E || !E.sel) return toast("Select an item or marker first.");
+    const by = Math.round(frames * frameT());
+    const m = (E.doc.markers || []).find((x) => x.id === E.sel);
+    if (m) return write([{ op: "edit_marker", id: m.id, at: Math.max(0, m.at + by) }], `Nudge marker ${m.label || m.id}`);
+    const it = E.by[E.sel];
+    if (!it || !("at" in it)) return toast("That item moves with its clip; nudge the clip instead.");
+    write([{ op: "move_clip", id: it.id, at: Math.max(0, it.at + by) }], `Nudge ${it.id}`);
+  }
+  function keysHelp() {
+    const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
+      ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], ["S", "split at the playhead"],
+      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
+    E.keyRows = rows; E.tab = "keys"; pane();
+  }
   function dragItem(n) {
     n.onpointerdown = (e) => {
       const id = n.dataset.id, it = E.by[id];
       E.sel = id;
-      document.querySelectorAll(".it.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      document.querySelectorAll(".it.sel, .mk.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
       if (E.tab !== "item") { E.tab = "item"; } pane();
       if (!it || it.type === "transition") return;
       const edge = e.target.dataset ? e.target.dataset.edge : null;
       if (!edge && !("at" in it)) return; // anchored items move with their clip
       e.stopPropagation();
       const x0 = e.clientX, left0 = parseFloat(n.style.left), w0 = parseFloat(n.style.width); let moved = false;
-      n.setPointerCapture(e.pointerId);
+      holdDrag(n, e);
       n.onpointermove = (m) => {
         const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
         if (edge === "r") n.style.width = Math.max(4, w0 + dx) + "px";
@@ -594,6 +686,7 @@
       return;
     }
     if (E.tab === "item") return itemPane(el);
+    if (E.tab === "keys") { el.innerHTML = `<p class="kicker" style="margin-top:0">Keys</p><div class="keys">${(E.keyRows || []).map(([k, w]) => `<b>${esc(k)}</b><span>${esc(w)}</span>`).join("")}</div>`; return; }
     if (E.tab === "scenes") return scenesPane(el);
     const ws = E.words;
     el.innerHTML = `<p class="acts" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .7rem"><button class="ed-btn" id="ed-fill">Remove fillers</button><button class="ed-btn" id="ed-pause">Tighten pauses</button>
@@ -647,7 +740,25 @@
 
   /* ---------------------------------------------------------------- item inspector */
   const SPEEDS = [[1, 2], [3, 4], [1, 1], [5, 4], [3, 2], [2, 1]];
+  function markerPane(el, m) {
+    el.innerHTML = `<div class="mrow"><div class="nm">${esc(m.id)} · marker</div><div class="meta">${tc(m.at)}</div></div>
+      <label class="f" style="margin-top:.8rem">Name</label><input type="text" id="mk-label" value="${esc(m.label)}" />
+      <label class="f" style="margin-top:.8rem">At (s)</label><input type="text" id="mk-at" value="${sec(m.at).toFixed(3)}" />
+      <p style="margin-top:.8rem;display:flex;gap:.4rem"><button class="ed-btn amber" id="mk-save">Save</button><button class="ed-btn" id="mk-here">Move to playhead</button><button class="ed-btn" id="mk-del">Delete</button></p>`;
+    const $ = (id) => document.getElementById(id);
+    $("mk-save").onclick = () => {
+      const label = $("mk-label").value.normalize("NFC"), s = parseFloat($("mk-at").value);
+      if (!(s >= 0)) return toast("The time must be 0 or more seconds.");
+      const op = { op: "edit_marker", id: m.id }; const at = snapT(ticks(s));
+      if (label !== m.label) op.label = label; if (at !== m.at) op.at = at;
+      if (Object.keys(op).length > 2) write([op], `Edit marker ${m.label || m.id}`);
+    };
+    $("mk-here").onclick = () => { const at = snapT(E.t); if (at !== m.at) write([{ op: "edit_marker", id: m.id, at }], `Move marker ${m.label || m.id}`); };
+    $("mk-del").onclick = () => { E.sel = null; write([{ op: "remove_marker", id: m.id }], "Delete marker"); };
+  }
   function itemPane(el) {
+    const mk = E.sel && (E.doc.markers || []).find((x) => x.id === E.sel);
+    if (mk) return markerPane(el, mk);
     const it = E.sel && E.by[E.sel];
     if (!it) { el.innerHTML = `<p class="hint">Click an item on the timeline to change it here.</p>`; return; }
     const [a, b] = E.spans[it.id];
@@ -775,6 +886,7 @@
   }
   function del() {
     if (!E || !E.sel) return toast("Select an item first.");
+    if (isMarker(E.sel)) { const id = E.sel; E.sel = null; return write([{ op: "remove_marker", id }], "Delete marker"); }
     const ripple = document.getElementById("ed-ripple").checked && E.by[E.sel] && E.by[E.sel].type !== "transition";
     const id = E.sel; E.sel = null;
     write([{ op: "delete_clip", id, ripple }], `Delete ${id}`);

@@ -393,6 +393,28 @@ def op_remove_marker(ctx: _Ctx, a: dict) -> list[dict]:
     raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found", ident=a["id"])
 
 
+def op_edit_marker(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move a marker (``at``) and/or rename it (``label``); anything not given stays. The inverse
+    is the same op with the old values, so one undo puts it back."""
+    mk = next((m for m in ctx.doc["markers"] if m["id"] == a["id"]), None)
+    if mk is None:
+        raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found", ident=a["id"])
+    if "at" not in a and "label" not in a:
+        raise _OpError("missing_arg", "edit_marker needs 'at' and/or 'label'")
+    if "at" in a:
+        _need_ticks(a, "at")
+    if "label" in a:
+        c = T._Checker()
+        if not c.string(a["label"], "", empty=True):
+            pr = c.problems[0]
+            raise _OpError(pr.rule, f"'label' {pr.message}", "label")
+    inv = {"op": "edit_marker", "id": mk["id"], **{k: mk[k] for k in ("at", "label") if k in a}}
+    for k in ("at", "label"):
+        if k in a:
+            mk[k] = a[k]
+    return [inv]
+
+
 def op_insert_marker(ctx: _Ctx, a: dict) -> list[dict]:
     ctx.doc["markers"].insert(a["index"], copy.deepcopy(a["marker"]))
     return [{"op": "remove_marker", "id": a["marker"]["id"]}]
@@ -758,6 +780,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
     "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
+    "edit_marker": (op_edit_marker, frozenset({"id"}), frozenset({"at", "label"})),
     "add_media": (op_add_media, frozenset({"path", "dur", "fps"}), frozenset({"id", "proxy"})),
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {

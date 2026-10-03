@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, and saves screenshots 1-5 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves screenshots 1-8 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -26,7 +26,11 @@ let PAGE = null;
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   PAGE = page;
   const errs = []; page.on("pageerror", (e) => errs.push("pageerror: " + e.message)); page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text()); });
-  await page.addInitScript((t) => { window.studio = { uiToken: async () => t, retry: async () => {} }; }, TOKEN);
+  await page.addInitScript((t) => {
+    window.studio = { uiToken: async () => t, retry: async () => {} };
+    window.__toasts = []; // every toast, for the failure report
+    new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("toast")) window.__toasts.push(n.textContent); }))).observe(document, { childList: true, subtree: true });
+  }, TOKEN);
   const base = `http://127.0.0.1:${PORT}/`;
   await page.goto(base + "#/edit"); await page.waitForSelector("#ed-new");
   await page.screenshot({ path: path.join(OUT, "1-home.png") });
@@ -85,13 +89,42 @@ let PAGE = null;
   await page.selectOption("#it-speed", "2/1"); await page.click("#it-apply");
   await page.waitForFunction(() => parseFloat(document.querySelectorAll(".it.clip")[1].style.width) < 400, null, { timeout: 15000 });
   await page.screenshot({ path: path.join(OUT, "7-inspector.png") });
+  // keys and markers: Home, one second right, M, nudge it a frame, rename it, drag it, delete it, undo
+  await page.click("#ed-tc"); // focus off any input
+  await page.keyboard.press("Home"); await page.keyboard.press("Shift+ArrowRight"); await page.keyboard.press("ArrowRight");
+  const tcStep = await page.textContent("#ed-tc");
+  if (tcStep !== "0:01.03") errs.push("keys: Home, Shift+Right, Right went to " + tcStep + ", want 0:01.03");
+  await page.keyboard.press("]");
+  const tcJump = await page.textContent("#ed-tc");
+  await page.keyboard.press("m");
+  await page.waitForSelector(".mk", { timeout: 15000 });
+  const mk0 = await page.evaluate(() => parseFloat(document.querySelector(".mk").style.left));
+  await page.click(".mk", { position: { x: 4, y: 8 } }); // select (a click also seeks to it)
+  await page.waitForSelector("#mk-label");
+  const mkMoved = (from) => page.waitForFunction((x) => parseFloat(document.querySelector(".mk").style.left) !== x, from, { timeout: 15000 }).then(() => page.evaluate(() => parseFloat(document.querySelector(".mk").style.left)));
+  await page.keyboard.press("Alt+ArrowRight");
+  const mk1 = await mkMoved(mk0);
+  if (Math.abs(mk1 - mk0 - 2) > 0.1) errs.push(`nudge: marker moved ${mk1 - mk0}px, want 2 (one frame at 60 px/s)`);
+  await page.dblclick(".mk", { position: { x: 4, y: 8 } });
+  await page.waitForFunction(() => /Edited title/.test(document.querySelector(".mk").textContent), null, { timeout: 15000 });
+  const mb = await page.locator(".mk").boundingBox();
+  await page.mouse.move(mb.x + 4, mb.y + 8); await page.mouse.down(); await page.mouse.move(mb.x + 124, mb.y + 8, { steps: 6 }); await page.mouse.up();
+  await page.waitForFunction(() => /0:06\.0/.test(document.querySelector(".mk").title), null, { timeout: 15000 }); // the redraw from the engine, not the dragged node
+  const mk2 = await page.evaluate(() => parseFloat(document.querySelector(".mk").style.left));
+  if (Math.abs(mk2 - mk1 - 120) > 2) errs.push(`drag: marker moved ${mk2 - mk1}px, want 120`);
+  await page.click("#ed-keys"); await page.waitForSelector(".keys");
+  await page.screenshot({ path: path.join(OUT, "8-markers.png") });
+  await page.click(".mk", { position: { x: 4, y: 8 } }); await page.keyboard.press("Delete");
+  await page.waitForFunction(() => !document.querySelector(".mk"), null, { timeout: 15000 });
+  await page.keyboard.press("Control+z");
+  await page.waitForSelector(".mk", { timeout: 15000 });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
-  console.log(JSON.stringify({ out: OUT, played_to: t, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
+  console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
   mcp.kill(); await browser.close(); srv.kill();
 })().catch(async (e) => {
   console.error("FAIL", e.message.split("\n")[0], (e.stack || "").split("\n").find((l) => l.includes("check-edit-page")) || "", "\n", log.slice(-1500));
-  if (PAGE) await PAGE.screenshot({ path: path.join(OUT, "fail.png") }).catch(() => {});
+  if (PAGE) { await PAGE.screenshot({ path: path.join(OUT, "fail.png") }).catch(() => {}); console.error("toasts:", await PAGE.evaluate(() => window.__toasts).catch(() => [])); }
   srv.kill(); process.exit(1);
 });

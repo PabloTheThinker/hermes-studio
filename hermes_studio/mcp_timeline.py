@@ -136,7 +136,7 @@ TOOLS: list[dict] = [
         "(at_s, src_s, src_in_s, src_out_s, dur_s, fade_in_s, fade_out_s, anchor.offset_s). Needs base_version, summary and "
         "a fresh client_op_id; resend the exact same call to retry. Ops: insert_clip, move_clip, trim_clip, split_clip, "
         "delete_clip, set_props, set_fade, set_anchor, edit_text, add_text, add_transition, add_track, remove_track, add_marker, "
-        "remove_marker, add_media (import_media is easier: it probes the file for you).",
+        "remove_marker, edit_marker (move and/or rename), add_media (import_media is easier: it probes the file for you).",
         {
             "base_version": {"type": "integer"},
             "ops": {"type": "array", "items": {"type": "object"}},
@@ -379,6 +379,7 @@ _TICK_RULES = ("too_large", "negative_time")
 _TOO_LARGE = ("too_large",)
 S_ARGS: dict[str, list[tuple[str, str, tuple, tuple, tuple]]] = {
     "add_marker": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
+    "edit_marker": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
     "move_clip": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
     "split_clip": [("at_s", "at", ("at",), (), _TICK_RULES)],
     "trim_clip": [
