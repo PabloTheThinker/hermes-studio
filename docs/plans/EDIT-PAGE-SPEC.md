@@ -15,6 +15,7 @@ A new **Edit** page in the desk (rail: Clips · **Edit** · Design), in `hermes_
 - **Live:** the page reads the project's SSE stream (`fetch`, with `Last-Event-ID` on reconnect): `op.*` reloads the doc, `approval.*` the cards, `media.*` / `render.*` the progress, `mode.changed` the switch.
 - **Markers:** on the ruler, in amber. **Add marker** or M puts one at the playhead (`add_marker`); a click selects it and seeks there; drag moves it, double-click renames it, and the Item tab edits its name and time (all `edit_marker`: one entry, one undo); Delete removes it (`remove_marker`).
 - **Keys** (the **Keys** button or ? lists them): Space play/pause; ← → one frame, Shift ← → one second; [ ] previous / next edit point (item starts and ends, markers); Home / End; Alt ← → nudges the selected item or marker a frame (Alt+Shift: ten), one entry each; S split; M marker; Delete delete; Ctrl+Z / Ctrl+Shift+Z.
+- **Slip and roll** (clip Item tab, −1 s / −1 fr / +1 fr / +1 s): **Slip** shows another part of the source in the same place (`slip_clip`; also , and . on the selected clip, Shift for a second, or Alt-drag the clip); **Roll the cut into <next>** moves the cut between two touching or crossfaded clips without changing the total length (`roll_edit`; also Alt-drag the right edge). One entry each.
 - **Drags hold redraws:** a reload that lands mid-drag (an agent edit, or the echo of our own write arriving before its reply) waits until the pointer lets go, so the dragged node never disappears under it.
 
 ## The token (S3 §13.3)
@@ -33,7 +34,7 @@ A new **Edit** page in the desk (rail: Clips · **Edit** · Design), in `hermes_
 ## Checks
 
 - `tests/test_edit_page.py` (12): token adoption (and refusal of a bad one), project tools over /mcp and REST, scopes, closed app, the page files and the rail entry.
-- `scripts/check-edit-page.js` (manual, Playwright + Chromium): new project → import → add to end → an agent adds a title over stdio MCP in Propose mode → the waiting card → Apply → seek and play → before/after frames → drag the clip's right edge 2 s shorter → double-click the title and edit it → a second clip, **Crossfade into next**, 2× speed on it; then keys and markers (Home, Shift+→, →, ], M, Alt+→ nudge, rename, drag 2 s, Keys list, Delete, Ctrl+Z); screenshots 1–8; fails on page errors, a playhead that doesn't move, a wrong trim, a wrong step, nudge or marker drag.
+- `scripts/check-edit-page.js` (manual, Playwright + Chromium): new project → import → add to end → an agent adds a title over stdio MCP in Propose mode → the waiting card → Apply → seek and play → before/after frames → drag the clip's right edge 2 s shorter → double-click the title and edit it → a second clip, **Crossfade into next**, 2× speed on it; then keys and markers (Home, Shift+→, →, ], M, Alt+→ nudge, rename, drag 2 s, Keys list, Delete, Ctrl+Z) → roll the cut 1 s through the crossfade and slip the first clip a frame with .; screenshots 1–9; fails on page errors, a playhead that doesn't move, a wrong trim, a wrong step, nudge or marker drag.
 
 ## Not built yet
 

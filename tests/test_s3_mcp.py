@@ -93,6 +93,8 @@ VALID_OPS = [
     {"op": "add_marker", "at": 0, "label": "m"},
     {"op": "remove_marker"},
     {"op": "edit_marker", "label": "n"},
+    {"op": "slip_clip", "by": S // 2},
+    {"op": "roll_edit", "by": -S // 2},
     {"op": "add_media", "path": "media/b.mp4", "dur": S, "fps": [30, 1]},  # S4
 ]
 assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
@@ -161,6 +163,8 @@ ID_FOR = {
     "remove_track": "A2",
     "remove_marker": "k1",
     "edit_marker": "k1",
+    "slip_clip": "c2",
+    "roll_edit": "c1",
 }
 O_CODES = {
     "invalid_op",

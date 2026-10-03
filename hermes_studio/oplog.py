@@ -534,6 +534,83 @@ def op_move_clip(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "move_clip", "id": a["id"], "at": old}]
 
 
+def _crossfades(tr: dict, iid: str) -> tuple[dict | None, dict | None]:
+    """The crossfade into ``iid`` and the one out of it, on ``tr``."""
+    xin = next((x for x in tr["items"] if x["type"] == "transition" and x["between"][1] == iid), None)
+    xout = next((x for x in tr["items"] if x["type"] == "transition" and x["between"][0] == iid), None)
+    return xin, xout
+
+
+def _fits_crossfades(tr: dict, it: dict, new_dur: int) -> None:
+    xin, xout = _crossfades(tr, it["id"])
+    din, dout = (xin["dur"] if xin else 0), (xout["dur"] if xout else 0)
+    if new_dur <= 0 or new_dur <= max(din, dout) or new_dur < din + dout:
+        culprit = xout if xout and new_dur <= dout else xin if xin and new_dur <= din else xout or xin
+        if culprit is None:
+            raise _OpError("bad_arg", f"that leaves {it['id']!r} with no length", "by", item_id=it["id"])
+        raise _OpError(
+            "transition_too_long",
+            f"that leaves {it['id']!r} {new_dur} ticks long, too short for crossfade {culprit['id']!r} ({culprit['dur']} ticks)",
+            item_id=culprit["id"],
+        )
+
+
+def _in_media(ctx: _Ctx, it: dict, src: list[int], k: str) -> None:
+    mdur = ctx.doc["media"][it["media"]]["dur"]
+    if src[0] < 0 or src[1] > mdur:
+        raise _OpError(
+            "out_of_range",
+            f"{it['id']!r} would need source {src[0]}..{src[1]} ticks; {it['media']!r} runs 0..{mdur}",
+            k,
+            item_id=it["id"],
+        )
+
+
+def op_slip_clip(ctx: _Ctx, a: dict) -> list[dict]:
+    """Show a different part of the source in the same place: ``src`` moves by ``by`` source
+    ticks (signed); the clip's position, length, neighbours and crossfades stay."""
+    _, _, it = _find(ctx.doc, a["id"])
+    if it["type"] != "clip":
+        raise _OpError("bad_arg", f"slip_clip takes a clip id; {it['id']!r} is a {it['type']}", "id", item_id=it["id"])
+    by = _need_ticks(a, "by", signed=True)
+    if by == 0:
+        raise _OpError("bad_arg", "'by' must not be 0", "by")
+    src = [it["src"][0] + by, it["src"][1] + by]
+    _in_media(ctx, it, src, "by")
+    return _set(ctx, it["id"], {"src": src})
+
+
+def op_roll_edit(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move the cut between clip ``id`` and the clip that follows it on the same track by ``by``
+    timeline ticks (signed): ``id`` gets longer by ``by`` (its source out moves), the next clip
+    starts ``by`` later and gets shorter by the same (its source in moves). Nothing else moves,
+    so the total length stays. The next clip must start where ``id`` ends (or where their
+    crossfade starts)."""
+    tr, _, it = _find(ctx.doc, a["id"])
+    if it["type"] != "clip":
+        raise _OpError("bad_arg", f"roll_edit takes a clip id; {it['id']!r} is a {it['type']}", "id", item_id=it["id"])
+    by = _need_ticks(a, "by", signed=True)
+    if by == 0:
+        raise _OpError("bad_arg", "'by' must not be 0", "by")
+    _, xout = _crossfades(tr, it["id"])
+    cut = _start(ctx.doc, it) + _dur(it) - (xout["dur"] if xout else 0)
+    if xout:
+        _, _, nxt = _find(ctx.doc, xout["between"][1])
+    else:
+        nxt = next((x for x in tr["items"] if x["type"] == "clip" and x["id"] != it["id"] and _start(ctx.doc, x) == cut), None)
+    if nxt is None:
+        raise _OpError("bad_arg", f"no clip starts where {it['id']!r} ends on {tr['id']}; nothing to roll", "id")
+    da = _whole(Fraction(by) * _speed(it), "the roll on the first clip")
+    db = _whole(Fraction(by) * _speed(nxt), "the roll on the next clip")
+    a_src, b_src = [it["src"][0], it["src"][1] + da], [nxt["src"][0] + db, nxt["src"][1]]
+    _in_media(ctx, it, a_src, "by")
+    _in_media(ctx, nxt, b_src, "by")
+    _fits_crossfades(tr, it, _dur(it) + by)
+    _fits_crossfades(tr, nxt, _dur(nxt) - by)
+    moved = {"at": nxt["at"] + by} if "at" in nxt else {"anchor": {**nxt["anchor"], "offset": nxt["anchor"]["offset"] + by}}
+    return _set(ctx, it["id"], {"src": a_src}) + _set(ctx, nxt["id"], {"src": b_src, **moved})
+
+
 def op_trim_clip(ctx: _Ctx, a: dict) -> list[dict]:
     tr, _, it = _find(ctx.doc, a["id"])
     ripple = _need_bool(a, "ripple")
@@ -780,6 +857,8 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
     "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
+    "slip_clip": (op_slip_clip, frozenset({"id", "by"}), frozenset()),
+    "roll_edit": (op_roll_edit, frozenset({"id", "by"}), frozenset()),
     "edit_marker": (op_edit_marker, frozenset({"id"}), frozenset({"at", "label"})),
     "add_media": (op_add_media, frozenset({"path", "dur", "fps"}), frozenset({"id", "proxy"})),
 }

@@ -133,9 +133,10 @@ TOOLS: list[dict] = [
         "timeline_apply",
         "Edit the timeline",
         "Apply ops as one atomic batch (all or nothing) and log one entry. Times: integer ticks, or seconds through _s args "
-        "(at_s, src_s, src_in_s, src_out_s, dur_s, fade_in_s, fade_out_s, anchor.offset_s). Needs base_version, summary and "
+        "(at_s, src_s, src_in_s, src_out_s, dur_s, by_s, fade_in_s, fade_out_s, anchor.offset_s). Needs base_version, summary and "
         "a fresh client_op_id; resend the exact same call to retry. Ops: insert_clip, move_clip, trim_clip, split_clip, "
-        "delete_clip, set_props, set_fade, set_anchor, edit_text, add_text, add_transition, add_track, remove_track, add_marker, "
+        "slip_clip (same place and length, source moved by `by`), roll_edit (move the cut after clip `id` by `by`; "
+        "the total length stays), delete_clip, set_props, set_fade, set_anchor, edit_text, add_text, add_transition, add_track, remove_track, add_marker, "
         "remove_marker, edit_marker (move and/or rename), add_media (import_media is easier: it probes the file for you).",
         {
             "base_version": {"type": "integer"},
@@ -380,6 +381,8 @@ _TOO_LARGE = ("too_large",)
 S_ARGS: dict[str, list[tuple[str, str, tuple, tuple, tuple]]] = {
     "add_marker": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
     "edit_marker": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
+    "slip_clip": [("by_s", "by", ("by",), (), _TOO_LARGE)],
+    "roll_edit": [("by_s", "by", ("by",), (), _TOO_LARGE)],
     "move_clip": [("at_s", "at", ("at",), ("at",), _TICK_RULES)],
     "split_clip": [("at_s", "at", ("at",), (), _TICK_RULES)],
     "trim_clip": [

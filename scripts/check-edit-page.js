@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves screenshots 1-8 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -118,6 +118,20 @@ let PAGE = null;
   await page.waitForFunction(() => !document.querySelector(".mk"), null, { timeout: 15000 });
   await page.keyboard.press("Control+z");
   await page.waitForSelector(".mk", { timeout: 15000 });
+  // roll the cut between the two clips 1 s later (through their crossfade), then slip the first clip a frame with "."
+  const widths = () => page.evaluate(() => [...document.querySelectorAll(".it.clip")].map((n) => parseFloat(n.style.width)));
+  const w0s = await widths();
+  await page.click(".it.clip >> nth=0", { position: { x: 200, y: 8 } });
+  await page.click('[data-step="roll"][data-fr="30"]');
+  await page.waitForFunction((w) => parseFloat(document.querySelector(".it.clip").style.width) !== w, w0s[0], { timeout: 15000 });
+  const w1s = await widths();
+  if (Math.abs(w1s[0] - w0s[0] - 60) > 1 || Math.abs(w1s[1] - w0s[1] + 60) > 1) errs.push(`roll: widths ${w0s} -> ${w1s}, want +60 / -60`);
+  const src0 = await page.textContent("#ed-pane .meta.mono");
+  await page.click("#ed-tc"); await page.keyboard.press("Period");
+  await page.waitForFunction((t) => document.querySelector("#ed-pane .meta.mono").textContent !== t, src0, { timeout: 15000 });
+  const src1 = await page.textContent("#ed-pane .meta.mono");
+  if (!/source 0:00\.03/.test(src1)) errs.push("slip: source is " + src1 + ", want it to start at 0:00.03");
+  await page.screenshot({ path: path.join(OUT, "9-slip-roll.png") });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));

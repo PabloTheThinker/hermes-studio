@@ -291,6 +291,9 @@
       else if (e.key === "Home") { e.preventDefault(); E.follow = false; seek(0); }
       else if (e.key === "End") { e.preventDefault(); E.follow = false; seek(endOf(E.spans)); }
       else if (e.key.toLowerCase() === "m") addMarker();
+      else if ((e.code === "Comma" || e.code === "Period") && E.sel && E.by[E.sel] && E.by[E.sel].type === "clip") {
+        e.preventDefault(); slip(E.sel, (e.code === "Comma" ? -1 : 1) * (e.shiftKey ? Math.round(E.doc.fps[0] / E.doc.fps[1]) : 1));
+      }
       else if (e.key === "?") keysHelp();
       else if (e.key.toLowerCase() === "s") split();
     };
@@ -520,7 +523,7 @@
   }
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
-      ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], ["S", "split at the playhead"],
+      ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["S", "split at the playhead"],
       ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
@@ -535,9 +538,13 @@
       if (!edge && !("at" in it)) return; // anchored items move with their clip
       e.stopPropagation();
       const x0 = e.clientX, left0 = parseFloat(n.style.left), w0 = parseFloat(n.style.width); let moved = false;
+      const alt = e.altKey && it.type === "clip" && edge !== "l"; // Alt: slip the body, roll the right edge
+      if (alt && edge === "r" && !rollNext(it)) return toast("No clip starts where this one ends, so there is no cut to roll.");
+      let slipDx = 0;
       holdDrag(n, e);
       n.onpointermove = (m) => {
         const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
+        if (alt && !edge) { slipDx = dx; const th = n.querySelector(".th"); if (th) th.style.backgroundPositionX = dx + "px"; return; }
         if (edge === "r") n.style.width = Math.max(4, w0 + dx) + "px";
         else if (edge === "l") { const d = Math.min(dx, w0 - 4); n.style.left = Math.max(40, left0 + d) + "px"; n.style.width = (w0 - (Math.max(40, left0 + d) - left0)) + "px"; }
         else n.style.left = Math.max(40, left0 + dx) + "px";
@@ -546,6 +553,12 @@
         n.onpointermove = n.onpointerup = null;
         if (!moved) return; // a click only selects
         const fr = TICK * E.doc.fps[1] / E.doc.fps[0];
+        if (alt) {
+          // dragging the picture right shows earlier source, so a slip goes the other way
+          const frames = Math.round((edge ? parseFloat(n.style.width) - w0 : -slipDx) / E.zoom * TICK / fr);
+          if (!frames) return timeline();
+          return edge ? roll(id, frames) : slip(id, frames);
+        }
         const snap = (pxv) => Math.max(0, Math.round(Math.round(ticks((pxv - 40) / E.zoom) / fr) * fr));
         const [s0, e0] = E.spans[id];
         const ns = snap(parseFloat(n.style.left)), ne = snap(parseFloat(n.style.left) + parseFloat(n.style.width));
@@ -782,7 +795,10 @@
     el.innerHTML = head + `<div class="meta mono">${esc(it.media)} · source ${tc(it.src[0])} → ${tc(it.src[1])}</div>
       <label class="f" style="margin-top:.8rem">Volume <span id="it-vol-v">${vol}%</span></label><input type="range" id="it-vol" min="0" max="200" step="5" value="${vol}" style="width:100%" />
       <label class="f" style="margin-top:.6rem">Speed</label><select id="it-speed" class="ed-btn">${SPEEDS.map(([n, d]) => `<option value="${n}/${d}" ${Math.abs(n / d - sp) < 1e-9 ? "selected" : ""}>${(n / d)}×</option>`).join("")}</select>${fades}
-      <p style="margin-top:.8rem;display:flex;gap:.4rem;flex-wrap:wrap"><button class="ed-btn amber" id="it-apply">Apply</button>${nextOf(it) ? `<button class="ed-btn" id="it-xfade">Crossfade into next</button>` : ""}</p>`;
+      <p style="margin-top:.8rem;display:flex;gap:.4rem;flex-wrap:wrap"><button class="ed-btn amber" id="it-apply">Apply</button>${nextOf(it) ? `<button class="ed-btn" id="it-xfade">Crossfade into next</button>` : ""}</p>
+      <label class="f" style="margin-top:.9rem" title="Alt-drag the clip, or , and . (Shift: a second)">Slip: same place, other part of the source</label>${stepBtns("slip")}
+      ${rollNext(it) ? `<label class="f" style="margin-top:.6rem" title="Alt-drag the clip's right edge">Roll the cut into ${esc(rollNext(it).id)}</label>${stepBtns("roll")}` : ""}`;
+    el.querySelectorAll("[data-step]").forEach((b) => (b.onclick = () => (b.dataset.step === "slip" ? slip : roll)(it.id, +b.dataset.fr)));
     document.getElementById("it-vol").oninput = (e) => (document.getElementById("it-vol-v").textContent = e.target.value + "%");
     document.getElementById("it-apply").onclick = () => {
       const ops = [];
@@ -801,6 +817,17 @@
     const xb = document.getElementById("it-xfade");
     if (xb) xb.onclick = () => crossfade(it);
   }
+  function stepBtns(kind) {
+    const fps = Math.round(E.doc.fps[0] / E.doc.fps[1]);
+    return `<div style="display:flex;gap:.3rem">${[[-fps, "−1 s"], [-1, "−1 fr"], [1, "+1 fr"], [fps, "+1 s"]].map(([fr, l]) => `<button class="ed-btn" data-step="${kind}" data-fr="${fr}">${l}</button>`).join("")}</div>`;
+  }
+  // Slip: the clip stays put and shows the source `frames` later (negative: earlier).
+  function slip(id, frames) {
+    const by = Math.round(frames * frameT() * frac((E.by[id].props || {}).speed));
+    return write([{ op: "slip_clip", id, by }], `Slip ${id}`);
+  }
+  // Roll: the cut after `id` moves `frames` later (negative: earlier); the total length stays.
+  function roll(id, frames) { return write([{ op: "roll_edit", id, by: Math.round(frames * frameT()) }], `Roll ${id}`); }
   function fadeOps(it) {
     const fi = ticks(+document.getElementById("it-fi").value || 0), fo = ticks(+document.getElementById("it-fo").value || 0);
     const fr = TICK * E.doc.fps[1] / E.doc.fps[0], snap = (t) => Math.max(0, Math.round(Math.round(t / fr) * fr));
@@ -812,6 +839,13 @@
   function v1Clips() {
     const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
     return v1 ? v1.items.filter((x) => x.type === "clip").sort((p, q) => E.spans[p.id][0] - E.spans[q.id][0]) : [];
+  }
+  // The clip a roll_edit on `it` moves: the one starting where `it` ends, or where their crossfade starts.
+  function rollNext(it) {
+    const tr = E.doc.tracks.find((t) => t.items.includes(it)); if (!tr) return null;
+    const x = tr.items.find((t) => t.type === "transition" && t.between[0] === it.id);
+    if (x) return E.by[x.between[1]] || null;
+    return tr.items.find((c) => c.type === "clip" && c.id !== it.id && E.spans[c.id][0] === E.spans[it.id][1]) || null;
   }
   function nextOf(it) {
     const cs = v1Clips(), i = cs.findIndex((x) => x.id === it.id);
