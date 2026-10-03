@@ -41,7 +41,7 @@ STATUS = {
     "failed": 500,
 }
 _QUERY_INT = re.compile(r"\A(0|[1-9][0-9]*)\Z")  # ASCII only (D26)
-WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media", "render_timeline")
+WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media", "render_timeline", "transcript_cut")
 MEDIA_FILES = {
     "proxy": ("proxy", "video/mp4"),
     "thumbs": ("thumbs", "image/jpeg"),
@@ -341,6 +341,11 @@ def rest_post(h: Any, segs: list[str]) -> None:
             from hermes_studio import render_jobs as RJ
 
             return _json(h, 200, RJ.render_timeline(proj, body, ENGINE.renders))
+        if parts[1] == "transcript_cut":
+            from hermes_studio import cuts as CU
+
+            stripped, _ = O.strip_forged(body) if isinstance(body, dict) else (body, [])
+            return _json(h, 200, CU.transcript_cut(proj, tok.session, stripped))
         if parts[1] == "import_media":
             stripped, _ = O.strip_forged(body) if isinstance(body, dict) else (body, [])
             return _json(h, 200, MJ.import_media(proj, tok.session, stripped, ENGINE.media))

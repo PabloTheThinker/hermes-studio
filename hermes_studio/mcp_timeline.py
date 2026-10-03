@@ -41,7 +41,8 @@ WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
 MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
 FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
 RENDER_TOOLS = ("render_timeline", "render_status")  # S6
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS
+CUT_TOOLS = ("transcript_cut",)  # S7
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -232,6 +233,26 @@ TOOLS: list[dict] = [
         "seconds, bytes, error}. Works with the app closed.",
         {"render_id": _S},
         _RO,
+    ),
+    _tool(
+        "transcript_cut",
+        "Cut by transcript",
+        "Remove filler words (fillers:true: um, uh, erm...), long pauses (pauses:true: gaps over 0.7 s cut to 0.26 s) and/or "
+        "ranges [{from_s, to_s}] in timeline seconds from the main track, as ONE history entry (one undo). Uses the words "
+        "from get_transcript (import with 'words'). Needs base_version and client_op_id like timeline_apply; summary is "
+        "optional. preview:true returns the cuts and ops without changing anything. Returns {cuts, skipped, removed_s, "
+        "op_id, new_version, ...}.",
+        {
+            "base_version": {"type": "integer"},
+            "client_op_id": _S,
+            "summary": _S,
+            "group_id": _S,
+            "fillers": {"type": "boolean"},
+            "pauses": {"type": "boolean"},
+            "ranges": {"type": "array", "items": {"type": "object"}},
+            "preview": {"type": "boolean"},
+        },
+        _W,
     ),
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
@@ -471,7 +492,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         return {"ok": True, "hash": T.canonical_hash(args["doc"])}
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
-    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media")
+    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media", "transcript_cut")
     _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
@@ -486,9 +507,16 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if e.code != "not_found":
             raise
         proj = None
-    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS
+    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
         raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
+    if name == "transcript_cut":
+        from hermes_studio import cuts as CU
+
+        if not backend.writable:
+            raise P.offline()
+        stripped, _ = O.strip_forged({k: v for k, v in args.items() if k != "project_id"})
+        return CU.transcript_cut(proj, backend.session, stripped)
     if name in RENDER_TOOLS:
         from hermes_studio import render_jobs as RJ
 
