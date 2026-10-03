@@ -38,7 +38,7 @@ READ_TOOLS = (
     "project_status",
 )
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
-MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
+MEDIA_TOOLS = ("import_media", "media_status", "get_transcript", "get_scenes")  # S4 (+ scenes)
 FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
 RENDER_TOOLS = ("render_timeline", "render_status")  # S6
 CUT_TOOLS = ("transcript_cut",)  # S7
@@ -172,7 +172,7 @@ TOOLS: list[dict] = [
             "client_op_id": _S,
             "id": _S,
             "summary": _S,
-            "stages": {"type": "array", "items": {"type": "string", "enum": ["proxy", "thumbs", "wave", "words"]}},
+            "stages": {"type": "array", "items": {"type": "string", "enum": ["proxy", "thumbs", "wave", "scenes", "words"]}},
             "whisper": {"type": "string", "enum": ["tiny", "base", "small", "medium"]},
         },
         _W,
@@ -190,6 +190,14 @@ TOOLS: list[dict] = [
         "Get the transcript",
         "Words on the timeline: each {w, at, end, at_s, end_s, clip, media, src_in, src_out}, sorted by time, mapped through "
         "every clip that shows them. Only media imported with 'words' have any.",
+        {"media_id": _S},
+        _RO,
+    ),
+    _tool(
+        "get_scenes",
+        "Get the shot changes",
+        "Shot changes on the timeline: each {at, at_s, clip, media, src}, sorted by time, mapped through every clip that "
+        "shows them. Only media imported with 'scenes' in stages have any.",
         {"media_id": _S},
         _RO,
     ),
@@ -618,7 +626,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
-    if name in ("media_status", "get_transcript"):
+    if name in ("media_status", "get_transcript", "get_scenes"):
         _no_unknown(args, {"project_id", "media_id"})
     if name == "render_status":
         _no_unknown(args, {"project_id", "render_id"})
@@ -700,6 +708,8 @@ def _media(name: str, args: dict, proj: Any, backend: Backend) -> dict:
     rest = {k: v for k, v in args.items() if k != "project_id"}
     if name == "get_transcript":
         return MJ.get_transcript(proj, rest)
+    if name == "get_scenes":
+        return MJ.get_scenes(proj, rest)
     if name == "media_status":
         live = backend.engine.media.live_for(proj.id) if isinstance(backend, EngineBackend) else set()
         return MJ.media_status(proj, rest, live)

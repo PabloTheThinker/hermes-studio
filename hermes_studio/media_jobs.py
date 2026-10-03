@@ -27,7 +27,7 @@ from hermes_studio import timeline as T
 from hermes_studio.api import HermesStudioError
 
 # How much of the overall bar each stage takes (words is slow; it only counts when asked for).
-WEIGHTS = {"proxy": 0.6, "thumbs": 0.2, "wave": 0.2, "words": 1.0}
+WEIGHTS = {"proxy": 0.6, "thumbs": 0.2, "wave": 0.2, "scenes": 0.1, "words": 1.0}
 PROGRESS_EVERY_SEC = 0.25
 WORKERS = 2
 
@@ -168,6 +168,8 @@ class MediaJobs:
                     out = M.make_thumbs(src, p["thumbs"], p["thumbs_index"], info, progress, cancel)
                 elif stage == "wave":
                     out = M.make_wave(src, p["wave"], info, progress, cancel)
+                elif stage == "scenes":
+                    out = M.make_scenes(src, p["scenes"], info, progress, cancel)
                 else:
                     work = proj.dir / "cache" / "work" / mid
                     work.mkdir(parents=True, exist_ok=True)
@@ -225,7 +227,7 @@ def import_media(proj: P.Project, session: O.Session, args: Any, jobs: MediaJobs
     src = _source(args.get("path"))
     info = M.probe(src)
     if not info["has_video"]:
-        stages = [s for s in stages if s != "thumbs"]
+        stages = [s for s in stages if s not in ("thumbs", "scenes")]
     if not info["has_audio"]:
         stages = [s for s in stages if s not in ("wave", "words")]
     op: dict[str, Any] = {"op": "add_media", **M.media_entry(src, info)}
@@ -330,3 +332,28 @@ def after_import(proj: P.Project, after: dict) -> None:
         return
     mid = next(o["id"] for o in entry["ops"] if o["op"] == "add_media")
     proj.engine.media.submit(proj, mid, Path(after["src"]), after["info"], after["stages"], after["model"])
+
+
+def get_scenes(proj: Any, args: Any) -> dict:
+    """Shot changes on the timeline (``media.timeline_scenes``) from every media imported with
+    the ``scenes`` stage; ``media_id`` limits it to one media."""
+    if not isinstance(args, dict):
+        raise _bad("", "bad_arg", "arguments must be an object")
+    with _locked(proj):
+        doc = proj.oplog().doc
+    only = args.get("media_id")
+    if only is not None and (not isinstance(only, str) or only not in doc["media"]):
+        if not isinstance(only, str):
+            raise _bad("/media_id", "bad_arg", "'media_id' must be a media id")
+        raise O.OplogError("not_found", f"no media {only!r}", rule="not_found", path="/media_id", id=only)
+    scenes: dict[str, list[int]] = {}
+    for mid in doc["media"]:
+        if only is not None and mid != only:
+            continue
+        data = M.read_json(M.cache_paths(proj.dir, mid)["scenes"])
+        if isinstance(data, dict) and isinstance(data.get("cuts"), list):
+            scenes[mid] = data["cuts"]
+    rows = M.timeline_scenes(doc, scenes)
+    for r in rows:
+        r["at_s"] = r["at"] / T.TICK_RATE
+    return {"version": doc["version"], "media": sorted(scenes), "cuts": rows}

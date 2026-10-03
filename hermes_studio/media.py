@@ -32,7 +32,8 @@ THUMB_HEIGHT = 90  # 160 px wide at 16:9
 THUMB_COLS = 10
 WAVE_RATE = 8000  # Hz, mono, decoded for peaks only
 WAVE_PEAKS_PER_SEC = 100
-STAGES = ("proxy", "thumbs", "wave", "words")
+STAGES = ("proxy", "thumbs", "wave", "scenes", "words")
+SCENE_THRESHOLD = 0.3  # FFmpeg's scene score (0-1) above which a frame starts a new shot
 
 
 class MediaError(HermesStudioError):
@@ -164,6 +165,7 @@ def cache_paths(project_dir: Path, mid: str) -> dict[str, Path]:
         "thumbs_index": c / "thumbs" / f"{mid}.json",
         "wave": c / "wave" / f"{mid}.json",
         "words": c / "words" / f"{mid}.json",
+        "scenes": c / "scenes" / f"{mid}.json",
         "status": c / "media" / f"{mid}.json",
     }
 
@@ -350,6 +352,61 @@ def make_wave(src: Path, dest: Path, info: dict, on_progress: Progress | None = 
     return {"peaks_per_s": WAVE_PEAKS_PER_SEC, "count": len(peaks)}
 
 
+def make_scenes(src: Path, dest: Path, info: dict, on_progress: Progress | None = None, cancel=lambda: False) -> dict:
+    """Shot changes: the source times (ticks, each the start of a source frame) where FFmpeg's
+    scene score passes ``SCENE_THRESHOLD``, on a 160 px decode. ``{"threshold", "cuts": [ticks]}``."""
+    import tempfile
+
+    if not info["has_video"]:
+        raise MediaError("no video stream for scenes", code="bad_input")
+    with tempfile.TemporaryFile(mode="w+") as log:
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-nostdin",
+            "-nostats",
+            "-progress",
+            "pipe:1",
+            "-i",
+            str(src),
+            "-an",
+            "-vf",
+            f"scale=160:-2,select='gt(scene,{SCENE_THRESHOLD})',showinfo",
+            "-f",
+            "null",
+            "-",
+        ]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, text=True)
+        total = max(1, info["dur"] * 1_000_000 // T.TICK_RATE)
+        assert p.stdout is not None
+        for line in p.stdout:
+            if cancel():
+                p.kill()
+                break
+            k, _, v = line.strip().partition("=")
+            if k == "out_time_us" and v.isdigit() and on_progress:
+                on_progress("scenes", min(1.0, int(v) / total))
+        p.wait()
+        p.stdout.close()
+        if cancel():
+            raise MediaError("scenes cancelled", code="failed")
+        if p.returncode != 0:
+            raise MediaError("scenes failed: ffmpeg could not decode the video", code="failed")
+        log.seek(0)
+        cuts = []
+        for line in log:
+            i = line.find("pts_time:")
+            if "Parsed_showinfo" in line and i >= 0:
+                t = _seconds_to_ticks(line[i + 9 :].split()[0])
+                if t:
+                    cuts.append(t)
+    data = {"threshold": SCENE_THRESHOLD, "cuts": sorted(set(cuts))}
+    _write_json(dest, data)
+    if on_progress:
+        on_progress("scenes", 1.0)
+    return {"count": len(data["cuts"])}
+
+
 def make_words(src: Path, dest: Path, work: Path, model: str = "tiny", on_progress: Progress | None = None) -> dict:
     """Whisper words in source ticks: ``{"words": [{"w", "in", "out"}]}`` (``in < out``)."""
     from hermes_studio.transcribe import transcribe
@@ -370,6 +427,25 @@ def make_words(src: Path, dest: Path, work: Path, model: str = "tiny", on_progre
 
 
 # --------------------------------------------------------------------------- transcript -> timeline
+
+
+def timeline_scenes(doc: dict, scenes: dict[str, list[int]]) -> list[dict]:
+    """Each media's shot changes on the timeline, through every clip that shows them (strictly
+    inside the clip's source range): ``{at, clip, media, src}``, sorted by ``at``."""
+    spans = T.resolve(doc)
+    out = []
+    for tr in doc["tracks"]:
+        for it in tr["items"]:
+            if it.get("type") != "clip" or it["media"] not in scenes or it["id"] not in spans:
+                continue
+            start = spans[it["id"]][0]
+            a, b = it["src"]
+            sp = (it.get("props") or {}).get("speed")
+            speed = Fraction(*sp) if isinstance(sp, list) else Fraction(1)
+            for c in scenes[it["media"]]:
+                if a < c < b:
+                    out.append({"at": start + int((c - a) / speed), "clip": it["id"], "media": it["media"], "src": c})
+    return sorted(out, key=lambda r: (r["at"], r["clip"]))
 
 
 def timeline_words(doc: dict, words: dict[str, list[dict]]) -> list[dict]:

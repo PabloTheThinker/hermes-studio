@@ -36,6 +36,9 @@ let PAGE = null;
   await page.waitForFunction(() => /ready/.test(document.querySelector("#ed-pane").textContent), null, { timeout: 60000 });
   await page.click("[data-add]");
   await page.waitForSelector(".it.clip");
+  await page.click('[data-tab="scenes"]');
+  await page.waitForFunction(() => /shot change/i.test(document.getElementById("ed-pane").textContent), null, { timeout: 15000 });
+  await page.click('[data-tab="media"]');
   await sleep(800);
   await page.screenshot({ path: path.join(OUT, "2-clip.png") });
   // agent edit through the stdio MCP proxy (attaches to the running engine)

@@ -85,7 +85,7 @@
     .seg button.on { background: var(--amber); color: var(--amber-ink); }
     .ed-left { grid-row: 2; border-right: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
     .tabs { display: flex; border-bottom: 1px solid var(--line); }
-    .tabs button { flex: 1; background: none; border: 0; border-bottom: 2px solid transparent; padding: .55rem 0; font: 600 11px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); cursor: pointer; }
+    .tabs button { flex: 1; letter-spacing: .08em !important; background: none; border: 0; border-bottom: 2px solid transparent; padding: .55rem 0; font: 600 11px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); cursor: pointer; }
     .tabs button.on { color: var(--ink); border-bottom-color: var(--amber); }
     .pane { padding: .8rem; font-size: 13px; }
     .pane input[type=text] { width: 100%; background: var(--panel); border: 1px solid var(--line-2); color: var(--ink); padding: .4rem .5rem; font: 400 12px var(--mono); }
@@ -241,7 +241,7 @@
         <span class="sp"></span><span class="hint" id="ed-render-st"></span>
         <select class="ed-btn" id="ed-cstyle" title="Caption style">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option>${x}</option>`).join("")}</select>
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
-      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
+      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
@@ -575,7 +575,7 @@
         }).join("")}`;
       document.getElementById("ed-import").onclick = async () => {
         const path = document.getElementById("ed-path").value.trim(); if (!path) return;
-        const stages = ["proxy", "thumbs", "wave"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
+        const stages = ["proxy", "thumbs", "wave", "scenes"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
         try { await P("import_media", { path, stages, client_op_id: rid() }); toast("Importing", true); await reload(); } catch (e) { fail(e); }
       };
       el.querySelectorAll("[data-music]").forEach((b) => (b.onclick = () => {
@@ -594,6 +594,7 @@
       return;
     }
     if (E.tab === "item") return itemPane(el);
+    if (E.tab === "scenes") return scenesPane(el);
     const ws = E.words;
     el.innerHTML = `<p class="acts" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .7rem"><button class="ed-btn" id="ed-fill">Remove fillers</button><button class="ed-btn" id="ed-pause">Tighten pauses</button>
       <button class="ed-btn" id="ed-cutsel" ${E.wsel ? "" : "disabled"}>Cut selection</button></p>
@@ -616,6 +617,32 @@
     document.getElementById("ed-fill").onclick = () => cut({ fillers: true }, "Remove fillers");
     document.getElementById("ed-pause").onclick = () => cut({ pauses: true }, "Tighten pauses");
     document.getElementById("ed-cutsel").onclick = () => { if (!E.wsel) return; const a = ws[E.wsel[0]], b = ws[E.wsel[1]]; cut({ ranges: [{ from_s: sec(a.at), to_s: sec(b.end) }] }, "Cut selection"); };
+  }
+
+  /* ---------------------------------------------------------------- scenes */
+  async function scenesPane(el) {
+    el.innerHTML = `<p class="hint">Finding shot changes…</p>`;
+    let cuts = [];
+    try { cuts = (await P("get_scenes")).cuts; } catch (e) { fail(e); }
+    if (!E || E.tab !== "scenes") return;
+    el.innerHTML = cuts.length ? `<p><button class="ed-btn" id="sc-split">Split at every shot change (${cuts.length})</button></p>
+      <div class="scenes">${cuts.map((c, i) => `<div class="mrow" data-sc="${i}" style="cursor:pointer;display:flex;gap:.6rem;align-items:center">
+        <img data-scimg="${i}" alt="" style="width:54px;height:96px;object-fit:cover;background:#000" /><div><div class="nm">${tc(c.at)}</div><div class="meta">${esc(c.clip)} · ${esc(c.media)} ${tc(c.src)}</div></div></div>`).join("")}</div>`
+      : `<p class="hint">No shot changes on the timeline. Import with scenes (on by default) or add clips that cross a cut.</p>`;
+    el.querySelectorAll("[data-sc]").forEach((r) => (r.onclick = () => seek(cuts[+r.dataset.sc].at)));
+    cuts.slice(0, 40).forEach((c, i) => authed(`/api/projects/${encodeURIComponent(E.pid)}/frame?at=${c.at}&width=108`).then((r) => r.blob()).then((b) => {
+      const img = el.querySelector(`[data-scimg="${i}"]`); if (img) img.src = URL.createObjectURL(b);
+    }).catch(() => {}));
+    const sb = document.getElementById("sc-split");
+    if (sb) sb.onclick = () => {
+      const by = {}; cuts.forEach((c) => (by[c.clip] = by[c.clip] || []).push(c.at));
+      const ops = []; let n = 0; const salt = rid().slice(3, 9);
+      Object.entries(by).forEach(([clip, ats]) => {
+        let cur = clip; // split the latest cut first, then keep splitting the left piece
+        ats.sort((a, b) => b - a).forEach((at) => { const l = `${clip}.k${salt}${n++}`, r = `${clip}.k${salt}${n++}`; ops.push({ op: "split_clip", id: cur, at, ids: [l, r] }); cur = l; });
+      });
+      write(ops, `Split at ${cuts.length} shot change${cuts.length > 1 ? "s" : ""}`);
+    };
   }
 
   /* ---------------------------------------------------------------- item inspector */

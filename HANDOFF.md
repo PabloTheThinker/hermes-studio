@@ -2,7 +2,7 @@
 
 ## 0. Update 2026-10-03 (read this first)
 
-The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1190 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
+The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1194 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
 
 | Branch (stacked) | What | Gate evidence | Spec |
 |---|---|---|---|
@@ -16,6 +16,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-presets` | `apply_preset` (Phase 2 Q3) | one entry, one undo per preset | `presets.py` docstring |
 | `feat/editor-polish` | `hermes-studio cache [--clear [--all]]`; Phase 2 Q1 eval set (`evals/`: 20 pinned tasks, checks, reference solutions, `python -m evals.run`); latency measurement | reference 20/20, a do-nothing agent passes only the 2 no-change tasks; engine op → SSE event p95 ≈ 10 ms (< 250 ms) | `evals/run.py` docstring |
 | `feat/editor-drafts` | Phase 2 Q2 draft branches (`draft_new/list/keep/discard`, internal op `replace_body`, `call(..., "keep_body")`), Edit page draft banner | Discard keeps the main hash exactly; Keep equals the branch in one entry, one undo | `DRAFTS-SPEC.md` |
+| `feat/editor-scenes` | Shot changes: S4 `scenes` stage (FFmpeg scene score 0.3), `get_scenes` through the clips, REST, Edit page Scenes tab with thumbnails and "Split at every shot change" (one entry) | cuts found at 3 s / 6 s on a 3-shot fixture; mapping through clips and speed | `media.py` / `media_jobs.py` docstrings |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

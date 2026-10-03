@@ -186,6 +186,9 @@ def get(h: Any, segs: list[str], query: str) -> None:
             return _json(h, 200, G.status(proj, {"pending_id": rest[1]}))
         if rest == ["frame"]:
             return _frame_get(h, tok, proj, query)
+        if rest == ["scenes"]:
+            q = parse_qs(query, keep_blank_values=True)
+            return _json(h, 200, MJ.get_scenes(proj, {"media_id": q["media_id"][-1]} if "media_id" in q else {}))
         if rest == ["transcript"]:
             q = parse_qs(query, keep_blank_values=True)
             args = {"media_id": q["media_id"][-1]} if "media_id" in q else {}
