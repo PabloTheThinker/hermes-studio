@@ -256,7 +256,7 @@
         <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets</option><option value="title_card">Title card</option>
           <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option><option value="close_gaps">Close the gaps</option>
           <option value="duck_music">Duck the music</option></select>
-        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" style="width:110px;flex:none" /></div>
+        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><button class="ed-btn" id="ed-fit" title="Zoom to fit (\\)">Fit</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" style="width:110px;flex:none" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
       <div class="ed-side" id="ed-side"></div></div>`;
   }
@@ -269,6 +269,14 @@
     $("ed-split").onclick = split; $("ed-del").onclick = del; $("ed-text").onclick = addText;
     $("ed-marker").onclick = addMarker; $("ed-keys").onclick = keysHelp;
     $("ed-zoom").oninput = (e) => { E.zoom = +e.target.value; timeline(); };
+    $("ed-fit").onclick = fit;
+    $("ed-scroll").addEventListener("wheel", (e) => {
+      if (!(e.ctrlKey || e.metaKey) || !E || !E.doc) return;
+      e.preventDefault();
+      const sc = $("ed-scroll"), x = e.clientX - sc.getBoundingClientRect().left, t = (sc.scrollLeft + x - 40) / E.zoom;
+      setZoom(E.zoom * Math.exp(-e.deltaY * 0.002));
+      sc.scrollLeft = Math.max(0, 40 + t * E.zoom - x); // the second under the pointer stays under it
+    }, { passive: false });
     $("ed-render").onclick = render;
     $("ed-preset").onchange = async (e) => {
       const preset = e.target.value; e.target.value = ""; if (!preset || !E) return;
@@ -299,9 +307,11 @@
       else if (e.key === "End") { e.preventDefault(); E.follow = false; seek(endOf(E.spans)); }
       else if (e.key.toLowerCase() === "m") addMarker();
       else if ((e.code === "Comma" || e.code === "Period") && E.sel && E.by[E.sel] && E.by[E.sel].type === "clip") {
-        e.preventDefault(); slip(E.sel, (e.code === "Comma" ? -1 : 1) * (e.shiftKey ? Math.round(E.doc.fps[0] / E.doc.fps[1]) : 1));
+        e.preventDefault(); const id = E.sel;
+        coalesce("slip:" + id, (e.code === "Comma" ? -1 : 1) * (e.shiftKey ? Math.round(E.doc.fps[0] / E.doc.fps[1]) : 1), (n) => slip(id, n));
       }
       else if (e.key === "?") keysHelp();
+      else if (e.key === "\\") { e.preventDefault(); fit(); }
       else if (e.key.toLowerCase() === "s") split();
     };
     document.addEventListener("keydown", E.keys);
@@ -396,12 +406,22 @@
   }
   async function transcript() { try { E.words = (await P("get_transcript")).words; } catch { E.words = []; } }
 
-  async function write(ops, summary) {
-    try {
-      const r = await P("timeline_apply", { base_version: E.doc.version, client_op_id: rid(), summary, ops });
-      await reload();
-      return r;
-    } catch (e) { fail(e); if (e.code === "conflict") await reload(); return null; }
+  // The page's writes run one at a time, each on the version the one before it left (a held
+  // key's pending nudge lands first), so quick actions never trip over each other's base_version.
+  function queued(fn) {
+    if (E.pend) settle();
+    const s = E; const run = (s.wq || Promise.resolve()).then(() => (E === s ? fn() : null));
+    s.wq = run.catch(() => {});
+    return run;
+  }
+  function write(ops, summary) {
+    return queued(async () => {
+      try {
+        const r = await P("timeline_apply", { base_version: E.doc.version, client_op_id: rid(), summary, ops });
+        await reload();
+        return r;
+      } catch (e) { fail(e); if (e.code === "conflict") await reload(); return null; }
+    });
   }
 
   /* ---------------------------------------------------------------- timeline view */
@@ -540,19 +560,48 @@
     if (t != null) { E.follow = false; seek(t); }
   }
   function step(frames) { if (E && E.doc) { pause(); E.follow = false; seek(Math.max(0, snapT(E.t) + Math.round(frames * frameT()))); } }
+  // Key repeats of one action (a held Alt+arrow, , or .) add up and land as ONE entry once the
+  // keys stop for KEY_SETTLE_MS; another action, or a click elsewhere, lands the pending one first.
+  const KEY_SETTLE_MS = 350;
+  function coalesce(key, frames, commit, preview) {
+    const p = E.pend;
+    if (p && p.key !== key) settle();
+    const q = E.pend || (E.pend = { key, frames: 0, commit });
+    q.frames += frames; if (preview) preview(q.frames);
+    clearTimeout(q.timer); q.timer = setTimeout(settle, KEY_SETTLE_MS);
+  }
+  function settle() {
+    const q = E && E.pend; if (!q) return;
+    clearTimeout(q.timer); E.pend = null;
+    if (q.frames) q.commit(q.frames);
+  }
   function nudge(frames) {
     if (!E || !E.sel) return toast("Select an item or marker first.");
-    const by = Math.round(frames * frameT());
-    const m = (E.doc.markers || []).find((x) => x.id === E.sel);
-    if (m) return write([{ op: "edit_marker", id: m.id, at: Math.max(0, m.at + by) }], `Nudge marker ${m.label || m.id}`);
-    const it = E.by[E.sel];
-    if (!it || !("at" in it)) return toast("That item moves with its clip; nudge the clip instead.");
-    write([{ op: "move_clip", id: it.id, at: Math.max(0, it.at + by) }], `Nudge ${it.id}`);
+    const id = E.sel, m = (E.doc.markers || []).find((x) => x.id === id), it = E.by[id];
+    if (!m && (!it || !("at" in it))) return toast("That item moves with its clip; nudge the clip instead.");
+    const at0 = m ? m.at : it.at;
+    const node = () => document.querySelector(m ? `.mk[data-mk="${CSS.escape(id)}"]` : `.it[data-id="${CSS.escape(id)}"]`);
+    coalesce("nudge:" + id, frames, (n) => {
+      const at = Math.max(0, at0 + Math.round(n * frameT()));
+      if (m) return write([{ op: "edit_marker", id, at }], `Nudge marker ${m.label || id}`);
+      return write([{ op: "move_clip", id, at }], `Nudge ${id}`);
+    }, (n) => { const el = node(); if (el) el.style.left = px(Math.max(0, at0 + Math.round(n * frameT())) + (m ? 0 : E.spans[id][0] - at0)) + "px"; });
+  }
+  // Zoom so the whole edit fits the timeline's width.
+  function fit() {
+    const sc = document.getElementById("ed-scroll"), end = Math.max(endOf(E.spans), TICK);
+    setZoom((sc.clientWidth - 80) / sec(end));
+    sc.scrollLeft = 0;
+  }
+  function setZoom(z) {
+    const zs = document.getElementById("ed-zoom");
+    E.zoom = Math.min(+zs.max, Math.max(+zs.min, z)); zs.value = String(E.zoom);
+    timeline();
   }
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
-      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
+      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
   function dragItem(n) {
@@ -662,6 +711,7 @@
     E.t = Math.max(0, Math.round(t));
     syncAudio();
     const ph = document.getElementById("ed-ph"); if (ph) ph.style.left = px(E.t) + "px";
+    if (E.playing) { const sc = document.getElementById("ed-scroll"), x = px(E.t); if (sc && (x > sc.scrollLeft + sc.clientWidth - 40 || x < sc.scrollLeft)) sc.scrollLeft = Math.max(0, x - 80); }
     document.getElementById("ed-tc").textContent = tc(E.t);
     const txt = E.doc.tracks.filter((tr) => tr.role === "text").flatMap((tr) => tr.items).filter((it) => { const s = E.spans[it.id]; return s && s[0] <= E.t && E.t < s[1]; });
     const over = document.getElementById("ed-txt");
@@ -982,8 +1032,8 @@
   }
 
   /* ---------------------------------------------------------------- actions */
-  async function undo() { if (E && E.undoTarget) { try { await P("history_undo", { op_id: E.undoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }
-  async function redo() { if (E && E.redoTarget) { try { await P("history_redo", { op_id: E.redoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }
+  function undo() { if (E) return queued(async () => { if (E.undoTarget) { try { await P("history_undo", { op_id: E.undoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }); }
+  function redo() { if (E) return queued(async () => { if (E.redoTarget) { try { await P("history_redo", { op_id: E.redoTarget.op_id, client_op_id: rid() }); await reload(); } catch (e) { fail(e); } } }); }
   function split() {
     if (!E) return;
     const it = E.sel && E.by[E.sel] ? E.by[E.sel] : (clipAt(E.t) || [null])[0];

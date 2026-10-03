@@ -105,6 +105,16 @@ let PAGE = null;
   await page.keyboard.press("Alt+ArrowRight");
   const mk1 = await mkMoved(mk0);
   if (Math.abs(mk1 - mk0 - 2) > 0.1) errs.push(`nudge: marker moved ${mk1 - mk0}px, want 2 (one frame at 60 px/s)`);
+  // five quick Alt+Right presses: one entry, five frames (10 px)
+  const v5 = await ver();
+  for (let i = 0; i < 5; i++) await page.keyboard.press("Alt+ArrowRight");
+  const mk5 = await mkMoved(mk1).then(() => page.waitForFunction((x) => Math.abs(parseFloat(document.querySelector(".mk").style.left) - x - 10) < 0.1, mk1, { timeout: 15000 }).then(() => true, () => false));
+  await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v, v5, { timeout: 15000 });
+  await sleep(800);
+  if (!mk5 || (await ver()) !== v5 + 1) errs.push(`held nudge: ${await ver() - v5} entries (want 1), moved to 10 px: ${mk5}`);
+  await page.keyboard.press("Alt+ArrowLeft"); for (let i = 0; i < 4; i++) await page.keyboard.press("Alt+ArrowLeft"); // back to mk1
+  await page.waitForFunction((x) => Math.abs(parseFloat(document.querySelector(".mk").style.left) - x) < 0.1, mk1, { timeout: 15000 });
+  await sleep(800);
   await page.dblclick(".mk", { position: { x: 4, y: 8 } });
   await page.waitForFunction(() => /Edited title/.test(document.querySelector(".mk").textContent), null, { timeout: 15000 });
   const mb = await page.locator(".mk").boundingBox();
@@ -112,6 +122,11 @@ let PAGE = null;
   await page.waitForFunction(() => /0:06\.0/.test(document.querySelector(".mk").title), null, { timeout: 15000 }); // the redraw from the engine, not the dragged node
   const mk2 = await page.evaluate(() => parseFloat(document.querySelector(".mk").style.left));
   if (Math.abs(mk2 - mk1 - 120) > 2) errs.push(`drag: marker moved ${mk2 - mk1}px, want 120`);
+  // Fit: the whole edit fits the view, then back to 60 px/s for the steps below
+  await page.click("#ed-fit");
+  const fitOk = await page.evaluate(() => { const sc = document.getElementById("ed-scroll"); const right = Math.max(...[...document.querySelectorAll(".it")].map((n) => parseFloat(n.style.left) + parseFloat(n.style.width))); return right <= sc.clientWidth && right > sc.clientWidth * 0.8; });
+  if (!fitOk) errs.push("fit: the edit's end isn't in the last fifth of the view");
+  await page.evaluate(() => { const z = document.getElementById("ed-zoom"); z.value = "60"; z.dispatchEvent(new Event("input")); });
   await page.click("#ed-keys"); await page.waitForSelector(".keys");
   await page.screenshot({ path: path.join(OUT, "8-markers.png") });
   await page.click(".mk", { position: { x: 4, y: 8 } }); await page.keyboard.press("Delete");

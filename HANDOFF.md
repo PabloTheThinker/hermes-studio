@@ -25,6 +25,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-preview-audio` | Edit page preview mixes the other tracks (music, voice) on synced hidden `<audio>` players, clip volume and fades on V1 too | `check-edit-page.js` checks `_audioPlan` (no AAC in headless Chromium; the sound itself is unheard here, needs a person on the desktop app) | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-evals-b` | eval set B (`evals/tasks.py` `TASKS_B`, `python -m evals.run --reference --set b`): slip, roll, delete then close gaps, marker move and rename, an impossible slip to decline, repeat a clip; set A stays pinned | reference 6/6 in 7 writes; doing nothing passes only the decline task | `evals/run.py` docstring |
 | `fix/editor-slip-rules` | `slip_clip` / `roll_edit` refuse with the validator's own rule ids at the op path: `negative_time`, `src_out_of_media`, `empty_range` (were `out_of_range` / `bad_arg`) | `tests/test_slip_roll.py` | `docs/oplog.md` |
+| `feat/editor-nav` | Edit page: held-key nudges and slips land as one entry; Fit (\\) and Ctrl+wheel zoom; the view follows the playhead; page writes, undo and redo queue one at a time | `check-edit-page.js` held-nudge and Fit checks | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
