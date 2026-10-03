@@ -9,6 +9,9 @@ the S8 mode gate like any other write.
 - ``duck_music``: every clip on a music track at 15% volume.
 - ``crossfade_all``: a crossfade (``seconds``, default 0.3) between every two touching V1
   clips, pulling the later clips in by the overlap.
+- ``close_gaps``: every V1 clip moves left so it starts where the one before it ends (the first
+  at 0); crossfaded pairs keep their overlap, items anchored to a clip move with it, and other
+  tracks stay. Nothing to close is ``applied: false`` with no ops.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ PRESETS = {
     "end_card": "A card at the end",
     "duck_music": "Music at 15% under the voice",
     "crossfade_all": "Crossfade every cut",
+    "close_gaps": "Close the gaps between clips",
 }
 DEFAULT_SECONDS = {"fade_in_out": 0.3, "title_card": 2.5, "end_card": 2.5, "crossfade_all": 0.3}
 
@@ -87,6 +91,19 @@ def compile_preset(doc: dict, name: str, args: dict) -> list[dict]:
             for it in tr["items"]
             if it["type"] == "clip"
         ]
+    if name == "close_gaps":
+        # In time order, each clip moves left by the gaps before it; moving left in that order
+        # never overlaps a clip that hasn't moved yet. A crossfaded clip starts inside the one
+        # before it, so it never opens a gap and keeps its overlap.
+        shift, cursor, out = 0, 0, []
+        for it in _v1_clips(doc, spans):
+            s0, e0 = spans[it["id"]]
+            if "at" in it and s0 - shift > cursor:
+                shift += s0 - shift - cursor
+            if shift and "at" in it:
+                out.append({"op": "move_clip", "id": it["id"], "at": it["at"] - shift})
+            cursor = max(cursor, e0 - shift)
+        return out
     # crossfade_all: every touching pair without one, the later clips pulled in by d each time
     clips = _v1_clips(doc, spans)
     v1 = next(tr for tr in doc["tracks"] if tr["id"] == T.MAIN_TRACK)

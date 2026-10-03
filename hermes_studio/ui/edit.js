@@ -254,7 +254,7 @@
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split" title="Split at the playhead (S)">Split</button><button class="ed-btn" id="ed-del">Delete</button>
         <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><label class="hint chk" title="Edges snap to cuts, markers and the playhead; hold Shift to drag freely"><input type="checkbox" id="ed-snapon" checked /> snap</label><button class="ed-btn" id="ed-text" title="Text at the playhead">+ Text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">+ Marker</button>
         <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets</option><option value="title_card">Title card</option>
-          <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option>
+          <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option><option value="close_gaps">Close the gaps</option>
           <option value="duck_music">Duck the music</option></select>
         <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" style="width:110px;flex:none" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>

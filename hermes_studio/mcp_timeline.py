@@ -336,9 +336,13 @@ TOOLS: list[dict] = [
         "Apply a preset",
         "A named edit as ONE history entry (one undo): fade_in_out (every clip; seconds, default 0.3), title_card / "
         "end_card (text; seconds, default 2.5), duck_music (music clips at 15%), crossfade_all (every touching cut; "
-        "seconds, default 0.3). Needs base_version and client_op_id; preview:true returns the ops only.",
+        "seconds, default 0.3), close_gaps (V1 clips close up from 0; crossfades kept). Needs base_version and client_op_id; "
+        "preview:true returns the ops only.",
         {
-            "preset": {"type": "string", "enum": ["fade_in_out", "title_card", "end_card", "duck_music", "crossfade_all"]},
+            "preset": {
+                "type": "string",
+                "enum": ["fade_in_out", "title_card", "end_card", "duck_music", "crossfade_all", "close_gaps"],
+            },
             "base_version": {"type": "integer"},
             "client_op_id": _S,
             "summary": _S,

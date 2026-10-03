@@ -138,3 +138,50 @@ def test_presets_obey_the_mode_gate(tmp_path, monkeypatch):
         assert st == 200 and r["applied"], r  # a person's preset applies at once
     finally:
         a.close()
+
+
+def test_close_gaps(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    d = doc0()
+    v1 = d["tracks"][1]["items"]
+    v1[0]["at"], v1[1]["at"], v1[2]["at"] = 2 * S, 9 * S, 13 * S  # gaps: 0-2, 6-9, none
+    d["tracks"][0]["items"] = [
+        {
+            "id": "x1",
+            "type": "text",
+            "text": "Hi",
+            "style": "pop",
+            "dur": S,
+            "anchor": {"to": "c1", "offset": S},
+            "fade_in": 0,
+            "fade_out": 0,
+        },
+    ]
+    a = App(d)
+    try:
+        h0 = a.head()
+        ok, r = preset(a, "close_gaps")
+        assert ok and r["applied"], r
+        sp = T.resolve(a.proj.log.doc)
+        assert [sp[c] for c in ("c0", "c1", "c2")] == [(0, 4 * S), (4 * S, 8 * S), (8 * S, 12 * S)]
+        assert sp["x1"] == (5 * S, 6 * S) and sp["mu"] == (0, 12 * S)  # anchored text rides on c1; music stays
+        ok, again = preset(a, "close_gaps")
+        assert ok and not again["applied"] and again["ops"] == []
+        ok, u = a.mcp("history_undo", {"project_id": "p1", "client_op_id": "u", "op_id": r["op_id"]})
+        assert ok and a.head()["hash"] == h0["hash"]
+    finally:
+        a.close()
+
+
+def test_close_gaps_keeps_crossfades(app):
+    ok, _ = preset(app, "crossfade_all")
+    assert ok
+    at = {it["id"]: it["at"] for it in app.proj.log.doc["tracks"][1]["items"] if it["type"] == "clip"}
+    ok, r = app.mcp_apply(*({"op": "move_clip", "id": c, "at": at[c] + S} for c in ("c2", "c1", "c0")))  # a 1 s gap first
+    assert ok, r
+    before = T.resolve(app.proj.log.doc)
+    ok, r = preset(app, "close_gaps")
+    assert ok and r["applied"] and len(r.get("changed_ids", [])) >= 1, r
+    after = T.resolve(app.proj.log.doc)
+    assert all(after[c] == (before[c][0] - S, before[c][1] - S) for c in ("c0", "c1", "c2"))
+    assert sum(1 for it in app.proj.log.doc["tracks"][1]["items"] if it["type"] == "transition") == 2
