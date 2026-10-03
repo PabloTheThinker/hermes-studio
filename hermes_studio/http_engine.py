@@ -48,6 +48,7 @@ WRITE_ROUTES = (
     "history_redo",
     "import_media",
     "render_timeline",
+    "render_cancel",
     "transcript_cut",
     "approval_resolve",
     "set_mode",
@@ -395,6 +396,12 @@ def rest_post(h: Any, segs: list[str]) -> None:
             from hermes_studio import render_jobs as RJ
 
             return _json(h, 200, RJ.render_timeline(proj, body, ENGINE.renders))
+        if parts[1] == "render_cancel":
+            if "render" not in tok.scopes:
+                return _error(h, _denied("render"))
+            from hermes_studio import render_jobs as RJ
+
+            return _json(h, 200, RJ.render_cancel(proj, body, ENGINE.renders))
         if parts[1] in ("approval_resolve", "set_mode"):
             from hermes_studio import gate as G
 

@@ -288,3 +288,33 @@ def test_captions_use_the_clip_styles(app, tmp_path):
     assert without > 0.95 and with_cap < without - 0.01, (with_cap, without)
     ok, s2 = app.mcp("render_status", {"project_id": "p1", "render_id": r["render_id"]})
     assert ok and s2["state"] == "ready"
+
+
+def test_render_cancel_queued_and_running(app, tmp_path):
+    src = make_video(tmp_path / "v.mp4", seconds=16, size="320x180")
+    build_c11(app, src)
+    ok, a = app.mcp("render_timeline", {"project_id": "p1", "width": 180, "height": 320})
+    ok2, b = app.mcp("render_timeline", {"project_id": "p1", "width": 270, "height": 480})  # waits behind a
+    assert ok and ok2 and b["state"] == "queued"
+    ok, cb = app.mcp("render_cancel", {"project_id": "p1", "render_id": b["render_id"]})
+    assert ok and cb["cancelling"], cb
+    st, _, ca = app.req("POST", "/api/projects/p1/render_cancel", {"render_id": a["render_id"]}, app.ui)
+    assert st == 200 and ca["render_id"] == a["render_id"]
+
+    def settled(rid: str) -> dict:
+        end = time.monotonic() + 60
+        while time.monotonic() < end:
+            ok, s = app.mcp("render_status", {"project_id": "p1", "render_id": rid})
+            if s["state"] not in ("queued", "running"):
+                return s
+            time.sleep(0.1)
+        raise AssertionError(rid)
+
+    assert settled(b["render_id"])["state"] == "cancelled"
+    assert settled(a["render_id"])["state"] in ("cancelled", "ready")  # it may have finished first
+    ok, again = app.mcp("render_cancel", {"project_id": "p1", "render_id": b["render_id"]})
+    assert ok and not again["cancelling"] and again["state"] == "cancelled"
+    ok, fresh = app.mcp("render_timeline", {"project_id": "p1", "width": 270, "height": 480})
+    assert ok and not fresh["reused"] and settled(b["render_id"])["state"] == "ready"  # a cancelled render starts afresh
+    ok, e = app.mcp("render_cancel", {"project_id": "p1", "render_id": "v000099-180x320"})
+    assert not ok and e["code"] == "not_found"

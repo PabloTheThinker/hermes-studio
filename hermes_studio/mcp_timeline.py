@@ -42,7 +42,7 @@ READ_TOOLS = (
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
 MEDIA_TOOLS = ("import_media", "media_status", "get_transcript", "get_scenes")  # S4 (+ scenes)
 FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
-RENDER_TOOLS = ("render_timeline", "render_status")  # S6
+RENDER_TOOLS = ("render_timeline", "render_status", "render_cancel")  # S6
 CUT_TOOLS = ("transcript_cut",)  # S7
 GATE_TOOLS = ("approval_list", "approval_status", "approval_resolve", "set_mode")  # S8
 PROJECT_TOOLS = ("project_list", "project_new")  # the Edit page; they take no project_id
@@ -280,6 +280,14 @@ TOOLS: list[dict] = [
         "seconds, bytes, error}. Works with the app closed.",
         {"render_id": _S},
         _RO,
+    ),
+    _tool(
+        "render_cancel",
+        "Stop a render",
+        "Stop a queued or running render: its status, with cancelling (whether it was live). The state turns cancelled "
+        "when the worker lets go (a render.cancelled event). Rendering the same version again starts afresh.",
+        {"render_id": _S},
+        _W,
     ),
     _tool(
         "transcript_cut",
@@ -653,13 +661,14 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         "approval_resolve",
         "set_mode",
     )
-    _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
+    renders = name in FRAME_TOOLS or name in ("render_timeline", "render_cancel")
+    _need_scope(backend, "write" if writes else "render" if renders else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "timeline_outline", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
     if name in ("media_status", "get_transcript", "get_scenes"):
         _no_unknown(args, {"project_id", "media_id"})
-    if name == "render_status":
+    if name in ("render_status", "render_cancel"):
         _no_unknown(args, {"project_id", "render_id"})
     try:
         proj = backend.project(pid) if isinstance(pid, str) else None
@@ -717,6 +726,8 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
             return RJ.render_status(proj, rest, backend.engine.renders if isinstance(backend, EngineBackend) else None)
         if not backend.writable:
             raise P.offline()
+        if name == "render_cancel":
+            return RJ.render_cancel(proj, rest, backend.engine.renders)
         return RJ.render_timeline(proj, rest, backend.engine.renders)
     if name in FRAME_TOOLS:
         from hermes_studio import frame_tools as FT

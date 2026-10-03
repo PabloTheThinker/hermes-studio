@@ -47,6 +47,14 @@ class RenderJobs:
         with self.lock:
             return (pid, rid) in self.live
 
+    def cancel(self, pid: str, rid: str) -> bool:
+        """Stop one render (queued or running); False when it isn't live."""
+        with self.lock:
+            if (pid, rid) not in self.live:
+                return False
+            self.cancelled.add((pid, rid))
+            return True
+
     def cancel_project(self, pid: str) -> None:
         with self.lock:
             self.cancelled |= {k for k in self.live if k[0] == pid}
@@ -102,6 +110,11 @@ class RenderJobs:
                 M._write_json(status, st)
                 send({"type": "render.progress", "progress": st["progress"]})
 
+        if cancel():  # cancelled while it waited in the queue
+            st.update(state="cancelled", error=None)
+            M._write_json(status, st)
+            send({"type": "render.cancelled"})
+            return
         st["state"] = "running"
         M._write_json(status, st)
         t0 = time.monotonic()
@@ -110,6 +123,7 @@ class RenderJobs:
         except Exception as e:  # noqa: BLE001 - a failed render is a status, never a dead worker
             if cancel():
                 st.update(state="cancelled", error=None)
+                send({"type": "render.cancelled"})
             else:
                 st.update(state="failed", error=f"{e}"[-600:])
                 send({"type": "render.failed", "error": st["error"]})
@@ -177,6 +191,13 @@ def render_timeline(proj: Any, args: Any, jobs: RenderJobs) -> dict:
     if st is not None and st["state"] in ("queued", "running", "ready"):
         return {**st, "reused": True}
     return {**jobs.submit(proj, rid, doc, (size[0], size[1]), words, cstyle), "reused": False}
+
+
+def render_cancel(proj: Any, args: Any, jobs: RenderJobs) -> dict:
+    """``{render_id}``: stop a queued or running render. Its status says ``cancelled`` once the
+    worker lets go (a ``render.cancelled`` event); ``cancelling`` says whether it was live."""
+    st = render_status(proj, args, jobs)
+    return {**st, "cancelling": jobs.cancel(proj.id, st["render_id"])}
 
 
 def render_status(proj: Any, args: Any, jobs: RenderJobs | None) -> dict:

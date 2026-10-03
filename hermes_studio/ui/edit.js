@@ -401,7 +401,7 @@
       if (t === "media.ready") { mediaStatus().then(() => { pane(); seek(E.t, true); }); return; }
       if (E.tab === "media") pane();
     } else if (t.startsWith("render.")) {
-      E.render = Object.assign(E.render || {}, { state: t === "render.ready" ? "ready" : t === "render.failed" ? "failed" : "running", progress: ev.progress, render_id: ev.render_id, error: ev.error });
+      E.render = Object.assign(E.render || {}, { state: t === "render.ready" ? "ready" : t === "render.failed" ? "failed" : t === "render.cancelled" ? "cancelled" : "running", progress: ev.progress, render_id: ev.render_id, error: ev.error });
       renderStatus();
     }
   }
@@ -1308,7 +1308,12 @@
           a.href = url; a.download = st.path.split("/").pop(); a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
         } catch (err) { fail(err); }
       };
-    } else el.textContent = r.state === "failed" ? "Render failed: " + (r.error || "") : `Rendering ${Math.round((r.progress || 0) * 100)}%`;
+    } else if (r.state === "failed") el.textContent = "Render failed: " + (r.error || "");
+    else if (r.state === "cancelled") el.textContent = "Render stopped";
+    else {
+      el.innerHTML = `Rendering ${Math.round((r.progress || 0) * 100)}% · <a href="#" id="ed-rstop">Stop</a>`;
+      document.getElementById("ed-rstop").onclick = async (e) => { e.preventDefault(); try { await P("render_cancel", { render_id: r.render_id }); } catch (err) { fail(err); } };
+    }
   }
 
   function leave() {
