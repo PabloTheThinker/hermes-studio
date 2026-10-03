@@ -536,7 +536,8 @@ def item_duration(item: dict) -> int:
     if item["type"] in ("text", "transition"):
         return item["dur"]
     sp = item.get("props", {}).get("speed", [1, 1])
-    return int(Fraction(item["src"][1] - item["src"][0]) * Fraction(sp[1], sp[0]))
+    n, d = (item["src"][1] - item["src"][0]) * sp[1], sp[0]  # int(Fraction(n, d)): truncates toward 0
+    return n // d if (n >= 0) == (d > 0) else -(-n // d)
 
 
 def _check_relations(c: _Checker, doc: dict, items: dict[str, dict]) -> None:

@@ -58,3 +58,13 @@ def test_load_validates_the_final_doc(tmp_path, monkeypatch):
     monkeypatch.setattr(T, "validate", lambda d: real(d) or [{"rule": "x", "path": "/", "message": "made up"}])
     with pytest.raises(ValueError, match="not valid: made up"):
         O.Oplog.load(base(), p)
+
+
+def test_item_duration_matches_the_fraction_rule():
+    from fractions import Fraction
+
+    rng = random.Random(7)
+    for _ in range(20000):
+        a, sp = rng.randrange(1, 10**15), [rng.randrange(1, 9), rng.randrange(1, 9)]
+        it = {"type": "clip", "src": [0, a], "props": {"speed": sp}}
+        assert T.item_duration(it) == int(Fraction(a) * Fraction(sp[1], sp[0]))
