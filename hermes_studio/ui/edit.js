@@ -1084,7 +1084,9 @@
     el.innerHTML = `<div class="mrow"><div class="nm">${esc(m.id)} · marker</div><div class="meta">${tc(m.at)}</div></div>
       <label class="f" style="margin-top:.8rem">Name</label><input type="text" id="mk-label" value="${esc(m.label)}" />
       <label class="f" style="margin-top:.8rem">At (s)</label><input type="text" id="mk-at" value="${sec(m.at).toFixed(3)}" />
-      <p style="margin-top:.8rem;display:flex;gap:.4rem"><button class="ed-btn amber" id="mk-save">Save</button><button class="ed-btn" id="mk-here">Move to playhead</button><button class="ed-btn" id="mk-del">Delete</button></p>`;
+      <p style="margin-top:.8rem;display:flex;gap:.4rem"><button class="ed-btn amber" id="mk-save">Save</button><button class="ed-btn" id="mk-here">Move to playhead</button><button class="ed-btn" id="mk-del">Delete</button></p>
+      <p style="margin-top:.4rem"><button class="ed-btn" id="mk-chap" title="Every marker as a 'M:SS label' line from 0:00, for a video description">Copy all as chapters</button></p>
+      <pre class="pv" id="mk-chap-out" hidden></pre>`;
     const $ = (id) => document.getElementById(id);
     $("mk-save").onclick = () => {
       const label = $("mk-label").value.normalize("NFC"), s = parseFloat($("mk-at").value);
@@ -1094,6 +1096,13 @@
       if (Object.keys(op).length > 2) write([op], `Edit marker ${m.label || m.id}`);
     };
     $("mk-here").onclick = () => { const at = snapT(E.t); if (at !== m.at) write([{ op: "edit_marker", id: m.id, at }], `Move marker ${m.label || m.id}`); };
+    $("mk-chap").onclick = async () => {
+      try {
+        const o = await P("timeline_outline"), box = $("mk-chap-out");
+        box.hidden = false; box.textContent = o.chapters;
+        try { await navigator.clipboard.writeText(o.chapters); toast("Chapters copied", true); } catch { toast("Select the chapters below to copy them.", true); }
+      } catch (e) { fail(e); }
+    };
     $("mk-del").onclick = () => { selOnly(null); write([{ op: "remove_marker", id: m.id }], "Delete marker"); };
   }
   function itemPane(el) {

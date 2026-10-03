@@ -45,6 +45,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `docs/editor-readme` | README's Edit section catches up | — | README |
 | `fix/editor-review` | fixes from an independent review of the stack: Render right after Stop is a new job (per-job cancel; a stopped job can't write the status); deleting a crossfade with its clip under ripple; Shift is free-drag only (Ctrl-click selects); show-render path check in a pure `desktop/paths.js` (refuses `..`, drives, links out); held-key nudges are relative when they run (never overwrite a newer edit); `roll_edit` docstring says anchored items ride the next clip | `test_s6_render.py` stop-then-render, `test_desktop_paths.py` (Node), `check-edit-page.js` crossfade+clip delete | EDIT-PAGE-SPEC |
 | `feat/agents-transcript-window` | `get_transcript` `from_s`/`to_s` window and `format: "text"` (lines of `[start_s] words`, about a fifth the size); REST query params too | `tests/test_transcript_window.py` | `media_jobs.get_transcript` docstring, AGENTS.md |
+| `feat/editor-chapters` | markers as video chapters: `timeline_outline.chapters` and the marker pane's **Copy all as chapters** | `test_outline.py` chapters test; `check-edit-page.js` chapters check | `outline.py` docstring, EDIT-PAGE-SPEC |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

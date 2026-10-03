@@ -67,6 +67,29 @@ def _line(r: dict) -> str:
     return f"{r['id']} {when} {what}{ride}"
 
 
+def _clock(sec: float) -> str:
+    s = int(sec)
+    h, m = divmod(s // 60, 60)
+    return f"{h}:{m:02d}:{s % 60:02d}" if h else f"{m}:{s % 60:02d}"
+
+
+def chapters(markers: list[dict], length_s: float) -> str:
+    """Markers as video chapters, one ``M:SS label`` line each (``H:MM:SS`` past an hour), in
+    time order. The list starts at 0:00 (an ``Intro`` line is added when no marker is there, as
+    video sites want), markers past the end are left out, and so is a marker on the same second
+    as the one before it."""
+    rows, seen = [], set()
+    for m in sorted(markers, key=lambda m: (m["at_s"], m["id"])):
+        sec = int(m["at_s"])
+        if m["at_s"] > length_s or sec in seen:
+            continue
+        seen.add(sec)
+        rows.append((sec, (m["label"] or "Chapter").strip() or "Chapter"))
+    if not rows or rows[0][0] != 0:
+        rows.insert(0, (0, "Intro"))
+    return "\n".join(f"{_clock(sec)} {label}" for sec, label in rows)
+
+
 def outline(doc: dict) -> dict:
     spans = T.resolve(doc)
     length = max((e for _, e in spans.values()), default=0)
@@ -105,5 +128,6 @@ def outline(doc: dict) -> dict:
         "length_s": _s(length),
         "tracks": tracks,
         "markers": markers,
+        "chapters": chapters(markers, _s(length)) if markers else "",
         "text": "\n".join(lines),
     }

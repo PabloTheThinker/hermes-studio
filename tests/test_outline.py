@@ -72,3 +72,26 @@ def test_outline_over_mcp_and_rest(app):
     assert ok and o == outline(app.proj.log.doc) and o["hash"] == app.head()["hash"]
     st, _, r = app.req("GET", "/api/projects/p1/outline", token=app.agent)
     assert st == 200 and r == o
+
+
+def test_chapters_from_markers():
+    from hermes_studio.outline import chapters
+
+    mk = [
+        {"id": "a", "at_s": 75.4, "label": "Second part"},
+        {"id": "b", "at_s": 12.0, "label": "The idea"},
+        {"id": "c", "at_s": 12.6, "label": "dup second"},  # same second as b: left out
+        {"id": "d", "at_s": 3725.0, "label": "Late"},
+        {"id": "e", "at_s": 9999.0, "label": "past the end"},
+        {"id": "f", "at_s": 30.0, "label": "  "},
+    ]
+    assert chapters(mk, 4000.0).splitlines() == [
+        "0:00 Intro",
+        "0:12 The idea",
+        "0:30 Chapter",
+        "1:15 Second part",
+        "1:02:05 Late",
+    ]
+    assert chapters([{"id": "z", "at_s": 0.2, "label": "Start"}], 10).splitlines() == ["0:00 Start"]
+    o = outline(O.Oplog(base()).doc)
+    assert o["chapters"] == "0:00 Intro\n0:02 here"

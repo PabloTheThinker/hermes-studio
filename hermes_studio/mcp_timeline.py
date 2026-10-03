@@ -101,8 +101,8 @@ TOOLS: list[dict] = [
         "Outline the timeline",
         "The timeline in seconds and plain words, cheaper to read than get_timeline: each track's items in time order "
         "{id, type, start_s, end_s, media + src_s or text + style, speed, volume, fades, rides_on}, crossfades, the main "
-        "track's gaps_s, markers, length_s, and `text`, the same as a few lines. Write with the ids it gives; for exact "
-        "ticks use get_timeline.",
+        "track's gaps_s, markers, length_s, chapters (the markers as 'M:SS label' lines from 0:00, for a video "
+        "description) and `text`, the same as a few lines. Write with the ids it gives; for exact ticks use get_timeline.",
         {},
         _RO,
     ),
