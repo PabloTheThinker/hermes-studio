@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("studio", {
   uiToken: () => ipcRenderer.invoke("ui-token"),
   // The Edit page's Browse button (a file dialog) and drag-and-drop (a dropped file's path).
   pickFile: () => ipcRenderer.invoke("pick-file"),
+  // "Show in folder" for a finished render (main only shows an .mp4 in a project's exports).
+  showRender: (projectId, rel) => ipcRenderer.invoke("show-render", projectId, rel),
   pathOf: (file) => {
     try {
       return webUtils.getPathForFile(file) || null;

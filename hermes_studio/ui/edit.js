@@ -1198,7 +1198,12 @@
     const el = document.getElementById("ed-render-st"); if (!el || !E.render) return;
     const r = E.render;
     if (r.state === "ready") {
-      el.innerHTML = `<a href="#" id="ed-dl">Download ${esc(r.render_id || "")}</a>`;
+      const app = window.studio && typeof window.studio.showRender === "function";
+      el.innerHTML = `<a href="#" id="ed-dl">Download ${esc(r.render_id || "")}</a>${app ? ` · <a href="#" id="ed-show">Show in folder</a>` : ""}`;
+      if (app) document.getElementById("ed-show").onclick = async (e) => {
+        e.preventDefault();
+        try { const st = await P("render_status", { render_id: r.render_id }); if (!(await window.studio.showRender(E.pid, st.path))) toast("That file isn't in this project's exports."); } catch (err) { fail(err); }
+      };
       document.getElementById("ed-dl").onclick = async (e) => {
         e.preventDefault();
         try {

@@ -8,6 +8,7 @@ const http = require("http");
 const net = require("net");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 
@@ -160,6 +161,22 @@ function fromDesk(event) {
 ipcMain.handle("ui-token", (event) => (uiToken && fromDesk(event) ? uiToken : null));
 // The Edit page's Browse button: the system's file dialog, one video or audio file, its path.
 const MEDIA_EXT = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
+// The Edit page's "Show in folder" for a finished render: only an .mp4 inside a project's
+// exports folder (~/.hermes/clips/projects/<id>/exports/), after resolving links.
+// The page sends the project id and render_status's path (relative to the project).
+ipcMain.handle("show-render", (event, projectId, rel) => {
+  if (!fromDesk(event) || typeof projectId !== "string" || typeof rel !== "string") return false;
+  try {
+    const root = fs.realpathSync(path.join(os.homedir(), ".hermes", "clips", "projects"));
+    const real = fs.realpathSync(path.resolve(root, projectId, rel));
+    const parts = path.relative(root, real).split(path.sep);
+    if (parts.length !== 3 || parts[0] !== projectId || parts[1] !== "exports" || !real.endsWith(".mp4")) return false;
+    shell.showItemInFolder(real);
+    return true;
+  } catch {
+    return false;
+  }
+});
 ipcMain.handle("pick-file", async (event) => {
   if (!fromDesk(event)) return null;
   const r = await dialog.showOpenDialog(win, {

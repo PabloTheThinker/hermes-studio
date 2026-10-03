@@ -27,7 +27,7 @@ let PAGE = null;
   PAGE = page;
   const errs = []; page.on("pageerror", (e) => errs.push("pageerror: " + e.message)); page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text()); });
   await page.addInitScript((t) => {
-    window.studio = { uiToken: async () => t, retry: async () => {}, pickFile: async () => window.__pick, pathOf: () => null };
+    window.studio = { uiToken: async () => t, retry: async () => {}, pickFile: async () => window.__pick, pathOf: () => null, showRender: async (pid, f) => { window.__shown = pid + "/" + f; return true; } };
     window.__toasts = []; // every toast, for the failure report
     new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("toast")) window.__toasts.push(n.textContent); }))).observe(document, { childList: true, subtree: true });
   }, TOKEN);
@@ -219,6 +219,9 @@ let PAGE = null;
   await page.click("#ed-render");
   await page.waitForSelector("#ed-dl", { timeout: 240000 });
   const rendered = await page.textContent("#ed-dl");
+  await page.click("#ed-show");
+  const shown = await page.waitForFunction(() => window.__shown, null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
+  if (!shown || !/^p-[0-9a-f]+\/exports\/[^/]+-540x960\.mp4$/.test(shown)) errs.push("show in folder: asked for " + shown);
   if (!/540x960$/.test(rendered)) errs.push("render: " + rendered + ", want a 540x960 render without captions");
   await page.screenshot({ path: path.join(OUT, "10-rendered.png") });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
