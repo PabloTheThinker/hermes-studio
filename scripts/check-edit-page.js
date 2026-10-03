@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, multi-selects, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -173,6 +173,33 @@ let PAGE = null;
   const aud = await page.evaluate(() => window.HSEdit._audioPlan(705600000));
   const mus = aud.find((a) => a.track !== "V1" && Math.abs(a.at - 1) < 1e-6);
   if (!mus || Math.abs(mus.volume - 0.25) > 1e-9) errs.push("preview audio: " + JSON.stringify(aud));
+  // multi-select: Ctrl-click two clips, Alt+Right moves both a frame in one entry, Delete removes both in one, undo brings them back
+  await page.waitForSelector('[data-trk="A2"] .it.clip', { timeout: 15000 }); // the music clip is drawn
+  const nC = await page.evaluate(() => document.querySelectorAll(".it.clip").length);
+  await page.click(".it.clip >> nth=0", { position: { x: 30, y: 8 } });
+  await page.click(".it.clip >> nth=2", { position: { x: 30, y: 8 }, modifiers: ["Control"] });
+  if ((await page.evaluate(() => document.querySelectorAll(".it.sel").length)) !== 2) errs.push("multi-select: Ctrl-click didn't add the second clip");
+  let vs = await ver(); await page.keyboard.press("Delete");
+  await page.waitForFunction((n) => document.querySelectorAll(".it.clip").length === n - 2, nC, { timeout: 15000 });
+  if ((await ver()) !== vs + 1) errs.push(`multi-delete: ${await ver() - vs} entries, want 1`);
+  await page.keyboard.press("Control+z");
+  await page.waitForFunction((n) => document.querySelectorAll(".it.clip").length === n, nC, { timeout: 15000 });
+  // the two text items, Ctrl-clicked, nudge together: both 2 px right in one entry
+  await page.evaluate(() => (document.getElementById("ed-scroll").scrollLeft = 0));
+  const tx0 = await page.evaluate(() => [...document.querySelectorAll(".it.text")].map((n) => parseFloat(n.style.left)));
+  const tb = await Promise.all([0, 1].map((i) => page.locator(".it.text").nth(i).boundingBox())); // they overlap: click where each shows
+  const [tl, tr] = tb[0].x <= tb[1].x ? [0, 1] : [1, 0];
+  await page.mouse.click(tb[tl].x + 6, tb[tl].y + 8);
+  await page.keyboard.down("Control"); await page.mouse.click(tb[tr].x + tb[tr].width - 6, tb[tr].y + 8); await page.keyboard.up("Control");
+  vs = await ver(); await page.keyboard.press("Alt+ArrowRight");
+  await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v, vs, { timeout: 15000 });
+  await page.waitForFunction((t) => [...document.querySelectorAll(".it.text")].every((n, i) => Math.abs(parseFloat(n.style.left) - t[i] - 2) < 0.1), tx0, { timeout: 15000 })
+    .catch(() => errs.push("group nudge: the text items didn't both move 2 px"));
+  if ((await ver()) !== vs + 1) errs.push(`group nudge: ${await ver() - vs} entries, want 1`);
+  await page.keyboard.press("Control+a");
+  const nAll = await page.evaluate(() => [document.querySelectorAll(".it.sel").length, document.querySelectorAll(".it:not(.transition)").length]);
+  if (nAll[0] !== nAll[1]) errs.push("select all: " + nAll);
+  await page.keyboard.press("Escape");
   // render at half size without captions; the download link names the size
   await page.selectOption("#ed-cstyle", ""); await page.selectOption("#ed-rsize", "2");
   await page.click("#ed-render");

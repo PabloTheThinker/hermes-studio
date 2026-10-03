@@ -233,7 +233,7 @@
     await needToken(root, async () => {
       document.getElementById("main").classList.add("edit-full");
       E = { pid, doc: null, spans: {}, t: 0, zoom: 60, sel: null, tab: "media", media: {}, words: [], wsel: null, records: [], pending: [],
-            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, follow: true };
+            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, follow: true, sels: new Set() };
       root.innerHTML = layout();
       bindStatic();
       try { await reload(); } catch (e) { fail(e); if (e.code === "not_found") { location.hash = "#/edit"; return; } }
@@ -289,6 +289,7 @@
     E.keys = (e) => {
       if (!E || /INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || "")) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && !e.shiftKey) { e.preventDefault(); selectAll(); }
       else if ((e.ctrlKey || e.metaKey) && ["c", "v", "d"].includes(e.key.toLowerCase()) && !e.shiftKey && !e.altKey) {
         const k = e.key.toLowerCase();
         if (k === "c" && (!E.sel || String(window.getSelection() || ""))) return; // plain text copy stays the browser's
@@ -312,6 +313,7 @@
         coalesce("slip:" + id, (e.code === "Comma" ? -1 : 1) * (e.shiftKey ? Math.round(E.doc.fps[0] / E.doc.fps[1]) : 1), (n) => slip(id, n));
       }
       else if (e.key === "?") keysHelp();
+      else if (e.key === "Escape") { selOnly(null); pane(); }
       else if (e.key === "\\") { e.preventDefault(); fit(); }
       else if (e.key.toLowerCase() === "s") split();
     };
@@ -325,7 +327,8 @@
     E.by = {}; doc.tracks.forEach((tr) => tr.items.forEach((it) => (E.by[it.id] = it)));
     document.getElementById("ed-screen").style.setProperty("--ar", `${doc.size[0]}/${doc.size[1]}`);
     document.getElementById("ed-ver").textContent = `v${doc.version}`;
-    if (E.sel && !E.by[E.sel] && !isMarker(E.sel)) E.sel = null;
+    E.sels = new Set([...E.sels].filter((id) => E.by[id] || isMarker(id)));
+    if (E.sel && !E.sels.has(E.sel)) E.sel = [...E.sels].pop() || null;
     await Promise.all([history(), approvals(), mediaStatus(), transcript()]);
     await mediaArt();
     if (E.followTo) { const ids = E.followTo; E.followTo = null; const ts = ids.map((i) => (E.spans[i] || [])[0]).filter((x) => x != null); if (ts.length) E.t = Math.min(...ts); }
@@ -438,7 +441,7 @@
     for (let s = 0; s <= sec(end); s += step) ruler += `<span style="left:${px(ticks(s))}px">${tc(ticks(s))}</span>`;
     const rows = E.doc.tracks.map((tr) => `<div class="trk" data-trk="${esc(tr.id)}"><span class="lab">${esc(tr.id)}</span>${tr.items.map((it) => {
       const [a, b] = E.spans[it.id]; const who = E.lastBy[it.id];
-      const cls = ["it", it.type, E.sel === it.id ? "sel" : "", who && who.kind === "agent" ? "agent" : who ? "mine" : ""].join(" ");
+      const cls = ["it", it.type, E.sels.has(it.id) ? "sel" : "", who && who.kind === "agent" ? "agent" : who ? "mine" : ""].join(" ");
       const tag = who && who.kind === "agent" ? `<span class="tag">${esc(who.id[0].toUpperCase())}${who.step != null ? " · step " + esc(who.step) : ""}</span>` : "";
       const label = it.type === "clip" ? `${esc(it.media)} ${tc(it.src[0])}` : it.type === "text" ? esc(it.text) : "xfade";
       const own = it.type !== "transition" && "at" in it;
@@ -448,7 +451,7 @@
       return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}${it.type === "text" ? " · double-click to edit" : ""}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${th}${wv}${hs}<span class="lbl">${tag}${label}</span></div>`;
     }).join("")}</div>`).join("");
     el.style.width = w + "px";
-    const mks = (E.doc.markers || []).map((m) => `<b class="mk${E.sel === m.id ? " sel" : ""}" data-mk="${esc(m.id)}" title="${esc(m.label || m.id)} · ${tc(m.at)} · drag to move, double-click to rename" style="left:${px(m.at)}px">${esc(m.label || "◆")}</b>`).join("");
+    const mks = (E.doc.markers || []).map((m) => `<b class="mk${E.sels.has(m.id) ? " sel" : ""}" data-mk="${esc(m.id)}" title="${esc(m.label || m.id)} · ${tc(m.at)} · drag to move, double-click to rename" style="left:${px(m.at)}px">${esc(m.label || "◆")}</b>`).join("");
     el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}${mks}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div><div class="snapl" id="ed-snap"></div>`;
     el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); E.follow = false; side(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
     el.querySelectorAll(".it").forEach((n) => dragItem(n));
@@ -496,6 +499,27 @@
     n.addEventListener("pointerup", () => setTimeout(release), { once: true }); // after the drop handler has read the node
     n.addEventListener("lostpointercapture", release, { once: true });
   }
+  /* selection: E.sel is the item or marker last clicked, E.sels everything selected (Ctrl- or
+     Shift-click adds or removes one, Ctrl+A takes every clip and text item, Esc clears) */
+  function selOnly(id) { E.sel = id; E.sels = new Set(id ? [id] : []); markSel(); }
+  function markSel() {
+    document.querySelectorAll(".it, .mk").forEach((x) => x.classList.toggle("sel", E.sels.has(x.dataset.id || x.dataset.mk)));
+  }
+  // A click on id: with Ctrl/Cmd/Shift it toggles id in the selection and returns true (no drag);
+  // otherwise id alone is selected (a drag moves one item; Alt+arrows move a group).
+  function pick(id, e) {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+      if (E.sels.has(id) && E.sels.size > 1) { E.sels.delete(id); E.sel = [...E.sels].pop(); }
+      else { E.sels.add(id); E.sel = id; }
+      markSel(); pane(); return true;
+    }
+    selOnly(id);
+    return false;
+  }
+  function selectAll() {
+    E.sels = new Set(E.doc.tracks.flatMap((tr) => tr.items.filter((it) => it.type !== "transition").map((it) => it.id)));
+    E.sel = [...E.sels].pop() || null; markSel(); E.tab = "item"; pane();
+  }
   // Snapping: while dragging, an edge within SNAP_PX of an edit point (another item's start or
   // end, a marker, the playhead) lands on it, and an amber line shows where. Shift drags free.
   const SNAP_PX = 8;
@@ -522,8 +546,7 @@
     n.onpointerdown = (e) => {
       e.stopPropagation();
       const m = (E.doc.markers || []).find((x) => x.id === id); if (!m) return;
-      E.sel = id;
-      document.querySelectorAll(".it.sel, .mk.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      if (pick(id, e)) return;
       E.tab = "item"; pane();
       const x0 = e.clientX, left0 = parseFloat(n.style.left); let moved = false;
       holdDrag(n, e);
@@ -578,6 +601,7 @@
   }
   function nudge(frames) {
     if (!E || !E.sel) return toast("Select an item or marker first.");
+    if (E.sels.size > 1) return nudgeMany(frames);
     const id = E.sel, m = (E.doc.markers || []).find((x) => x.id === id), it = E.by[id];
     if (!m && (!it || !("at" in it))) return toast("That item moves with its clip; nudge the clip instead.");
     const at0 = m ? m.at : it.at;
@@ -587,6 +611,21 @@
       if (m) return write([{ op: "edit_marker", id, at }], `Nudge marker ${m.label || id}`);
       return write([{ op: "move_clip", id, at }], `Nudge ${id}`);
     }, (n) => { const el = node(); if (el) el.style.left = px(Math.max(0, at0 + Math.round(n * frameT())) + (m ? 0 : E.spans[id][0] - at0)) + "px"; });
+  }
+  // The whole selection moves together (items with their own position, and markers); one entry.
+  function nudgeMany(frames) {
+    const ids = [...E.sels].sort(), mks = ids.filter(isMarker), its = ids.filter((id) => E.by[id] && "at" in E.by[id]);
+    if (its.length + mks.length < ids.length) return toast("Some of these move with their clip; select the clips instead.");
+    const at0 = Object.fromEntries(mks.map((id) => [id, E.doc.markers.find((m) => m.id === id).at]).concat(its.map((id) => [id, E.by[id].at])));
+    const lo = Math.min(...Object.values(at0));
+    const by = (n) => Math.max(-lo, Math.round(n * frameT())); // the earliest one stops at 0
+    coalesce("nudge:" + ids.join(","), frames, (n) => write(
+      mks.map((id) => ({ op: "edit_marker", id, at: at0[id] + by(n) })).concat(its.map((id) => ({ op: "move_clip", id, at: at0[id] + by(n) }))),
+      `Nudge ${ids.length} items`,
+    ), (n) => ids.forEach((id) => {
+      const el = document.querySelector(isMarker(id) ? `.mk[data-mk="${CSS.escape(id)}"]` : `.it[data-id="${CSS.escape(id)}"]`);
+      if (el) el.style.left = px(at0[id] + by(n)) + "px";
+    }));
   }
   // Zoom so the whole edit fits the timeline's width.
   function fit() {
@@ -602,14 +641,13 @@
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
-      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
+      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl / Shift click", "add or remove one from the selection"], ["Ctrl A", "select every clip and text item"], ["Esc", "clear the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
   function dragItem(n) {
     n.onpointerdown = (e) => {
       const id = n.dataset.id, it = E.by[id];
-      E.sel = id;
-      document.querySelectorAll(".it.sel, .mk.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      if (pick(id, e)) { e.stopPropagation(); return; }
       if (E.tab !== "item") { E.tab = "item"; } pane();
       if (!it || it.type === "transition") return;
       const edge = e.target.dataset ? e.target.dataset.edge : null;
@@ -893,9 +931,16 @@
       if (Object.keys(op).length > 2) write([op], `Edit marker ${m.label || m.id}`);
     };
     $("mk-here").onclick = () => { const at = snapT(E.t); if (at !== m.at) write([{ op: "edit_marker", id: m.id, at }], `Move marker ${m.label || m.id}`); };
-    $("mk-del").onclick = () => { E.sel = null; write([{ op: "remove_marker", id: m.id }], "Delete marker"); };
+    $("mk-del").onclick = () => { selOnly(null); write([{ op: "remove_marker", id: m.id }], "Delete marker"); };
   }
   function itemPane(el) {
+    if (E.sels.size > 1) {
+      el.innerHTML = `<div class="mrow"><div class="nm">${E.sels.size} selected</div><div class="meta">${[...E.sels].map(esc).join(" · ")}</div></div>
+        <p class="hint">Delete removes them all, and Alt+arrows nudge them together, each as one step. Ctrl-click adds or removes one; Esc clears.</p>
+        <p><button class="ed-btn" id="sel-del">Delete ${E.sels.size}</button></p>`;
+      document.getElementById("sel-del").onclick = del;
+      return;
+    }
     const mk = E.sel && (E.doc.markers || []).find((x) => x.id === E.sel);
     if (mk) return markerPane(el, mk);
     const it = E.sel && E.by[E.sel];
@@ -1046,10 +1091,22 @@
   }
   function del() {
     if (!E || !E.sel) return toast("Select an item first.");
-    if (isMarker(E.sel)) { const id = E.sel; E.sel = null; return write([{ op: "remove_marker", id }], "Delete marker"); }
+    if (E.sels.size > 1) return delMany([...E.sels]);
+    if (isMarker(E.sel)) { const id = E.sel; selOnly(null); return write([{ op: "remove_marker", id }], "Delete marker"); }
     const ripple = document.getElementById("ed-ripple").checked && E.by[E.sel] && E.by[E.sel].type !== "transition";
-    const id = E.sel; E.sel = null;
+    const id = E.sel; selOnly(null);
     write([{ op: "delete_clip", id, ripple }], `Delete ${id}`);
+  }
+  // Several at once, as one entry: markers, then crossfades, then items from the last to the first
+  // (so a ripple never moves an item still to be deleted).
+  function delMany(ids) {
+    const ripple = document.getElementById("ed-ripple").checked;
+    const its = ids.filter((id) => E.by[id]).map((id) => E.by[id]);
+    const ops = ids.filter(isMarker).map((id) => ({ op: "remove_marker", id }))
+      .concat(its.filter((it) => it.type === "transition").map((it) => ({ op: "delete_clip", id: it.id, ripple: false })))
+      .concat(its.filter((it) => it.type !== "transition").sort((a, b) => E.spans[b.id][0] - E.spans[a.id][0]).map((it) => ({ op: "delete_clip", id: it.id, ripple })));
+    selOnly(null);
+    write(ops, `Delete ${ids.length} items`);
   }
   /* copy / paste / duplicate: a page clipboard (this tab only) of one clip or text item */
   function copy() {

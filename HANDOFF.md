@@ -27,6 +27,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `fix/editor-slip-rules` | `slip_clip` / `roll_edit` refuse with the validator's own rule ids at the op path: `negative_time`, `src_out_of_media`, `empty_range` (were `out_of_range` / `bad_arg`) | `tests/test_slip_roll.py` | `docs/oplog.md` |
 | `feat/editor-nav` | Edit page: held-key nudges and slips land as one entry; Fit (\\) and Ctrl+wheel zoom; the view follows the playhead; page writes, undo and redo queue one at a time | `check-edit-page.js` held-nudge and Fit checks | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-render-options` | Edit page render: **no captions** and **half size** beside the style | `check-edit-page.js` renders 540×960 without captions (ffprobe: h264 540×960 + aac) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-multiselect` | Edit page multi-select (Ctrl/Shift-click, Ctrl+A, Esc); group Delete and Alt-arrow nudge, one entry each | `check-edit-page.js` multi-select step | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
