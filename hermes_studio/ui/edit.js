@@ -246,7 +246,8 @@
       <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
         <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)">Undo</button><button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
         <span class="sp"></span><span class="hint" id="ed-render-st"></span>
-        <select class="ed-btn" id="ed-cstyle" title="Caption style">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option>${x}</option>`).join("")}</select>
+        <select class="ed-btn" id="ed-cstyle" title="Captions in the render: a style, or none">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option value="${x}">captions: ${x}</option>`).join("")}<option value="">no captions</option></select>
+        <select class="ed-btn" id="ed-rsize" title="Render size"><option value="1">full size</option><option value="2">half size</option></select>
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
       <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
@@ -1083,7 +1084,11 @@
   }
   async function render() {
     try {
-      const r = await P("render_timeline", { caption_style: document.getElementById("ed-cstyle").value });
+      const cs = document.getElementById("ed-cstyle").value, k = +document.getElementById("ed-rsize").value;
+      const even = (v) => Math.max(16, Math.round(v / k / 2) * 2);
+      const args = cs ? { caption_style: cs } : { captions: false };
+      if (k !== 1) Object.assign(args, { width: even(E.doc.size[0]), height: even(E.doc.size[1]) });
+      const r = await P("render_timeline", args);
       E.render = r; renderStatus();
     } catch (e) { fail(e); }
   }
