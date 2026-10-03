@@ -89,13 +89,15 @@ def needs_approval(rec: dict) -> P.ToolError:
     )
 
 
-def _dry_run(log: O.Oplog, session: O.Session, tool: str, args: dict) -> None:
-    """The engine's own answers for this call (same actor), on a scratch copy: nothing is logged."""
+def _dry_run(log: O.Oplog, session: O.Session, tool: str, args: dict) -> tuple[dict, dict]:
+    """The engine's own answers for this call (same actor), on a scratch copy: nothing is logged.
+    Returns the result and the doc it would leave (``timeline_check`` shows both)."""
     shadow = copy.copy(log)
     shadow._entries, shadow._results, shadow._tools = list(log._entries), dict(log._results), dict(log._tools)
     shadow._retired, shadow._batch_ids, shadow._checkpoints = set(log._retired), set(), dict(log._checkpoints)
     shadow._path = None
-    shadow.call(session, tool, copy.deepcopy(args))
+    res = shadow.call(session, tool, copy.deepcopy(args))
+    return res, shadow.doc
 
 
 def refuse_in_ask(proj: Any, session: O.Session) -> None:

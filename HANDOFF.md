@@ -33,6 +33,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-browse` | desktop: Browse… (system file dialog via `pick-file` IPC, desk origin only) and drop-to-import (`webUtils.getPathForFile`) on the Edit page's Media tab | `check-edit-page.js` imports through Browse… with the dialog stubbed; the real Electron dialog and drop are not run here (no Electron in this container), so a person should try them in the app | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-show-render` | desktop: **Show in folder** for a finished render (`show-render` IPC; only an .mp4 directly in that project's `exports/`, checked on real paths) | `check-edit-page.js` with the IPC stubbed; the Electron side is not run here | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-shuttle` | Edit page J/K/L shuttle (to 4×; J steps back at 1×), one clock per play | `check-edit-page.js` 2× run and J step | `EDIT-PAGE-SPEC.md` |
+| `feat/agents-timeline-check` | read tool `timeline_check` (34 tools): timeline_apply's whole path on a scratch log; `{would_apply, version, changed_ids, length_s, outline}` or the same refusal; works in Ask mode; `gate._dry_run` now returns the result and doc | `tests/test_timeline_check.py` | `mcp_timeline.py` `_check` docstring, AGENTS.md |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

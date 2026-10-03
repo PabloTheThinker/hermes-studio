@@ -32,6 +32,7 @@ READ_TOOLS = (
     "get_hash",
     "list_markers",
     "timeline_outline",
+    "timeline_check",
     "export_otio",
     "validate_timeline",
     "history_list",
@@ -103,6 +104,16 @@ TOOLS: list[dict] = [
         "track's gaps_s, markers, length_s, and `text`, the same as a few lines. Write with the ids it gives; for exact "
         "ticks use get_timeline.",
         {},
+        _RO,
+    ),
+    _tool(
+        "timeline_check",
+        "Check edits without making them",
+        "Run ops exactly as timeline_apply would (same checks, same _s args, same errors and paths) on a scratch copy: "
+        "nothing is written, logged or parked, in any mode (Ask too). Returns {would_apply, version, changed_ids, "
+        "length_s, outline} (the outline of the result), or timeline_apply's own refusal. base_version defaults to "
+        "the current version.",
+        {"ops": {"type": "array", "items": {"type": "object"}}, "base_version": {"type": "integer"}},
         _RO,
     ),
     _tool(
@@ -714,6 +725,8 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         return FT.TOOLS[name](proj, {k: v for k, v in args.items() if k != "project_id"})
     if name in MEDIA_TOOLS:
         return _media(name, args, proj, backend)
+    if name == "timeline_check":
+        return _check(args, proj, getattr(backend, "session", None) or O.Session(O.Actor("agent", "check")))
     if writes:
         if not backend.writable:
             raise P.offline()
@@ -763,6 +776,44 @@ def _read(name: str, args: dict, proj: Any) -> dict:
 
         return outline(doc)
     return P.list_markers(doc)
+
+
+def _check(args: dict, proj: Any, session: O.Session) -> dict:
+    """``timeline_check``: timeline_apply's whole path (envelope, _s conversion, the engine) on a
+    scratch copy of the log, so the answer is exactly what the write would get, minus the write."""
+    import secrets
+
+    from hermes_studio import gate as G
+    from hermes_studio.outline import outline
+
+    _no_unknown(args, {"project_id", "ops", "base_version"})
+    with _locked(proj):
+        log = proj.oplog()
+        call = {k: args[k] for k in ("ops", "base_version") if k in args}
+        call.setdefault("base_version", log.version)
+        call.update(summary="check", client_op_id=f"check-{secrets.token_hex(6)}")
+        stripped, _ = O.strip_forged(call)
+        log.check_apply_envelope(stripped)
+        ops, used = convert_ops(call["ops"], stripped["ops"])
+        pre_ids = set(T._all_ids(log._doc))
+        try:
+            res, doc = G._dry_run(log, session, "timeline_apply", {**stripped, "ops": ops})
+        except O.OplogError as e:
+            raise repoint(e, args["ops"], pre_ids) from None
+        version = log.version
+    o = outline(doc)
+    out = {
+        "would_apply": True,
+        "version": version,
+        "changed_ids": res["changed_ids"],
+        "length_s": o["length_s"],
+        "outline": o["text"],
+    }
+    if res.get("warnings"):
+        out["warnings"] = res["warnings"]
+    if used:
+        out["used"] = used
+    return out
 
 
 def _write(name: str, args: dict, proj: P.Project, backend: EngineBackend) -> dict:
