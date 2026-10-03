@@ -238,7 +238,9 @@
     return `<div class="ed">
       <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
         <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)">Undo</button><button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-        <span class="sp"></span><span class="hint" id="ed-render-st"></span><button class="ed-btn amber" id="ed-render">Render MP4</button></div>
+        <span class="sp"></span><span class="hint" id="ed-render-st"></span>
+        <select class="ed-btn" id="ed-cstyle" title="Caption style">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option>${x}</option>`).join("")}</select>
+        <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
       <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
@@ -732,7 +734,7 @@
   }
   async function render() {
     try {
-      const r = await P("render_timeline", {});
+      const r = await P("render_timeline", { caption_style: document.getElementById("ed-cstyle").value });
       E.render = r; renderStatus();
     } catch (e) { fail(e); }
   }

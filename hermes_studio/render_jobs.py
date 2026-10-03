@@ -51,7 +51,7 @@ class RenderJobs:
         with self.lock:
             self.cancelled |= {k for k in self.live if k[0] == pid}
 
-    def submit(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None) -> dict:
+    def submit(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, style: str = "pop") -> dict:
         out, status = _paths(proj, rid)
         st = {
             "render_id": rid,
@@ -68,7 +68,7 @@ class RenderJobs:
         with self.lock:
             self.live.add((proj.id, rid))
             self.cancelled.discard((proj.id, rid))
-        self.q.put((proj, rid, doc, size, words, st))
+        self.q.put((proj, rid, doc, size, words, st, style))
         return st
 
     def _work(self) -> None:
@@ -82,7 +82,7 @@ class RenderJobs:
                 with self.lock:
                     self.live.discard((job[0].id, job[1]))
 
-    def _run(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, st: dict) -> None:
+    def _run(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, st: dict, style: str) -> None:
         out, status = _paths(proj, rid)
         out.parent.mkdir(exist_ok=True)
         last = [0.0]
@@ -106,7 +106,7 @@ class RenderJobs:
         M._write_json(status, st)
         t0 = time.monotonic()
         try:
-            res = R.render(doc, proj.dir, out, size=size, words=words, on_progress=progress, cancel=cancel)
+            res = R.render(doc, proj.dir, out, size=size, words=words, caption_style=style, on_progress=progress, cancel=cancel)
         except Exception as e:  # noqa: BLE001 - a failed render is a status, never a dead worker
             if cancel():
                 st.update(state="cancelled", error=None)
@@ -146,7 +146,7 @@ def render_timeline(proj: Any, args: Any, jobs: RenderJobs) -> dict:
     if not isinstance(args, dict):
         raise _bad("", "bad_arg", "arguments must be an object")
     for k in sorted(args, key=repr):
-        if k not in ("width", "height", "captions"):
+        if k not in ("width", "height", "captions", "caption_style"):
             raise _bad(f"/{k}", "unknown_arg", f"unknown argument '{k}'")
     with proj.mutex:
         doc = proj.oplog().doc
@@ -160,16 +160,23 @@ def render_timeline(proj: Any, args: Any, jobs: RenderJobs) -> dict:
     cap = args.get("captions", True)
     if not isinstance(cap, bool):
         raise _bad("/captions", "bad_arg", "'captions' must be true or false")
+    from hermes_studio.captions import STYLES
+
+    cstyle = args.get("caption_style", "pop")
+    if cstyle not in STYLES:
+        raise _bad("/caption_style", "bad_arg", "caption_style is one of " + ", ".join(STYLES))
     if R.timeline_end(doc) <= 0:
         raise _bad("", "bad_arg", "the timeline is empty: nothing to render")
     words = MJ.get_transcript(proj, {})["words"] if cap else None
     if words is not None and not words:
         words = None  # no words file: nothing to caption
-    rid = f"v{doc['version']:06d}-{size[0]}x{size[1]}" + ("-cap" if words is not None else "")
+    rid = f"v{doc['version']:06d}-{size[0]}x{size[1]}" + (
+        "" if words is None else "-cap" if cstyle == "pop" else f"-cap-{cstyle}"
+    )
     st = _read(proj, rid, jobs)
     if st is not None and st["state"] in ("queued", "running", "ready"):
         return {**st, "reused": True}
-    return {**jobs.submit(proj, rid, doc, (size[0], size[1]), words), "reused": False}
+    return {**jobs.submit(proj, rid, doc, (size[0], size[1]), words, cstyle), "reused": False}
 
 
 def render_status(proj: Any, args: Any, jobs: RenderJobs | None) -> dict:
@@ -181,7 +188,7 @@ def render_status(proj: Any, args: Any, jobs: RenderJobs | None) -> dict:
     rid = args.get("render_id")
     if not isinstance(rid, str):
         raise _bad("/render_id", "bad_arg" if "render_id" in args else "missing_arg", "'render_id' must be a render id")
-    if not re.fullmatch(r"v[0-9]{6}-[0-9]{2,4}x[0-9]{2,4}(-cap)?", rid):
+    if not re.fullmatch(r"v[0-9]{6}-[0-9]{2,4}x[0-9]{2,4}(-cap(-[a-z]{1,16})?)?", rid):
         raise O.OplogError("not_found", f"no render {rid!r}", rule="not_found", path="/render_id", id=rid)
     st = _read(proj, rid, jobs)
     if st is None:

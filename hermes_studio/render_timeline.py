@@ -127,18 +127,38 @@ def build_ass(doc: dict, w: int, h: int, a: int, b: int, words: list[dict] | Non
             out.append(
                 f"Dialogue: 1,{_ass_time(max(s, a) - a)},{_ass_time(min(e, b) - a)},{style},,0,0,0,,{fad}{_ass_text(it['text'])}"
             )
-    for wd in words or []:
-        s, e = wd["at"], wd["end"]
-        if e <= a or s >= b or e <= s:
-            continue
-        out.append(f"Dialogue: 0,{_ass_time(max(s, a) - a)},{_ass_time(min(e, b) - a)},cap,,0,0,0,,{_ass_text(wd['w'])}")
     return "\n".join(out) + "\n"
+
+
+def caption_ass(words: list[dict], w: int, h: int, a: int, b: int, style: str) -> str | None:
+    """The clip pipeline's own word-by-word captions (``captions.build_ass``) for the window
+    [a, b): the same look as Hermes clips. None when no word falls in the window."""
+    from hermes_studio.captions import build_ass as clip_ass
+    from hermes_studio.transcribe import Word
+
+    local = [
+        Word(wd["w"], float(Fraction(max(wd["at"], a) - a, T.TICK_RATE)), float(Fraction(min(wd["end"], b) - a, T.TICK_RATE)))
+        for wd in words
+        if wd["end"] > a and wd["at"] < b and wd["end"] > wd["at"]
+    ]
+    if not local:
+        return None
+    return clip_ass(local, 0.0, float(Fraction(b - a, T.TICK_RATE)), play_x=w, play_y=h, style=style, layout="fit")
 
 
 # --------------------------------------------------------------------------- the graph
 
 
-def plan(doc: dict, project_dir: Path, a: int, b: int, size: tuple[int, int], words: list[dict] | None, work: Path) -> dict:
+def plan(
+    doc: dict,
+    project_dir: Path,
+    a: int,
+    b: int,
+    size: tuple[int, int],
+    words: list[dict] | None,
+    work: Path,
+    caption_style: str = "pop",
+) -> dict:
     """The two FFmpeg passes for the window [a, b) of ``doc``: ``video`` and ``audio``, each
     ``(input args, filter_complex)``, plus ``info``. Audio is its own pass: one graph pulling
     video and audio from the same seeked inputs at different rates can stall FFmpeg."""
@@ -245,10 +265,18 @@ def plan(doc: dict, project_dir: Path, a: int, b: int, size: tuple[int, int], wo
                 lab = f"a{len(audio_labels) + 1}"
                 agraph.append(",".join(af) + f"[{lab}]")
                 audio_labels.append(lab)
-    ass = work / "overlay.ass"
-    ass.write_text(build_ass(doc, w, h, a, b, words), encoding="utf-8")
-    ass_arg = str(ass).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-    graph.append(f"[{last}]subtitles=filename='{ass_arg}',trim=duration={_s(dur)},format=yuv420p[outv]")
+
+    def sub(name: str, text: str) -> str:
+        f = work / name
+        f.write_text(text, encoding="utf-8")
+        arg = str(f).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        return f"subtitles=filename='{arg}'"
+
+    subs = [sub("overlay.ass", build_ass(doc, w, h, a, b, None))]
+    caps = caption_ass(words, w, h, a, b, caption_style) if words else None
+    if caps:
+        subs.append(sub("captions.ass", caps))
+    graph.append(f"[{last}]{','.join(subs)},trim=duration={_s(dur)},format=yuv420p[outv]")
     if audio_labels:
         mix = "".join(f"[{x}]" for x in audio_labels)
         agraph.append(f"{mix}amix=inputs={len(audio_labels)}:normalize=0:dropout_transition=0,apad,atrim=duration={_s(dur)}[ca]")
@@ -372,6 +400,7 @@ def render(
     *,
     size: tuple[int, int] | None = None,
     words: list[dict] | None = None,
+    caption_style: str = "pop",
     on_progress: Progress | None = None,
     cancel: Callable[[], bool] = lambda: False,
     segment_over: int = SEGMENT_OVER,
@@ -396,7 +425,7 @@ def render(
             seg_dir.mkdir(exist_ok=True)
             target = out if len(wins) == 1 else seg_dir / "part.mp4"
             tmp = target.with_name(f".{target.stem}.tmp.mp4")
-            passes = plan(doc, project_dir, a, b, size, words, seg_dir)
+            passes = plan(doc, project_dir, a, b, size, words, seg_dir, caption_style)
             clips += passes["info"]["clips"]
 
             def prog(f: float, a=a, b=b, done=done) -> None:

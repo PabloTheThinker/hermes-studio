@@ -222,10 +222,11 @@ TOOLS: list[dict] = [
         "Render the video",
         "Render the current version to an MP4 (H.264 + AAC) in the project's exports/ folder, in the background: "
         "{render_id, state, progress, path, version}. width/height default to the timeline's size (even, 16-3840). "
-        "captions (default true) burns in the words from get_transcript when there are any. The same version, size and "
+        "captions (default true) burns in the words from get_transcript when there are any, word by word in the clip "
+        "styles (caption_style: pop, impact, clean, glow, neon, boxed; default pop). The same version, size and "
         "captions return the existing render. Poll render_status or watch render.progress / render.ready events. "
         "Needs the app running and the render scope. Never uploads or posts.",
-        {"width": {"type": "integer"}, "height": {"type": "integer"}, "captions": {"type": "boolean"}},
+        {"width": {"type": "integer"}, "height": {"type": "integer"}, "captions": {"type": "boolean"}, "caption_style": _S},
         {**_W, "idempotentHint": True},
     ),
     _tool(

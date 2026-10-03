@@ -269,3 +269,22 @@ def test_rest_render_status_and_file(app, tmp_path):
     nr = app.eng.tokens.mint("mcp:nr", scopes={"read", "write"})
     st, _, e = app.req("POST", "/api/projects/p1/render_timeline", {}, nr)
     assert st == 403
+
+
+def test_captions_use_the_clip_styles(app, tmp_path):
+    src = make_video(tmp_path / "talk.mp4", seconds=16, size="320x180")
+    build_c11(app, src)
+    ok, e = app.mcp("render_timeline", {"project_id": "p1", "caption_style": "comic"})
+    assert not ok and (e["rule"], e["path"]) == ("bad_arg", "/caption_style")
+    ok, r = app.mcp("render_timeline", {"project_id": "p1", "width": 360, "height": 640, "caption_style": "impact"})
+    assert ok and r["render_id"].endswith("-360x640-cap-impact"), r
+    st = wait_render(app, r["render_id"])
+    assert st["state"] == "ready", st
+    out = app.proj.dir / st["path"]
+    cover = "scale=360:640:force_original_aspect_ratio=increase,crop=360:640,format=yuv420p"
+    # 6.5 s is inside the caption word "hello" (c3 shows src 11-12 s at 6-7 s); 5.5 s has no caption
+    with_cap = ssim(frame_png(out, 6.5, tmp_path / "c.png"), frame_png(src, 11.5, tmp_path / "cr.png", cover))
+    without = ssim(frame_png(out, 5.5, tmp_path / "n.png"), frame_png(src, 10.5, tmp_path / "nr.png", cover))
+    assert without > 0.95 and with_cap < without - 0.01, (with_cap, without)
+    ok, s2 = app.mcp("render_status", {"project_id": "p1", "render_id": r["render_id"]})
+    assert ok and s2["state"] == "ready"
