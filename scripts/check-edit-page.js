@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -143,6 +143,14 @@ let PAGE = null;
   await page.mouse.up();
   await page.waitForFunction(() => /0:03\.00 ·/.test(document.querySelector(".mk").title), null, { timeout: 15000 }).catch(() => errs.push("snap: marker is at " + "?"));
   if (snapShown !== "block") errs.push("snap: no snap line while dragging");
+  // duplicate the second clip with Ctrl+D (it lands right after itself), then copy the title and paste it at 0
+  const nClips = await page.evaluate(() => document.querySelectorAll(".it.clip").length);
+  await page.click(".it.clip >> nth=1", { position: { x: 20, y: 8 } });
+  await page.keyboard.press("Control+d");
+  await page.waitForFunction((n) => document.querySelectorAll(".it.clip").length === n + 1, nClips, { timeout: 15000 });
+  await page.click(".it.text", { position: { x: 20, y: 8 } }); await page.keyboard.press("Control+c");
+  await page.keyboard.press("Home"); await page.keyboard.press("Control+v");
+  await page.waitForFunction(() => document.querySelectorAll(".it.text").length === 2, null, { timeout: 15000 });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));

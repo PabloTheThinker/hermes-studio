@@ -280,6 +280,12 @@
     E.keys = (e) => {
       if (!E || /INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || "")) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if ((e.ctrlKey || e.metaKey) && ["c", "v", "d"].includes(e.key.toLowerCase()) && !e.shiftKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "c" && (!E.sel || String(window.getSelection() || ""))) return; // plain text copy stays the browser's
+        if (k === "v" && !E.clip) return;
+        e.preventDefault(); ({ c: copy, v: paste, d: duplicate })[k]();
+      }
       else if (e.key === " ") { e.preventDefault(); E.playing ? pause() : play(); }
       else if ((e.key === "Delete" || e.key === "Backspace") && E.sel) { e.preventDefault(); del(); }
       else if (e.ctrlKey || e.metaKey) return;
@@ -546,7 +552,7 @@
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
-      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
+      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
   function dragItem(n) {
@@ -949,6 +955,32 @@
     const ripple = document.getElementById("ed-ripple").checked && E.by[E.sel] && E.by[E.sel].type !== "transition";
     const id = E.sel; E.sel = null;
     write([{ op: "delete_clip", id, ripple }], `Delete ${id}`);
+  }
+  /* copy / paste / duplicate: a page clipboard (this tab only) of one clip or text item */
+  function copy() {
+    const it = E && E.sel && E.by[E.sel];
+    if (!it || it.type === "transition") return toast("Select a clip or text item to copy.");
+    const [a, b] = E.spans[it.id];
+    E.clip = { item: JSON.parse(JSON.stringify(it)), track: E.doc.tracks.find((tr) => tr.items.includes(it)).id, dur: b - a };
+    toast(`Copied ${it.id}`, true);
+  }
+  // The op that puts a copy of the clipboard item at `at` on its track (the engine picks the id).
+  function copyOp(c, at) {
+    const it = c.item, base = { track: c.track, at, fade_in: it.fade_in || 0, fade_out: it.fade_out || 0 };
+    if (it.type === "clip") return Object.assign({ op: "insert_clip", media: it.media, src: it.src.slice() }, base, it.props ? { props: it.props } : {});
+    return Object.assign({ op: "add_text", text: it.text, style: it.style, dur: it.dur }, base);
+  }
+  function paste() {
+    if (!E || !E.clip) return toast("Copy a clip or text item first (Ctrl+C).");
+    if (!E.doc.tracks.some((tr) => tr.id === E.clip.track)) return toast(`Track ${E.clip.track} is gone.`);
+    write([copyOp(E.clip, snapT(E.t))], `Paste ${E.clip.item.id}`);
+  }
+  function duplicate() {
+    const it = E && E.sel && E.by[E.sel];
+    if (!it || it.type === "transition") return toast("Select a clip or text item to duplicate.");
+    const [a, b] = E.spans[it.id];
+    const c = { item: it, track: E.doc.tracks.find((tr) => tr.items.includes(it)).id, dur: b - a };
+    write([copyOp(c, b)], `Duplicate ${it.id}`);
   }
   function addText() {
     if (!E) return;

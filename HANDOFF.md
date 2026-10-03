@@ -21,6 +21,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-slip-roll` | public ops `slip_clip` and `roll_edit` (`by_s` over MCP; media bounds and crossfade lengths checked in the op); Edit page Slip / Roll buttons, , and . keys, Alt-drag | `tests/test_slip_roll.py`; `check-edit-page.js` step 9 | `docs/oplog.md`, `EDIT-PAGE-SPEC.md` |
 | `feat/editor-snapping` | Edit page: magnetic snapping (8 px to item edges, markers, the playhead; snap line; Shift or the **snap** box turns it off); a reload cancels queued reloads (no double redraw from our own write's echo); compact one-line toolbar | `check-edit-page.js` snap step | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-close-gaps` | preset `close_gaps` (V1 clips close up from 0, crossfades and anchors kept, other tracks stay); in the Presets menu and the MCP enum | `tests/test_presets.py` close-gaps tests | `presets.py` docstring |
+| `feat/editor-copy-paste` | Edit page Ctrl+C / Ctrl+V / Ctrl+D for clips and text (page clipboard; plain text copy untouched) | `check-edit-page.js` duplicate and paste step | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
