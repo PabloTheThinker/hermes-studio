@@ -77,7 +77,7 @@
     .ed-top .ver { font: 500 11px var(--mono); color: var(--dim); }
     .ed-top .sp { flex: 1; }
     .ed-btn { background: none; border: 1px solid var(--line-2); color: var(--ink); padding: .3rem .7rem; cursor: pointer; font: 600 12px var(--sans); white-space: nowrap; }
-    .ed-top select.ed-btn, .tl-tools select.ed-btn { width: auto; flex: none; }
+    .ed-top select.ed-btn, .tl-tools select.ed-btn { width: auto; flex: none; margin: 0; }
     .ed-top .pid, .ed-top .ver, .tl-tools .hint { white-space: nowrap; }
     .ed-btn:hover { border-color: var(--ink); }
     .ed-btn.amber { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); }
@@ -108,7 +108,7 @@
     .screen .txt { position: absolute; left: 6%; right: 6%; top: 72%; transform: translateY(-50%); text-align: center; font-weight: 800; font-size: clamp(12px, 3.2vh, 34px); color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke; text-shadow: 0 2px 6px rgba(0,0,0,.6); white-space: pre-wrap; pointer-events: none; }
     .transport { display: flex; align-items: center; gap: .8rem; padding: .45rem .8rem; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); }
     .ed-tl { grid-column: 1 / 3; grid-row: 3; border-top: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-    .tl-tools { display: flex; gap: .5rem; align-items: center; padding: .35rem .7rem; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .tl-tools { display: flex; gap: .5rem; align-items: center; overflow: hidden; padding: .35rem .7rem; border-bottom: 1px solid var(--line); font-size: 12px; }
     .tl-scroll { flex: 1; overflow: auto; position: relative; }
     .tl-inner { position: relative; min-height: 100%; }
     .ruler { position: sticky; top: 0; height: 20px; border-bottom: 1px solid var(--line); background: var(--bg); z-index: 2; font: 500 10px var(--mono); color: var(--dim); }
@@ -130,6 +130,7 @@
     .mk.sel { background: var(--amber); color: #000; }
     .keys { display: grid; grid-template-columns: auto 1fr; gap: .25rem .9rem; font-size: 12px; line-height: 1.5; }
     .keys b { font: 600 11px var(--mono); color: var(--amber); white-space: nowrap; }
+    .snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--amber); z-index: 4; pointer-events: none; display: none; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
     .side-h { padding: .6rem .9rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
@@ -250,12 +251,12 @@
       <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
-      <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
-        <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><button class="ed-btn" id="ed-text">Add text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">Add marker</button>
-        <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets…</option><option value="title_card">Title card</option>
+      <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split" title="Split at the playhead (S)">Split</button><button class="ed-btn" id="ed-del">Delete</button>
+        <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><label class="hint chk" title="Edges snap to cuts, markers and the playhead; hold Shift to drag freely"><input type="checkbox" id="ed-snapon" checked /> snap</label><button class="ed-btn" id="ed-text" title="Text at the playhead">+ Text</button><button class="ed-btn" id="ed-marker" title="Marker at the playhead (M)">+ Marker</button>
+        <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets</option><option value="title_card">Title card</option>
           <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option>
           <option value="duck_music">Duck the music</option></select>
-        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" /></div>
+        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" style="width:110px;flex:none" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
       <div class="ed-side" id="ed-side"></div></div>`;
   }
@@ -301,6 +302,7 @@
   }
 
   async function reload() {
+    clearTimeout(reloadTimer); // this reload reads the latest doc: one queued by an event (often our own write's echo) is covered
     const doc = await P("get_timeline");
     E.doc = doc; E.spans = resolve(doc);
     E.by = {}; doc.tracks.forEach((tr) => tr.items.forEach((it) => (E.by[it.id] = it)));
@@ -420,7 +422,7 @@
     }).join("")}</div>`).join("");
     el.style.width = w + "px";
     const mks = (E.doc.markers || []).map((m) => `<b class="mk${E.sel === m.id ? " sel" : ""}" data-mk="${esc(m.id)}" title="${esc(m.label || m.id)} · ${tc(m.at)} · drag to move, double-click to rename" style="left:${px(m.at)}px">${esc(m.label || "◆")}</b>`).join("");
-    el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}${mks}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div>`;
+    el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}${mks}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div><div class="snapl" id="ed-snap"></div>`;
     el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); E.follow = false; side(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
     el.querySelectorAll(".it").forEach((n) => dragItem(n));
     el.querySelectorAll(".mk").forEach((n) => dragMarker(n));
@@ -467,6 +469,25 @@
     n.addEventListener("pointerup", () => setTimeout(release), { once: true }); // after the drop handler has read the node
     n.addEventListener("lostpointercapture", release, { once: true });
   }
+  // Snapping: while dragging, an edge within SNAP_PX of an edit point (another item's start or
+  // end, a marker, the playhead) lands on it, and an amber line shows where. Shift drags free.
+  const SNAP_PX = 8;
+  function snapPoints(skip) {
+    const pts = new Set([0, E.t]);
+    Object.entries(E.spans).forEach(([id, [a, b]]) => { if (id !== skip) { pts.add(a); pts.add(b); } });
+    (E.doc.markers || []).forEach((m) => { if (m.id !== skip) pts.add(m.at); });
+    return [...pts].map(px);
+  }
+  function magnet(edges, dx, pts, free) {
+    const line = document.getElementById("ed-snap");
+    if (!edges) { if (line) line.style.display = "none"; return 0; }
+    let best = null, at = 0;
+    if (!free && document.getElementById("ed-snapon").checked) {
+      edges.forEach((ex) => pts.forEach((p) => { const d = p - (ex + dx); if (Math.abs(d) <= SNAP_PX && (best == null || Math.abs(d) < Math.abs(best))) { best = d; at = p; } }));
+    }
+    if (line) { line.style.display = best == null ? "none" : "block"; line.style.left = at + "px"; }
+    return best == null ? dx : dx + best;
+  }
   function dragMarker(n) {
     const id = n.dataset.mk;
     n.onclick = (e) => e.stopPropagation();
@@ -479,9 +500,10 @@
       E.tab = "item"; pane();
       const x0 = e.clientX, left0 = parseFloat(n.style.left); let moved = false;
       holdDrag(n, e);
-      n.onpointermove = (mv) => { const dx = mv.clientX - x0; if (Math.abs(dx) > 3) moved = true; if (moved) n.style.left = Math.max(40, left0 + dx) + "px"; };
+      const pts = snapPoints(id);
+      n.onpointermove = (mv) => { const dx = mv.clientX - x0; if (Math.abs(dx) > 3) moved = true; if (moved) n.style.left = Math.max(40, left0 + magnet([left0], dx, pts, mv.shiftKey)) + "px"; };
       n.onpointerup = () => {
-        n.onpointermove = n.onpointerup = null;
+        n.onpointermove = n.onpointerup = null; magnet();
         if (!moved) { E.follow = false; side(); seek(m.at); return; }
         const at = snapT(ticks((parseFloat(n.style.left) - 40) / E.zoom));
         if (at !== m.at) write([{ op: "edit_marker", id, at }], `Move marker ${m.label || id}`);
@@ -523,7 +545,7 @@
   }
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
-      ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["S", "split at the playhead"],
+      ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
       ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
@@ -542,15 +564,18 @@
       if (alt && edge === "r" && !rollNext(it)) return toast("No clip starts where this one ends, so there is no cut to roll.");
       let slipDx = 0;
       holdDrag(n, e);
+      const edges = edge === "r" ? [left0 + w0] : edge === "l" ? [left0] : [left0, left0 + w0];
+      const pts = alt && !edge ? [] : snapPoints(id);
       n.onpointermove = (m) => {
-        const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
+        let dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
         if (alt && !edge) { slipDx = dx; const th = n.querySelector(".th"); if (th) th.style.backgroundPositionX = dx + "px"; return; }
+        if (moved) dx = magnet(edges, dx, pts, m.shiftKey);
         if (edge === "r") n.style.width = Math.max(4, w0 + dx) + "px";
         else if (edge === "l") { const d = Math.min(dx, w0 - 4); n.style.left = Math.max(40, left0 + d) + "px"; n.style.width = (w0 - (Math.max(40, left0 + d) - left0)) + "px"; }
         else n.style.left = Math.max(40, left0 + dx) + "px";
       };
       n.onpointerup = async () => {
-        n.onpointermove = n.onpointerup = null;
+        n.onpointermove = n.onpointerup = null; magnet();
         if (!moved) return; // a click only selects
         const fr = TICK * E.doc.fps[1] / E.doc.fps[0];
         if (alt) {

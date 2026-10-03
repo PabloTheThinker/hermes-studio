@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, and saves screenshots 1-9 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -132,6 +132,17 @@ let PAGE = null;
   const src1 = await page.textContent("#ed-pane .meta.mono");
   if (!/source 0:00\.03/.test(src1)) errs.push("slip: source is " + src1 + ", want it to start at 0:00.03");
   await page.screenshot({ path: path.join(OUT, "9-slip-roll.png") });
+  // snapping: park the playhead at 3 s, drag the marker to 5 px right of it: it lands on 3 s exactly
+  const rb = await page.locator("#ed-ruler").boundingBox();
+  await page.mouse.click(rb.x + 40 + 3 * 60, rb.y + 10);
+  if ((await page.textContent("#ed-tc")) !== "0:03.00") errs.push("snap: the ruler click went to " + (await page.textContent("#ed-tc")));
+  const sb = await page.locator(".mk").boundingBox();
+  await page.mouse.move(sb.x + 2, sb.y + 8); await page.mouse.down();
+  await page.mouse.move(rb.x + 40 + 3 * 60 + 5, sb.y + 8, { steps: 8 });
+  const snapShown = await page.evaluate(() => getComputedStyle(document.getElementById("ed-snap")).display);
+  await page.mouse.up();
+  await page.waitForFunction(() => /0:03\.00 ·/.test(document.querySelector(".mk").title), null, { timeout: 15000 }).catch(() => errs.push("snap: marker is at " + "?"));
+  if (snapShown !== "block") errs.push("snap: no snap line while dragging");
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, played_to: t, jumped_to: tcJump, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
