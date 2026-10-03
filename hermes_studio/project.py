@@ -609,6 +609,7 @@ class Engine:
     projects: dict[str, Project] = field(default_factory=dict)
     attach_token: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _opening: dict[str, threading.Lock] = field(default_factory=dict)  # one per project being opened
     # callables(event) that hear every project, including ones opened later (GET /mcp, D12)
     listeners: list[Any] = field(default_factory=list)
     _media: Any = None
@@ -664,38 +665,51 @@ class Engine:
                 self.open(name)
 
     def open(self, project_id: str) -> Project:
-        """Take the project's OS lock and load it. A second engine gets ``failed`` (D6)."""
+        """Take the project's OS lock and load it. A second engine gets ``failed`` (D6). The load
+        (a full replay of the log, long for a long edit) holds only this project's opening lock,
+        never the engine's: other projects open and answer meanwhile."""
         with self._lock:
             if project_id in self.projects:
                 return self.projects[project_id]
-            d = project_dir(project_id)
-            if d is None or not (d / "base.json").is_file():
-                raise not_found(project_id)
-            fd = os.open(str(d / ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
-            if not _try_lock(fd, exclusive=True):
-                os.close(fd)
-                held = _read_json(d / ".lock") or {}
-                raise HermesStudioError(
-                    f"Project {project_id} is open in another Hermes Studio engine "
-                    f"(pid {held.get('pid')}, port {held.get('port')}, since {held.get('started_at')}).",
-                    code="failed",
-                    hint=LOCKED_HINT,
-                )
-            body = json.dumps(
-                {**self.info(), "engine_version": __version__, "attach_token_sha256": _sha(self.attach_token)},
-                sort_keys=True,
-            ).encode("ascii")
-            os.ftruncate(fd, 0)
-            os.lseek(fd, 0, os.SEEK_SET)
-            os.write(fd, body)
-            os.fsync(fd)
-            _write_atomic(d / ".attach", self.attach_token.encode("ascii"), mode=0o600)
-            with contextlib.suppress(OSError):
-                os.chmod(d / ".attach", 0o600)
-            p = Project(self, project_id, d, fd)
-            p.load()
-            self.projects[project_id] = p
+            gate = self._opening.setdefault(project_id, threading.Lock())
+        with gate:
+            if project_id in self.projects:  # opened while we waited for the gate
+                return self.projects[project_id]
+            p = self._open_locked(project_id)
+            with self._lock:
+                self.projects[project_id] = p
+                self._opening.pop(project_id, None)
             return p
+
+    def _open_locked(self, project_id: str) -> Project:
+        """The OS lock, the lock file and the log load, under the project's opening lock only."""
+        d = project_dir(project_id)
+        if d is None or not (d / "base.json").is_file():
+            raise not_found(project_id)
+        fd = os.open(str(d / ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+        if not _try_lock(fd, exclusive=True):
+            os.close(fd)
+            held = _read_json(d / ".lock") or {}
+            raise HermesStudioError(
+                f"Project {project_id} is open in another Hermes Studio engine "
+                f"(pid {held.get('pid')}, port {held.get('port')}, since {held.get('started_at')}).",
+                code="failed",
+                hint=LOCKED_HINT,
+            )
+        body = json.dumps(
+            {**self.info(), "engine_version": __version__, "attach_token_sha256": _sha(self.attach_token)},
+            sort_keys=True,
+        ).encode("ascii")
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, body)
+        os.fsync(fd)
+        _write_atomic(d / ".attach", self.attach_token.encode("ascii"), mode=0o600)
+        with contextlib.suppress(OSError):
+            os.chmod(d / ".attach", 0o600)
+        p = Project(self, project_id, d, fd)
+        p.load()
+        return p
 
     def get(self, project_id: Any) -> Project:
         if isinstance(project_id, str) and project_id in self.projects:
