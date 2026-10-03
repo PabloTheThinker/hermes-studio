@@ -246,6 +246,9 @@
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
         <label class="hint chk"><input type="checkbox" id="ed-ripple" checked /> ripple</label><button class="ed-btn" id="ed-text">Add text</button>
+        <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets…</option><option value="title_card">Title card</option>
+          <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option>
+          <option value="duck_music">Duck the music</option></select>
         <span class="sp" style="flex:1"></span><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
       <div class="ed-side" id="ed-side"></div></div>`;
@@ -259,6 +262,12 @@
     $("ed-split").onclick = split; $("ed-del").onclick = del; $("ed-text").onclick = addText;
     $("ed-zoom").oninput = (e) => { E.zoom = +e.target.value; timeline(); };
     $("ed-render").onclick = render;
+    $("ed-preset").onchange = async (e) => {
+      const preset = e.target.value; e.target.value = ""; if (!preset || !E) return;
+      const args = { preset, base_version: E.doc.version, client_op_id: rid() };
+      if (preset === "title_card" || preset === "end_card") { const t = prompt(preset === "title_card" ? "Title" : "End card text"); if (!t) return; args.text = t; }
+      try { await P("apply_preset", args); await reload(); } catch (err) { fail(err); }
+    };
     $("ed-video").addEventListener("timeupdate", onTime);
     E.keys = (e) => {
       if (!E || /INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName || "")) return;

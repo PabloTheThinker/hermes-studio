@@ -51,6 +51,7 @@ WRITE_ROUTES = (
     "transcript_cut",
     "approval_resolve",
     "set_mode",
+    "apply_preset",
 )
 MEDIA_FILES = {
     "proxy": ("proxy", "video/mp4"),
@@ -391,6 +392,11 @@ def rest_post(h: Any, segs: list[str]) -> None:
 
             fn = G.resolve if parts[1] == "approval_resolve" else G.set_mode
             return _json(h, 200, fn(proj, tok.session, body))
+        if parts[1] == "apply_preset":
+            from hermes_studio import presets as PR
+
+            stripped, _ = O.strip_forged(body) if isinstance(body, dict) else (body, [])
+            return _json(h, 200, PR.apply_preset(proj, tok.session, stripped))
         if parts[1] == "transcript_cut":
             from hermes_studio import cuts as CU
 

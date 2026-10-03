@@ -44,7 +44,10 @@ RENDER_TOOLS = ("render_timeline", "render_status")  # S6
 CUT_TOOLS = ("transcript_cut",)  # S7
 GATE_TOOLS = ("approval_list", "approval_status", "approval_resolve", "set_mode")  # S8
 PROJECT_TOOLS = ("project_list", "project_new")  # the Edit page; they take no project_id
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PROJECT_TOOLS
+PRESET_TOOLS = ("apply_preset",)  # Phase 2 Q3
+NAMES = (
+    READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PROJECT_TOOLS + PRESET_TOOLS
+)
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -309,6 +312,24 @@ TOOLS: list[dict] = [
         },
         "annotations": {"title": "New project", **_W},
     },
+    _tool(
+        "apply_preset",
+        "Apply a preset",
+        "A named edit as ONE history entry (one undo): fade_in_out (every clip; seconds, default 0.3), title_card / "
+        "end_card (text; seconds, default 2.5), duck_music (music clips at 15%), crossfade_all (every touching cut; "
+        "seconds, default 0.3). Needs base_version and client_op_id; preview:true returns the ops only.",
+        {
+            "preset": {"type": "string", "enum": ["fade_in_out", "title_card", "end_card", "duck_music", "crossfade_all"]},
+            "base_version": {"type": "integer"},
+            "client_op_id": _S,
+            "summary": _S,
+            "group_id": _S,
+            "text": _S,
+            "seconds": {"type": "number"},
+            "preview": {"type": "boolean"},
+        },
+        _W,
+    ),
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
 
@@ -555,7 +576,14 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         return P.new_project(backend.engine, args)
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
-    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media", "transcript_cut", "approval_resolve", "set_mode")
+    writes = name in WRITE_TOOLS or name in (
+        "export_otio",
+        "import_media",
+        "transcript_cut",
+        "apply_preset",
+        "approval_resolve",
+        "set_mode",
+    )
     _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
@@ -570,7 +598,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if e.code != "not_found":
             raise
         proj = None
-    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS
+    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS + PRESET_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
         raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
     if name in GATE_TOOLS:
@@ -587,6 +615,13 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if name == "set_mode":
             return G.set_mode(proj, backend.session, rest)
         return G.resolve(proj, backend.session, rest)
+    if name == "apply_preset":
+        from hermes_studio import presets as PR
+
+        if not backend.writable:
+            raise P.offline()
+        stripped, _ = O.strip_forged({k: v for k, v in args.items() if k != "project_id"})
+        return PR.apply_preset(proj, backend.session, stripped)
     if name == "transcript_cut":
         from hermes_studio import cuts as CU
 
