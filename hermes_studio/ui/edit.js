@@ -134,6 +134,7 @@
     .keys b { font: 600 11px var(--mono); color: var(--amber); white-space: nowrap; }
     .card .pv { margin: .5rem 0 0; padding: .45rem .5rem; max-height: 14rem; overflow: auto; font: 500 10.5px/1.45 var(--mono); color: var(--mute); background: var(--bg); border: 1px solid var(--line); white-space: pre; }
     .it.ghost { outline: 2px dashed var(--ember, #ff7a45); outline-offset: 1px; }
+    .words span.hit { background: rgba(255,200,61,.22); border-radius: 2px; } .words span.hit.cur { background: var(--amber); color: #000; }
     .snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--amber); z-index: 4; pointer-events: none; display: none; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
@@ -928,6 +929,8 @@
     const ws = E.words;
     el.innerHTML = `<p class="acts" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .7rem"><button class="ed-btn" id="ed-fill">Remove fillers</button><button class="ed-btn" id="ed-pause">Tighten pauses</button>
       <button class="ed-btn" id="ed-cutsel" ${E.wsel ? "" : "disabled"}>Cut selection</button></p>
+      ${ws.length ? `<div style="display:flex;gap:.4rem;align-items:center;margin:0 0 .7rem"><input type="text" id="ed-find" placeholder="Find words (Enter: next)" value="${esc(E.find || "")}" style="flex:1;min-width:0" />
+        <span class="hint" id="ed-find-n"></span><button class="ed-btn" id="ed-cutfind" disabled>Cut all</button></div>` : ""}
       ${ws.length ? `<div class="words">${ws.map((w, i) => `<span data-w="${i}" class="${/^(um+|uh+|uhm|erm?|hm+|mm|mhm)$/i.test(w.w.replace(/[^a-z]/gi, "")) ? "fill" : ""}${E.wsel && i >= E.wsel[0] && i <= E.wsel[1] ? " sel" : ""}">${esc(w.w)}</span>`).join(" ")}</div>`
         : `<p class="hint">No words yet. Import media with "transcribe words" on, then add it to the timeline.</p>`}`;
     el.querySelectorAll("[data-w]").forEach((s) => (s.onclick = (e) => {
@@ -946,7 +949,40 @@
     };
     document.getElementById("ed-fill").onclick = () => cut({ fillers: true }, "Remove fillers");
     document.getElementById("ed-pause").onclick = () => cut({ pauses: true }, "Tighten pauses");
+    if (ws.length) findWords(cut);
     document.getElementById("ed-cutsel").onclick = () => { if (!E.wsel) return; const a = ws[E.wsel[0]], b = ws[E.wsel[1]]; cut({ ranges: [{ from_s: sec(a.at), to_s: sec(b.end) }] }, "Cut selection"); };
+  }
+
+  /* Find in the transcript: the words typed, as a phrase (case and punctuation ignored), marked
+     where they're said; Enter steps through them, a click on one seeks there, and Cut all removes
+     every match as one entry (transcript_cut ranges, previewed first). */
+  const norm = (w) => w.toLowerCase().replace(/[^\p{L}\p{N}']+/gu, "");
+  function findWords(cut) {
+    const ws = E.words, box = document.getElementById("ed-find");
+    let hits = [], cur = -1;
+    const mark = () => {
+      document.querySelectorAll(".words span.hit").forEach((x) => x.classList.remove("hit", "cur"));
+      hits.forEach(([a, b], k) => { for (let i = a; i <= b; i++) { const sp = document.querySelector(`[data-w="${i}"]`); if (sp) { sp.classList.add("hit"); sp.classList.toggle("cur", k === cur); } } });
+      document.getElementById("ed-find-n").textContent = E.find ? (cur >= 0 ? `${cur + 1}/${hits.length}` : String(hits.length)) : "";
+      const b = document.getElementById("ed-cutfind"); b.disabled = !hits.length; b.textContent = hits.length ? `Cut all ${hits.length}` : "Cut all";
+    };
+    const search = () => {
+      E.find = box.value; const q = box.value.split(/\s+/).map(norm).filter(Boolean);
+      hits = []; cur = -1;
+      if (q.length) for (let i = 0; i + q.length <= ws.length; i++) if (q.every((t, k) => norm(ws[i + k].w) === t)) hits.push([i, i + q.length - 1]);
+      mark();
+    };
+    box.oninput = search;
+    box.onkeydown = (e) => {
+      if (e.key !== "Enter" || !hits.length) return;
+      e.preventDefault(); cur = (cur + (e.shiftKey ? hits.length - 1 : 1)) % hits.length; mark();
+      E.follow = false; seek(ws[hits[cur][0]].at);
+      const sp = document.querySelector(`[data-w="${hits[cur][0]}"]`); if (sp) sp.scrollIntoView({ block: "nearest" });
+    };
+    document.getElementById("ed-cutfind").onclick = () => {
+      if (hits.length) cut({ ranges: hits.map(([a, b]) => ({ from_s: sec(ws[a].at), to_s: sec(ws[b].end) })) }, `Cut "${E.find.trim()}"`);
+    };
+    search();
   }
 
   /* ---------------------------------------------------------------- scenes */

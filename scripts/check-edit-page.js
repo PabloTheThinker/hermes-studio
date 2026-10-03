@@ -3,7 +3,7 @@
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
 // desktop app's preload), makes a project, imports a generated video through Browse…, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, previews it on its card, applies it from the sidebar,
-// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, multi-selects, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
+// plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, multi-selects, finds and cuts a phrase in the transcript, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
 try { ({ chromium } = require("playwright")); } catch { ({ chromium } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright")); }
 const { spawn, execFileSync } = require("child_process");
@@ -228,6 +228,16 @@ let PAGE = null;
   const nAll = await page.evaluate(() => [document.querySelectorAll(".it.sel").length, document.querySelectorAll(".it:not(.transition)").length]);
   if (nAll[0] !== nAll[1]) errs.push("select all: " + nAll);
   await page.keyboard.press("Escape");
+  // find "world this" in the transcript: one match, Enter seeks to it, Cut all removes it as one entry
+  await page.click('[data-tab="transcript"]'); await page.fill("#ed-find", "World, this");
+  const nFind = await page.textContent("#ed-find-n");
+  await page.press("#ed-find", "Enter");
+  const fv = await ver(); await page.click("#ed-cutfind");
+  await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v, fv, { timeout: 15000 });
+  // (the music clip here is the same talk, so its words stay: the phrase as said on V1 is what goes)
+  await page.waitForFunction(() => !/world this/.test(document.querySelector(".words").textContent), null, { timeout: 15000 })
+    .catch(async () => errs.push("find: the phrase is still in the transcript: " + (await page.textContent(".words"))));
+  if (nFind !== "1" || (await ver()) !== fv + 1) errs.push(`find: ${nFind} matches (want 1), ${await ver() - fv} entries (want 1)`);
   // render at half size without captions; the download link names the size
   await page.selectOption("#ed-cstyle", ""); await page.selectOption("#ed-rsize", "2");
   await page.click("#ed-render");
