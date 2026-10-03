@@ -2,7 +2,7 @@
 
 ## 0. Update 2026-10-03 (read this first)
 
-The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1179 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
+The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1184 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
 
 | Branch (stacked) | What | Gate evidence | Spec |
 |---|---|---|---|
@@ -14,13 +14,14 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-s8-gate` | Ask / Propose / Auto, parked writes | C12 gate, E5 | `S8-SPEC.md` |
 | `feat/editor-ui-edit` | the Edit page + sidebar, token delivery, `project_list/new`, captions in clip styles, Phase 1 headline test | `tests/test_phase1_e2e.py` (E1, E2, E4); `scripts/check-edit-page.js` (Playwright) | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-presets` | `apply_preset` (Phase 2 Q3) | one entry, one undo per preset | `presets.py` docstring |
+| `feat/editor-polish` | `hermes-studio cache [--clear [--all]]`; Phase 2 Q1 eval set (`evals/`: 20 pinned tasks, checks, reference solutions, `python -m evals.run`); latency measurement | reference 20/20, a do-nothing agent passes only the 2 no-change tasks; engine op → SSE event p95 ≈ 10 ms (< 250 ms) | `evals/run.py` docstring |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
 2. **Ada's rulings** listed in each spec's "Decisions" (S4 D1/D7, S5 D2, S6 D4/D8, S7 D6, S8 D1–D3, S3 §13.9 Q1).
 3. Then each later branch becomes a PR in order (merge `main` in first, never rebase), with its own verifier gate.
 
-**Not built:** the ACP client and composer (Hermes chat over ACP), draft branches (Phase 2 Q2, needs an engine "merge" design), the eval set (Q1), Phase 3 (keyframes, masks), card latency measurement.
+**Not built:** the ACP client and composer (Hermes chat over ACP), draft branches (Phase 2 Q2, needs an engine "merge" design), running the eval set against real models (the harness is ready), Phase 3 (keyframes, masks), and the Electron half of card latency (the engine half is measured).
 
 ---
 
