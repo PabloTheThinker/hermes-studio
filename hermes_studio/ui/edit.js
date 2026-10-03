@@ -471,10 +471,14 @@
     s.wq = run.catch(() => {});
     return run;
   }
+  // ops: a list, or a function that works the list out when the write runs (on the doc as the
+  // writes before it left it; null for nothing to do), for edits that are relative to now.
   function write(ops, summary) {
     return queued(async () => {
+      const list = typeof ops === "function" ? ops() : ops;
+      if (!list || !list.length) return null;
       try {
-        const r = await P("timeline_apply", { base_version: E.doc.version, client_op_id: rid(), summary, ops });
+        const r = await P("timeline_apply", { base_version: E.doc.version, client_op_id: rid(), summary, ops: list });
         await reload();
         return r;
       } catch (e) { fail(e); if (e.code === "conflict") await reload(); return null; }
@@ -566,15 +570,16 @@
     n.addEventListener("lostpointercapture", release, { once: true });
   }
   /* selection: E.sel is the item or marker last clicked, E.sels everything selected (Ctrl- or
-     Shift-click adds or removes one, Ctrl+A takes every clip and text item, Esc clears) */
+     Cmd-click adds or removes one, Ctrl+A takes every clip and text item, Esc clears) */
   function selOnly(id) { E.sel = id; E.sels = new Set(id ? [id] : []); markSel(); }
   function markSel() {
     document.querySelectorAll(".it, .mk").forEach((x) => x.classList.toggle("sel", E.sels.has(x.dataset.id || x.dataset.mk)));
   }
-  // A click on id: with Ctrl/Cmd/Shift it toggles id in the selection and returns true (no drag);
+  // A click on id: with Ctrl/Cmd it toggles id in the selection and returns true (no drag; Shift
+  // is kept for dragging without snapping);
   // otherwise id alone is selected (a drag moves one item; Alt+arrows move a group).
   function pick(id, e) {
-    if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    if (e.ctrlKey || e.metaKey) {
       if (E.sels.has(id) && E.sels.size > 1) { E.sels.delete(id); E.sel = [...E.sels].pop(); }
       else { E.sels.add(id); E.sel = id; }
       markSel(); pane(); return true;
@@ -672,11 +677,13 @@
     if (!m && (!it || !("at" in it))) return toast("That item moves with its clip; nudge the clip instead.");
     const at0 = m ? m.at : it.at;
     const node = () => document.querySelector(m ? `.mk[data-mk="${CSS.escape(id)}"]` : `.it[data-id="${CSS.escape(id)}"]`);
-    coalesce("nudge:" + id, frames, (n) => {
-      const at = Math.max(0, at0 + Math.round(n * frameT()));
-      if (m) return write([{ op: "edit_marker", id, at }], `Nudge marker ${m.label || id}`);
-      return write([{ op: "move_clip", id, at }], `Nudge ${id}`);
-    }, (n) => { const el = node(); if (el) el.style.left = px(Math.max(0, at0 + Math.round(n * frameT())) + (m ? 0 : E.spans[id][0] - at0)) + "px"; });
+    // The nudge is relative: worked out when it runs, from where the item is then, so it never
+    // undoes an edit that landed meanwhile (an agent's, or this page's own queued undo).
+    coalesce("nudge:" + id, frames, (n) => write(() => {
+      const by = Math.round(n * frameT()), mk = m && (E.doc.markers || []).find((x) => x.id === id), cur = m ? mk : E.by[id];
+      if (!cur || !("at" in cur)) return null;
+      return [m ? { op: "edit_marker", id, at: Math.max(0, cur.at + by) } : { op: "move_clip", id, at: Math.max(0, cur.at + by) }];
+    }, m ? `Nudge marker ${m.label || id}` : `Nudge ${id}`), (n) => { const el = node(); if (el) el.style.left = px(Math.max(0, at0 + Math.round(n * frameT())) + (m ? 0 : E.spans[id][0] - at0)) + "px"; });
   }
   // The whole selection moves together (items with their own position, and markers); one entry.
   function nudgeMany(frames) {
@@ -685,10 +692,12 @@
     const at0 = Object.fromEntries(mks.map((id) => [id, E.doc.markers.find((m) => m.id === id).at]).concat(its.map((id) => [id, E.by[id].at])));
     const lo = Math.min(...Object.values(at0));
     const by = (n) => Math.max(-lo, Math.round(n * frameT())); // the earliest one stops at 0
-    coalesce("nudge:" + ids.join(","), frames, (n) => write(
-      mks.map((id) => ({ op: "edit_marker", id, at: at0[id] + by(n) })).concat(its.map((id) => ({ op: "move_clip", id, at: at0[id] + by(n) }))),
-      `Nudge ${ids.length} items`,
-    ), (n) => ids.forEach((id) => {
+    coalesce("nudge:" + ids.join(","), frames, (n) => write(() => { // relative, worked out when it runs (as nudge)
+      const now = Object.fromEntries((E.doc.markers || []).map((x) => [x.id, x.at]).concat(Object.values(E.by).filter((x) => "at" in x).map((x) => [x.id, x.at])));
+      if (ids.some((id) => now[id] == null)) return null;
+      const d = Math.max(-Math.min(...ids.map((id) => now[id])), Math.round(n * frameT()));
+      return mks.map((id) => ({ op: "edit_marker", id, at: now[id] + d })).concat(its.map((id) => ({ op: "move_clip", id, at: now[id] + d })));
+    }, `Nudge ${ids.length} items`), (n) => ids.forEach((id) => {
       const el = document.querySelector(isMarker(id) ? `.mk[data-mk="${CSS.escape(id)}"]` : `.it[data-id="${CSS.escape(id)}"]`);
       if (el) el.style.left = px(at0[id] + by(n)) + "px";
     }));
@@ -707,7 +716,7 @@
   function keysHelp() {
     const rows = [["Space", "play / pause"], ["J K L", "slower or back a second / stop / play, faster each press (to 4×)"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
-      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl / Shift click", "add or remove one from the selection"], ["Ctrl A", "select every clip and text item"], ["Esc", "clear the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
+      ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl click", "add or remove one from the selection"], ["Ctrl A", "select every clip and text item"], ["Esc", "clear the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
   }
   function dragItem(n) {
@@ -1281,12 +1290,14 @@
     write([{ op: "delete_clip", id, ripple }], `Delete ${id}`);
   }
   // Several at once, as one entry: markers, then crossfades, then items from the last to the first
-  // (so a ripple never moves an item still to be deleted).
+  // (so a ripple never moves an item still to be deleted). A crossfade whose clip is going too is
+  // left to go with it: deleted first, it would make that clip's ripple pull the next one too far.
   function delMany(ids) {
     const ripple = document.getElementById("ed-ripple").checked;
     const its = ids.filter((id) => E.by[id]).map((id) => E.by[id]);
+    const going = new Set(its.filter((it) => it.type !== "transition").map((it) => it.id));
     const ops = ids.filter(isMarker).map((id) => ({ op: "remove_marker", id }))
-      .concat(its.filter((it) => it.type === "transition").map((it) => ({ op: "delete_clip", id: it.id, ripple: false })))
+      .concat(its.filter((it) => it.type === "transition" && !it.between.some((c) => going.has(c))).map((it) => ({ op: "delete_clip", id: it.id, ripple: false })))
       .concat(its.filter((it) => it.type !== "transition").sort((a, b) => E.spans[b.id][0] - E.spans[a.id][0]).map((it) => ({ op: "delete_clip", id: it.id, ripple })));
     selOnly(null);
     write(ops, `Delete ${ids.length} items`);

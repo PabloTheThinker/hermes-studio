@@ -42,6 +42,8 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-filmstrip` | Edit page clips show a filmstrip from the S4 thumbs sprite (source-time tiles; live while Alt-drag slipping) instead of one thumbnail | `check-edit-page.js` filmstrip pixels check | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-small-window` | Edit page at the desktop's 760×540 minimum: height from the real header (it was cut off at the bottom), narrower columns, scrolling top bar/tabs/toolbar so Render isn't clipped | `check-edit-page.js` small-window step (screenshot 11) | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-a11y` | Edit page focus rings, keyboard-openable project rows, tab and mode-switch roles/states, labelled zoom, live render status and toasts | `check-edit-page.js` Enter-on-row and `aria-pressed` checks | `EDIT-PAGE-SPEC.md` |
+| `docs/editor-readme` | README's Edit section catches up | — | README |
+| `fix/editor-review` | fixes from an independent review of the stack: Render right after Stop is a new job (per-job cancel; a stopped job can't write the status); deleting a crossfade with its clip under ripple; Shift is free-drag only (Ctrl-click selects); show-render path check in a pure `desktop/paths.js` (refuses `..`, drives, links out); held-key nudges are relative when they run (never overwrite a newer edit); `roll_edit` docstring says anchored items ride the next clip | `test_s6_render.py` stop-then-render, `test_desktop_paths.py` (Node), `check-edit-page.js` crossfade+clip delete | EDIT-PAGE-SPEC |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

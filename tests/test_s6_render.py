@@ -318,3 +318,42 @@ def test_render_cancel_queued_and_running(app, tmp_path):
     assert ok and not fresh["reused"] and settled(b["render_id"])["state"] == "ready"  # a cancelled render starts afresh
     ok, e = app.mcp("render_cancel", {"project_id": "p1", "render_id": "v000099-180x320"})
     assert not ok and e["code"] == "not_found"
+
+
+def test_render_again_after_stop_starts_afresh(app, monkeypatch, tmp_path):
+    """Stop, then Render at once (before the stopped job has let go): the second render is a new
+    job that finishes, and the stopped one can't overwrite its status."""
+    import threading
+
+    from hermes_studio import render_jobs as RJ
+
+    gate = threading.Event()
+    calls = []
+
+    def fake(doc, project_dir, out, size, words, caption_style, on_progress, cancel):
+        calls.append(out)
+        while not gate.is_set():
+            if cancel():
+                raise RuntimeError("stopped")
+            time.sleep(0.01)
+        out.write_bytes(b"mp4")
+        return {"segments": 1, "clips": 1}
+
+    monkeypatch.setattr(RJ.R, "render", fake)
+    monkeypatch.setattr(RJ.R, "timeline_end", lambda doc: 1)
+    ok, a = app.mcp("render_timeline", {"project_id": "p1", "captions": False})
+    assert ok and a["state"] == "queued", a
+    end = time.monotonic() + 10
+    while not calls and time.monotonic() < end:
+        time.sleep(0.01)
+    ok, _ = app.mcp("render_cancel", {"project_id": "p1", "render_id": a["render_id"]})
+    ok, b = app.mcp("render_timeline", {"project_id": "p1", "captions": False})  # before the first has let go
+    assert ok and not b["reused"] and b["state"] == "queued", b
+    gate.set()
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        ok, st = app.mcp("render_status", {"project_id": "p1", "render_id": a["render_id"]})
+        if st["state"] == "ready":
+            break
+        time.sleep(0.02)
+    assert st["state"] == "ready" and len(calls) == 2, (st, calls)

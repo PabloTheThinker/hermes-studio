@@ -585,8 +585,8 @@ def op_slip_clip(ctx: _Ctx, a: dict) -> list[dict]:
 def op_roll_edit(ctx: _Ctx, a: dict) -> list[dict]:
     """Move the cut between clip ``id`` and the clip that follows it on the same track by ``by``
     timeline ticks (signed): ``id`` gets longer by ``by`` (its source out moves), the next clip
-    starts ``by`` later and gets shorter by the same (its source in moves). Nothing else moves,
-    so the total length stays. The next clip must start where ``id`` ends (or where their
+    starts ``by`` later and gets shorter by the same (its source in moves). Items anchored to the
+    next clip ride on its start, as anchors do; nothing else moves, so the total length stays. The next clip must start where ``id`` ends (or where their
     crossfade starts)."""
     tr, _, it = _find(ctx.doc, a["id"])
     if it["type"] != "clip":

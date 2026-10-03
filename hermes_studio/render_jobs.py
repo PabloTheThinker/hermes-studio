@@ -38,8 +38,10 @@ class RenderJobs:
 
     def __init__(self) -> None:
         self.q: queue.Queue = queue.Queue()
-        self.live: set[tuple[str, str]] = set()
-        self.cancelled: set[tuple[str, str]] = set()
+        # (project, render_id) -> the job that owns that render's status: {"cancelled": bool}. A
+        # render submitted again after Stop gets a new job; the stopped one keeps running until
+        # FFmpeg lets go but no longer writes the status or sends events.
+        self.live: dict[tuple[str, str], dict] = {}
         self.lock = threading.Lock()
         threading.Thread(target=self._work, daemon=True, name="render").start()
 
@@ -47,17 +49,25 @@ class RenderJobs:
         with self.lock:
             return (pid, rid) in self.live
 
+    def is_stopping(self, pid: str, rid: str) -> bool:
+        with self.lock:
+            job = self.live.get((pid, rid))
+            return bool(job and job["cancelled"])
+
     def cancel(self, pid: str, rid: str) -> bool:
         """Stop one render (queued or running); False when it isn't live."""
         with self.lock:
-            if (pid, rid) not in self.live:
+            job = self.live.get((pid, rid))
+            if job is None:
                 return False
-            self.cancelled.add((pid, rid))
+            job["cancelled"] = True
             return True
 
     def cancel_project(self, pid: str) -> None:
         with self.lock:
-            self.cancelled |= {k for k in self.live if k[0] == pid}
+            for k, job in self.live.items():
+                if k[0] == pid:
+                    job["cancelled"] = True
 
     def submit(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, style: str = "pop") -> dict:
         out, status = _paths(proj, rid)
@@ -72,11 +82,11 @@ class RenderJobs:
             "path": str(out.relative_to(proj.dir).as_posix()),
             "error": None,
         }
-        M._write_json(status, st)
+        job = {"cancelled": False}
         with self.lock:
-            self.live.add((proj.id, rid))
-            self.cancelled.discard((proj.id, rid))
-        self.q.put((proj, rid, doc, size, words, st, style))
+            self.live[(proj.id, rid)] = job
+        M._write_json(status, st)
+        self.q.put((proj, rid, doc, size, words, st, style, job))
         return st
 
     def _work(self) -> None:
@@ -88,35 +98,47 @@ class RenderJobs:
                 pass
             finally:
                 with self.lock:
-                    self.live.discard((job[0].id, job[1]))
+                    if self.live.get((job[0].id, job[1])) is job[-1]:
+                        del self.live[(job[0].id, job[1])]
 
-    def _run(self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, st: dict, style: str) -> None:
+    def _run(
+        self, proj: Any, rid: str, doc: dict, size: tuple[int, int], words: list[dict] | None, st: dict, style: str, job: dict
+    ) -> None:
         out, status = _paths(proj, rid)
         out.parent.mkdir(exist_ok=True)
         last = [0.0]
 
         def cancel() -> bool:
             with self.lock:
-                return (proj.id, rid) in self.cancelled
+                return job["cancelled"]
+
+        def mine() -> bool:  # a newer job for the same render owns the status now
+            with self.lock:
+                return self.live.get((proj.id, rid)) is job
+
+        def save() -> None:
+            if mine():
+                M._write_json(status, st)
 
         def send(ev: dict) -> None:
-            proj.notify({"type": ev.pop("type"), "project_id": proj.id, "render_id": rid, **ev})
+            if mine():
+                proj.notify({"type": ev.pop("type"), "project_id": proj.id, "render_id": rid, **ev})
 
         def progress(f: float) -> None:
             st["progress"] = round(f, 4)
             now = time.monotonic()
             if f >= 1.0 or now - last[0] >= PROGRESS_EVERY_SEC:
                 last[0] = now
-                M._write_json(status, st)
+                save()
                 send({"type": "render.progress", "progress": st["progress"]})
 
         if cancel():  # cancelled while it waited in the queue
             st.update(state="cancelled", error=None)
-            M._write_json(status, st)
+            save()
             send({"type": "render.cancelled"})
             return
         st["state"] = "running"
-        M._write_json(status, st)
+        save()
         t0 = time.monotonic()
         try:
             res = R.render(doc, proj.dir, out, size=size, words=words, caption_style=style, on_progress=progress, cancel=cancel)
@@ -127,7 +149,7 @@ class RenderJobs:
             else:
                 st.update(state="failed", error=f"{e}"[-600:])
                 send({"type": "render.failed", "error": st["error"]})
-            M._write_json(status, st)
+            save()
             return
         with contextlib.suppress(OSError):
             os.chmod(out, 0o600)
@@ -139,7 +161,7 @@ class RenderJobs:
             seconds=round(time.monotonic() - t0, 2),
             bytes=out.stat().st_size,
         )
-        M._write_json(status, st)
+        save()
         send({"type": "render.ready", "path": st["path"], "version": st["version"]})
 
 
@@ -188,8 +210,8 @@ def render_timeline(proj: Any, args: Any, jobs: RenderJobs) -> dict:
         "" if words is None else "-cap" if cstyle == "pop" else f"-cap-{cstyle}"
     )
     st = _read(proj, rid, jobs)
-    if st is not None and st["state"] in ("queued", "running", "ready"):
-        return {**st, "reused": True}
+    if st is not None and st["state"] in ("queued", "running", "ready") and not jobs.is_stopping(proj.id, rid):
+        return {**st, "reused": True}  # a render being stopped is not reused: this one starts afresh
     return {**jobs.submit(proj, rid, doc, (size[0], size[1]), words, cstyle), "reused": False}
 
 

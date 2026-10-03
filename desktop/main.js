@@ -9,6 +9,7 @@ const net = require("net");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { renderFile } = require("./paths");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
 
@@ -165,17 +166,10 @@ const MEDIA_EXT = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "mp3", "wav
 // exports folder (~/.hermes/clips/projects/<id>/exports/), after resolving links.
 // The page sends the project id and render_status's path (relative to the project).
 ipcMain.handle("show-render", (event, projectId, rel) => {
-  if (!fromDesk(event) || typeof projectId !== "string" || typeof rel !== "string") return false;
-  try {
-    const root = fs.realpathSync(path.join(os.homedir(), ".hermes", "clips", "projects"));
-    const real = fs.realpathSync(path.resolve(root, projectId, rel));
-    const parts = path.relative(root, real).split(path.sep);
-    if (parts.length !== 3 || parts[0] !== projectId || parts[1] !== "exports" || !real.endsWith(".mp4")) return false;
-    shell.showItemInFolder(real);
-    return true;
-  } catch {
-    return false;
-  }
+  if (!fromDesk(event)) return false;
+  const file = renderFile(path.join(os.homedir(), ".hermes", "clips", "projects"), projectId, rel);
+  if (file) shell.showItemInFolder(file);
+  return !!file;
 });
 ipcMain.handle("pick-file", async (event) => {
   if (!fromDesk(event)) return null;

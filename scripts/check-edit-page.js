@@ -219,6 +219,22 @@ let PAGE = null;
   if ((await ver()) !== vs + 1) errs.push(`multi-delete: ${await ver() - vs} entries, want 1`);
   await page.keyboard.press("Control+z");
   await page.waitForFunction((n) => document.querySelectorAll(".it.clip").length === n, nC, { timeout: 15000 });
+  // a crossfade and the clip after it, deleted together with ripple on: one entry, no refusal
+  await page.evaluate(() => (document.getElementById("ed-scroll").scrollLeft = 0));
+  const xid = await page.getAttribute(".it.transition", "data-id");
+  if (xid) {
+    const toasts0 = await page.evaluate(() => window.__toasts.length);
+    const tb2 = await page.locator(".it.transition").boundingBox();
+    await page.mouse.click(tb2.x + tb2.width / 2, tb2.y + 8);
+    const nb = await page.locator(".it.clip >> nth=1").boundingBox();
+    await page.keyboard.down("Control"); await page.mouse.click(nb.x + nb.width / 2, nb.y + 8); await page.keyboard.up("Control");
+    vs = await ver(); await page.keyboard.press("Delete");
+    await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v, vs, { timeout: 15000 })
+      .catch(async () => errs.push("crossfade + clip delete: refused: " + JSON.stringify((await page.evaluate(() => window.__toasts)).slice(toasts0))));
+    vs = await ver(); await page.keyboard.press("Control+z");
+    await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v && document.querySelector(".it.transition"), vs, { timeout: 15000 });
+    await sleep(300); // the redraw after the undo
+  }
   // the two text items, Ctrl-clicked, nudge together: both 2 px right in one entry
   await page.evaluate(() => (document.getElementById("ed-scroll").scrollLeft = 0));
   const tx0 = await page.evaluate(() => [...document.querySelectorAll(".it.text")].map((n) => parseFloat(n.style.left)));
@@ -229,7 +245,7 @@ let PAGE = null;
   vs = await ver(); await page.keyboard.press("Alt+ArrowRight");
   await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v, vs, { timeout: 15000 });
   await page.waitForFunction((t) => [...document.querySelectorAll(".it.text")].every((n, i) => Math.abs(parseFloat(n.style.left) - t[i] - 2) < 0.1), tx0, { timeout: 15000 })
-    .catch(() => errs.push("group nudge: the text items didn't both move 2 px"));
+    .catch(async () => errs.push("group nudge: the text items didn't both move 2 px: " + JSON.stringify(await page.evaluate((t) => ({ t, now: [...document.querySelectorAll(".it.text")].map((n) => [n.dataset.id, parseFloat(n.style.left)]), sel: [...document.querySelectorAll(".it.sel")].map((n) => n.dataset.id), toasts: window.__toasts.slice(-3) }), tx0))));
   if ((await ver()) !== vs + 1) errs.push(`group nudge: ${await ver() - vs} entries, want 1`);
   await page.keyboard.press("Control+a");
   const nAll = await page.evaluate(() => [document.querySelectorAll(".it.sel").length, document.querySelectorAll(".it:not(.transition)").length]);
