@@ -6,7 +6,8 @@ const path = require("path");
 const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // The real path of a finished render, or null: `rel` (render_status's path, relative to the
-// project) must resolve, after links, to an .mp4 directly in <root>/<projectId>/exports/.
+// project) must resolve, after links, to an .mp4 (a render) or .otio (an OTIO export) directly in
+// <root>/<projectId>/exports/.
 function renderFile(root, projectId, rel) {
   if (typeof projectId !== "string" || typeof rel !== "string" || !PROJECT_ID.test(projectId)) return null;
   try {
@@ -15,7 +16,7 @@ function renderFile(root, projectId, rel) {
     const inside = path.relative(realRoot, real);
     if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) return null;
     const parts = inside.split(path.sep);
-    return parts.length === 3 && parts[0] === projectId && parts[1] === "exports" && real.endsWith(".mp4") ? real : null;
+    return parts.length === 3 && parts[0] === projectId && parts[1] === "exports" && /\.(mp4|otio)$/.test(real) ? real : null;
   } catch {
     return null;
   }

@@ -49,6 +49,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-save-frame` | Edit page **Save frame**: the playhead's engine frame as a JPEG (up to 1080 px wide) | `check-edit-page.js` download probed 1080×1920 mjpeg | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-from-clips` | Edit page Media tab **From your clips**: the desk's finished runs, one click imports a clip (`import_media`) | `check-edit-page.js` seeds a library run and imports its clip | `EDIT-PAGE-SPEC.md` |
 | `feat/history-explain` | read tool `history_explain {op_id}` (36 tools): one entry as outline lines removed/added and the length change; history cards' **What changed** | `tests/test_history_explain.py`; `check-edit-page.js` What changed check | `outline.explain` docstring, AGENTS.md, EDIT-PAGE-SPEC |
+| `feat/editor-export-otio` | Edit page **Export OTIO** (`export_otio`); Show in folder also takes the `.otio`. **Open question for Ada:** more transition kinds (dip to black, wipe) need the schema's `kind` rule (`timeline.py`: only `xfade`), OTIO mapping and the render; not started | `test_desktop_paths.py`; `check-edit-page.js` OTIO step | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

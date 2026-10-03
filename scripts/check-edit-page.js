@@ -314,6 +314,11 @@ let PAGE = null;
     await page.waitForFunction((n) => document.querySelectorAll("[data-add]").length === n + 1, nMedia, { timeout: 15000 })
       .catch(() => errs.push("from your clips: the clip didn't import"));
   }
+  // Export OTIO: the desktop's show-in-folder is asked for exports/<project>-v<version>.otio
+  await page.evaluate(() => (window.__shown = null)); await page.click("#ed-otio");
+  const otioShown = await page.waitForFunction(() => window.__shown, null, { timeout: 15000 }).then((h) => h.jsonValue(), () => null);
+  if (!otioShown || !/^p-[0-9a-f]+\/exports\/p-[0-9a-f]+-v\d{6}\.otio$/.test(otioShown)) errs.push("export otio: " + otioShown);
+  else if (!fs.existsSync(path.join(HOME, ".hermes/clips/projects", otioShown))) errs.push("export otio: no file at " + otioShown);
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");

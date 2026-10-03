@@ -32,6 +32,9 @@ def test_only_an_mp4_in_that_projects_exports(tmp_path):
     (tmp_path / "secret.mp4").write_bytes(b"x")
     os.symlink(tmp_path / "secret.mp4", root / "p1" / "exports" / "link.mp4")
     assert render_file(root, "p1", "exports/p1-v000001-540x960.mp4") == str(good.resolve())
+    otio = root / "p1" / "exports" / "p1-v000001.otio"
+    otio.write_text("{}")
+    assert render_file(root, "p1", "exports/p1-v000001.otio") == str(otio.resolve())
     for pid, rel in [
         ("..", "exports/x.mp4"),
         ("D:", "exports/x.mp4"),

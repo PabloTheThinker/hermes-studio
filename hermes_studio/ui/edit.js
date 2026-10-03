@@ -297,6 +297,7 @@
         <span class="sp"></span><span class="hint" id="ed-render-st" aria-live="polite"></span>
         <select class="ed-btn" id="ed-cstyle" title="Captions in the render: a style, or none">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option value="${x}">captions: ${x}</option>`).join("")}<option value="">no captions</option></select>
         <select class="ed-btn" id="ed-rsize" title="Render size"><option value="1">full size</option><option value="2">half size</option></select>
+        <button class="ed-btn" id="ed-otio" title="Save the edit as OpenTimelineIO (.otio) for DaVinci Resolve, Premiere or Final Cut">Export OTIO</button>
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
       <div class="ed-left"><div class="tabs" role="tablist" aria-label="Panels"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div><div class="cap" id="ed-cap"></div></div></div>
@@ -329,6 +330,7 @@
     }, { passive: false });
     $("ed-render").onclick = render;
     $("ed-shot").onclick = saveFrame;
+    $("ed-otio").onclick = exportOtio;
     $("ed-cstyle").onchange = () => drawCaption();
     $("ed-preset").onchange = async (e) => {
       const preset = e.target.value; e.target.value = ""; if (!preset || !E) return;
@@ -1385,6 +1387,16 @@
       const url = URL.createObjectURL(await res.blob()), a = document.createElement("a");
       a.href = url; a.download = `${E.pid}-${tc(at).replace(/[:.]/g, "-")}.jpg`; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (e) { fail(e); }
+  }
+  // export_otio writes exports/<project>-v<version>.otio; the desktop app shows it in its folder,
+  // a browser says where it is (the file is on this machine either way).
+  async function exportOtio() {
+    try {
+      const r = await P("export_otio"), rel = "exports/" + r.path.split(/[\\/]/).pop();
+      const app = window.studio && typeof window.studio.showRender === "function";
+      if (app && (await window.studio.showRender(E.pid, rel))) toast("OTIO saved: " + rel, true);
+      else toast("OTIO saved: " + r.path, true);
     } catch (e) { fail(e); }
   }
   async function render() {
