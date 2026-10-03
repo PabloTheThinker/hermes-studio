@@ -249,6 +249,14 @@ let PAGE = null;
     await page.waitForFunction((v) => +document.getElementById("ed-ver").textContent.slice(1) > v && document.querySelector(".it.transition"), vs, { timeout: 15000 });
     await sleep(300); // the redraw after the undo
   }
+  // Up / Down walk the selection along V1: Esc, Home, Down takes the first clip; Down again the next
+  await page.keyboard.press("Escape"); await page.keyboard.press("Home"); await page.keyboard.press("ArrowDown");
+  const s1 = await page.evaluate(() => [...document.querySelectorAll(".it.sel")].map((n) => n.dataset.id));
+  await page.keyboard.press("ArrowDown");
+  const s2 = await page.evaluate(() => [...document.querySelectorAll(".it.sel")].map((n) => n.dataset.id));
+  const v1ids = await page.evaluate(() => [...document.querySelectorAll('[data-trk="V1"] .it.clip')].map((n) => [n.dataset.id, parseFloat(n.style.left)]).sort((a, b) => a[1] - b[1]).map((x) => x[0]));
+  if (s1[0] !== v1ids[0] || s2[0] !== v1ids[1]) errs.push(`arrow select: ${s1} then ${s2}, V1 is ${v1ids}`);
+  await page.keyboard.press("Escape");
   // the two text items, Ctrl-clicked, nudge together: both 2 px right in one entry
   await page.evaluate(() => (document.getElementById("ed-scroll").scrollLeft = 0));
   const tx0 = await page.evaluate(() => [...document.querySelectorAll(".it.text")].map((n) => parseFloat(n.style.left)));

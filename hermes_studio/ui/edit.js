@@ -357,6 +357,7 @@
         const dir = e.key === "ArrowLeft" ? -1 : 1;
         if (e.altKey) nudge(dir * (e.shiftKey ? 10 : 1)); else step(dir * (e.shiftKey ? E.doc.fps[0] / E.doc.fps[1] : 1));
       }
+      else if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !e.altKey) { e.preventDefault(); stepSel(e.key === "ArrowDown" ? 1 : -1); }
       else if (e.key === "[" || e.key === "]") { e.preventDefault(); jump(e.key === "]" ? 1 : -1); }
       else if (e.key === "Home") { e.preventDefault(); E.follow = false; seek(0); }
       else if (e.key === "End") { e.preventDefault(); E.follow = false; seek(endOf(E.spans)); }
@@ -665,6 +666,21 @@
     const t = dir > 0 ? pts.find((p) => p > E.t) : [...pts].reverse().find((p) => p < E.t);
     if (t != null) { E.follow = false; seek(t); }
   }
+  // Up / Down: the previous / next item on the selected item's track (by start time), selected and
+  // under the playhead; with nothing selected, Down takes the V1 clip under the playhead.
+  function stepSel(dir) {
+    if (!E || !E.doc) return;
+    const cur = E.sel && E.by[E.sel];
+    let tr = cur ? E.doc.tracks.find((t) => t.items.includes(cur)) : E.doc.tracks.find((t) => t.id === "V1");
+    if (!tr) return;
+    const items = tr.items.filter((it) => it.type !== "transition").sort((a, b) => E.spans[a.id][0] - E.spans[b.id][0] || (a.id < b.id ? -1 : 1));
+    if (!items.length) return;
+    let next;
+    if (!cur) next = (clipAt(E.t) || [])[0] || items.find((it) => E.spans[it.id][0] >= E.t) || items[items.length - 1];
+    else { const i = items.indexOf(cur); next = items[Math.max(0, Math.min(items.length - 1, i + dir))]; }
+    selOnly(next.id); E.tab = "item"; pane(); E.follow = false; seek(E.spans[next.id][0]);
+    const n = document.querySelector(`.it[data-id="${CSS.escape(next.id)}"]`); if (n) n.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
   function step(frames) { if (E && E.doc) { pause(); E.follow = false; seek(Math.max(0, snapT(E.t) + Math.round(frames * frameT()))); } }
   // Key repeats of one action (a held Alt+arrow, , or .) add up and land as ONE entry once the
   // keys stop for KEY_SETTLE_MS; another action, or a click elsewhere, lands the pending one first.
@@ -725,7 +741,7 @@
     timeline();
   }
   function keysHelp() {
-    const rows = [["Space", "play / pause"], ["J K L", "slower or back a second / stop / play, faster each press (to 4×)"], ["← →", "one frame"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
+    const rows = [["Space", "play / pause"], ["J K L", "slower or back a second / stop / play, faster each press (to 4×)"], ["← →", "one frame"], ["↑ ↓", "previous / next item on the track"], ["Shift ← →", "one second"], ["[ ]", "previous / next edit point"],
       ["Home End", "start / end"], ["Alt ← →", "nudge the selection a frame"], ["Alt Shift ← →", "nudge it ten frames"], [", .", "slip the clip a frame (Shift: a second)"], ["Alt drag", "slip a clip; on its right edge, roll the cut"], ["Shift drag", "drag without snapping"], ["S", "split at the playhead"],
       ["M", "marker at the playhead"], ["Delete", "delete the selection"], ["Ctrl click", "add or remove one from the selection"], ["Ctrl A", "select every clip and text item"], ["Esc", "clear the selection"], ["Ctrl C / V", "copy the selection / paste it at the playhead"], ["Ctrl D", "duplicate the selection right after it"], ["Ctrl Z", "undo"], ["Ctrl Shift Z", "redo"], ["\\", "zoom to fit"], ["Ctrl wheel", "zoom around the pointer"], ["?", "these keys"]];
     E.keyRows = rows; E.tab = "keys"; pane();
