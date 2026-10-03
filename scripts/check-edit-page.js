@@ -15,6 +15,10 @@ const PORT = 8771;
 fs.rmSync(HOME, { recursive: true, force: true }); fs.mkdirSync(path.join(HOME, "Videos"), { recursive: true });
 const vid = path.join(HOME, "Videos", "talk.mp4");
 execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30:duration=12", "-f", "lavfi", "-i", "sine=frequency=330:duration=12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", vid]);
+// a finished clip run in the library (as the Clips page would leave it), for the Media tab's "From your clips"
+const runDir = path.join(HOME, ".hermes/clips/library/Local/Demo run [run1]"); fs.mkdirSync(runDir, { recursive: true });
+fs.copyFileSync(vid, path.join(runDir, "clip-01.mp4"));
+fs.writeFileSync(path.join(runDir, "job.json"), JSON.stringify({ id: "run1", src: vid, title: "Demo run", status: "completed", stage: "done", platform: "Local", dir: runDir, finished_at: "2026-10-03T10:00:00+00:00", clips: [{ file: "clip-01.mp4", title: "Best bit", start: 0, end: 12, score: 1, virality: 0 }] }));
 const env = { ...process.env, HOME, HERMES_STUDIO_UI_TOKEN: TOKEN, PYTHONUNBUFFERED: "1" };
 const srv = spawn(path.join(REPO, ".venv/bin/hermes-studio"), ["studio", "--port", String(PORT)], { env, stdio: ["ignore", "pipe", "pipe"] });
 let log = ""; srv.stdout.on("data", (b) => (log += b)); srv.stderr.on("data", (b) => (log += b));
@@ -295,6 +299,15 @@ let PAGE = null;
   const shotPath = path.join(OUT, "frame.jpg"); await dl.saveAs(shotPath);
   const shotInfo = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height,codec_name", "-of", "csv=p=0", shotPath]).toString().trim();
   if (!/^mjpeg,1080,1920$/.test(shotInfo) || !/-0-00-00\.jpg$/.test(dl.suggestedFilename())) errs.push(`save frame: ${dl.suggestedFilename()} ${shotInfo}`);
+  // From your clips: the library run is listed and its clip imports as a new media
+  await page.click('[data-tab="media"]'); await page.click("#ed-lib summary");
+  await page.waitForSelector("[data-lib]", { timeout: 15000 }).catch(() => errs.push("from your clips: no run listed"));
+  const nMedia = await page.evaluate(() => document.querySelectorAll("[data-add]").length);
+  if (await page.$("[data-lib]")) {
+    await page.click("[data-lib]");
+    await page.waitForFunction((n) => document.querySelectorAll("[data-add]").length === n + 1, nMedia, { timeout: 15000 })
+      .catch(() => errs.push("from your clips: the clip didn't import"));
+  }
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");

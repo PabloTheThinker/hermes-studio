@@ -953,6 +953,7 @@
       el.innerHTML = `<label class="f">Import a file${app ? " (or drop it here)" : ""}</label><div style="display:flex;gap:.4rem"><input type="text" id="ed-path" placeholder="~/Videos/talk.mp4" style="flex:1;min-width:0" />${app ? `<button class="ed-btn" id="ed-browse">Browse…</button>` : ""}</div>
         <label class="chk"><input type="checkbox" id="ed-words" checked /> transcribe words (local Whisper)</label>
         <p><button class="ed-btn amber" id="ed-import">Import</button></p>
+        <details id="ed-lib"${E.libOpen ? " open" : ""}><summary class="f" style="cursor:pointer">From your clips</summary><div id="ed-lib-list" class="hint">…</div></details>
         ${Object.entries(E.doc.media).map(([mid, m]) => {
           const st = E.media[mid] || {}; const p = Math.round((st.progress || 0) * 100);
           return `<div class="mrow"><div class="nm">${esc(mid)} · ${esc(String(m.path).split(/[\\/]/).pop())}</div>
@@ -971,6 +972,9 @@
           document.getElementById("ed-path").value = p; document.getElementById("ed-import").click();
         };
       }
+      const lib = document.getElementById("ed-lib");
+      lib.ontoggle = () => { E.libOpen = lib.open; if (lib.open) libList(); };
+      if (lib.open) libList();
       document.getElementById("ed-import").onclick = async () => {
         const path = document.getElementById("ed-path").value.trim(); if (!path) return;
         const stages = ["proxy", "thumbs", "wave", "scenes"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
@@ -1051,6 +1055,23 @@
       if (hits.length) cut({ ranges: hits.map(([a, b]) => ({ from_s: sec(ws[a].at), to_s: sec(ws[b].end) })) }, `Cut "${E.find.trim()}"`);
     };
     search();
+  }
+
+  /* The desk's finished clip runs (/api/library), newest first: a click imports a clip into this
+     project like any file (import_media: proxy, thumbs, wave, shot changes and its words). */
+  async function libList() {
+    const box = document.getElementById("ed-lib-list"); if (!box) return;
+    let runs = [];
+    try { runs = ((await (await fetch("/api/library")).json()).runs || []).filter((r) => (r.clips || []).length && r.dir); } catch {}
+    runs.sort((a, b) => String(b.finished_at || "").localeCompare(String(a.finished_at || "")));
+    if (!E || !document.getElementById("ed-lib-list")) return;
+    box.innerHTML = runs.length ? runs.slice(0, 12).map((r) => `<div class="mrow"><div class="nm">${esc(r.title || r.id)}</div>
+      ${r.clips.map((c) => `<p style="margin:.25rem 0;display:flex;gap:.4rem;align-items:center"><button class="ed-btn" data-lib="${esc(r.dir.replace(/[\\/]+$/, "") + "/" + c.file)}">Import</button><span class="meta">${esc(c.title || c.file)}</span></p>`).join("")}</div>`).join("")
+      : `<p class="hint">No finished clip runs yet. Make some on the Clips page.</p>`;
+    box.querySelectorAll("[data-lib]").forEach((b) => (b.onclick = async () => {
+      const stages = ["proxy", "thumbs", "wave", "scenes"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
+      try { await P("import_media", { path: b.dataset.lib, stages, client_op_id: rid() }); toast("Importing", true); await reload(); } catch (e) { fail(e); }
+    }));
   }
 
   /* ---------------------------------------------------------------- scenes */
