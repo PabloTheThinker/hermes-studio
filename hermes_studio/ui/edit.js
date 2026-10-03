@@ -139,6 +139,7 @@
     .it.ghost { outline: 2px dashed var(--ember, #ff7a45); outline-offset: 1px; }
     .words span.hit { background: rgba(255,200,61,.22); border-radius: 2px; } .words span.hit.cur { background: var(--amber); color: #000; }
     .card .sum[data-jump] { cursor: pointer; } .card .sum[data-jump]:hover { color: var(--amber); }
+    .ed :focus-visible, .gate :focus-visible, .plist :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
     .snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--amber); z-index: 4; pointer-events: none; display: none; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
@@ -184,6 +185,7 @@
   function toast(msg, ok) {
     const t = document.createElement("div");
     t.className = "toast" + (ok ? " ok" : "");
+    t.setAttribute("role", ok ? "status" : "alert"); // read out by screen readers
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), ok ? 2500 : 6000);
@@ -226,7 +228,11 @@
         <button class="ed-btn amber" id="ed-new">New project</button></p>
         <div class="plist">${order(list).map((p) => p.error ? `<div class="row"><span class="nm">${esc(p.project_id)}</span><span class="meta">${esc(p.error.error)}</span></div>` :
           `<div class="row" data-pid="${esc(p.project_id)}"><span class="nm">${esc(p.project_id)}</span><span class="hint">${esc(p.size[0])}×${esc(p.size[1])} · ${esc(p.media)} media · ${esc(p.items)} items</span><span class="meta">${p.drafts ? `${p.drafts} draft${p.drafts > 1 ? "s" : ""} · ` : ""}v${esc(p.version)} · ${tc(p.end)} · ${esc(p.mode)} · ${ago(p.modified)}</span></div>`).join("") || `<p class="hint">No projects yet.</p>`}</div>`;
-      root.querySelectorAll("[data-pid]").forEach((r) => (r.onclick = () => go(r.dataset.pid)));
+      root.querySelectorAll("[data-pid]").forEach((r) => {
+        r.tabIndex = 0; r.setAttribute("role", "link");
+        r.onclick = () => go(r.dataset.pid);
+        r.onkeydown = (e) => { if (e.key === "Enter") go(r.dataset.pid); };
+      });
       document.getElementById("ed-new").onclick = async () => {
         try { const p = await rpc("project_new", { shape: document.getElementById("ed-shape").value }); go(p.project_id); } catch (e) { fail(e); }
       };
@@ -288,11 +294,11 @@
     return `<div class="ed">
       <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
         <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)">Undo</button><button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-        <span class="sp"></span><span class="hint" id="ed-render-st"></span>
+        <span class="sp"></span><span class="hint" id="ed-render-st" aria-live="polite"></span>
         <select class="ed-btn" id="ed-cstyle" title="Captions in the render: a style, or none">${["pop", "impact", "clean", "glow", "neon", "boxed"].map((x) => `<option value="${x}">captions: ${x}</option>`).join("")}<option value="">no captions</option></select>
         <select class="ed-btn" id="ed-rsize" title="Render size"><option value="1">full size</option><option value="2">half size</option></select>
         <button class="ed-btn amber" id="ed-render">Render MP4</button></div>
-      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
+      <div class="ed-left"><div class="tabs" role="tablist" aria-label="Panels"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="scenes">Scenes</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div><div class="cap" id="ed-cap"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split" title="Split at the playhead (S)">Split</button><button class="ed-btn" id="ed-del">Delete</button>
@@ -300,7 +306,7 @@
         <select class="ed-btn" id="ed-preset" title="Presets: one step, one undo"><option value="">Presets</option><option value="title_card">Title card</option>
           <option value="end_card">End card</option><option value="fade_in_out">Fade every clip</option><option value="crossfade_all">Crossfade every cut</option><option value="close_gaps">Close the gaps</option>
           <option value="duck_music">Duck the music</option></select>
-        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><button class="ed-btn" id="ed-fit" title="Zoom to fit (\\)">Fit</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" style="width:110px;flex:none" /></div>
+        <span class="sp" style="flex:1"></span><button class="ed-btn" id="ed-keys" title="Keyboard shortcuts (?)">Keys</button><button class="ed-btn" id="ed-fit" title="Zoom to fit (\\)">Fit</button><span class="hint">zoom</span><input type="range" id="ed-zoom" min="5" max="240" value="60" aria-label="Timeline zoom" style="width:110px;flex:none" /></div>
         <div class="tl-scroll" id="ed-scroll"><div class="tl-inner" id="ed-tl"></div></div></div>
       <div class="ed-side" id="ed-side"></div></div>`;
   }
@@ -931,7 +937,7 @@
   function pane() {
     const el = document.getElementById("ed-pane"); if (!el || !E.doc) return;
     el.ondragover = el.ondragleave = el.ondrop = null; el.classList.remove("drop"); // only the Media tab takes drops
-    ROOT.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab));
+    ROOT.querySelectorAll("[data-tab]").forEach((b) => { b.classList.toggle("on", b.dataset.tab === E.tab); b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(b.dataset.tab === E.tab)); });
     if (E.tab === "media") {
       const app = window.studio && typeof window.studio.pickFile === "function";
       el.innerHTML = `<label class="f">Import a file${app ? " (or drop it here)" : ""}</label><div style="display:flex;gap:.4rem"><input type="text" id="ed-path" placeholder="~/Videos/talk.mp4" style="flex:1;min-width:0" />${app ? `<button class="ed-btn" id="ed-browse">Browse…</button>` : ""}</div>
@@ -1190,7 +1196,7 @@
     const recs = [...E.records].reverse().slice(0, 40);
     el.innerHTML = `<div class="side-h"><span class="dot ${pend.length ? "live" : ""}"></span><b>Hermes</b><span class="hint">${pend.length ? "waiting for you" : "idle"}</span>
         <label class="hint chk" style="display:inline-flex;gap:.3rem;align-items:center"><input type="checkbox" id="ed-follow" ${E.follow ? "checked" : ""} style="width:auto;margin:0" /> follow</label>
-        <span class="seg">${["ask", "propose", "auto"].map((m) => `<button data-mode="${m}" class="${E.mode === m ? "on" : ""}">${m}</button>`).join("")}</span></div>
+        <span class="seg" role="group" aria-label="What agents may do">${["ask", "propose", "auto"].map((m) => `<button data-mode="${m}" class="${E.mode === m ? "on" : ""}" aria-pressed="${E.mode === m}">${m}</button>`).join("")}</span></div>
       ${E.draftOf ? `<div class="card wait"><div class="who">draft</div><div class="sum">A draft of ${esc(E.draftOf)}</div>
         <div class="v">Edits here don't touch the main timeline until you keep them.</div>
         <div class="acts"><button class="ed-btn amber" id="dr-keep">Keep (one undo)</button><button class="ed-btn" id="dr-drop">Discard</button></div></div>` : ""}

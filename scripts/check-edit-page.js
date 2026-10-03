@@ -274,6 +274,10 @@ let PAGE = null;
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");
   const row = await page.textContent(".plist .row");
   if (!/edited just now/.test(row)) errs.push("projects list: " + row);
+  // keyboard: the row takes focus and Enter opens it; the mode switch says which mode is on
+  await page.focus(".plist .row"); await page.keyboard.press("Enter");
+  await page.waitForSelector("#ed-tc", { timeout: 15000 }).catch(() => errs.push("keyboard: Enter on a project row didn't open it"));
+  await page.waitForSelector('[data-mode="propose"][aria-pressed="true"]', { timeout: 15000 }).catch(() => errs.push("a11y: the mode switch has no aria-pressed"));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
