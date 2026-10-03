@@ -1252,7 +1252,8 @@
       ${recs.map((r) => `<div class="card ${E.cancelled.has(r.op_id) ? "undone" : ""}"><div class="who ${r.actor.kind === "agent" ? "agent" : ""}">${esc(r.actor.kind === "human" ? "you" : r.actor.id)}${r.step != null ? " · step " + esc(r.step) : ""}${r.undoes ? " · undo" : ""}</div>
         <div class="sum" data-jump="${esc(r.op_id)}" title="Show what this changed">${esc(r.summary)}</div><div class="v">v${esc(r.base_version)} → v${esc(r.new_version)} · ${esc(r.changed_ids.length)} changed</div>
         <div class="ba" id="ba-${esc(r.op_id)}"></div>
-        <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
+        <pre class="pv" id="wx-${esc(r.op_id)}" hidden></pre>
+        <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button><button class="ed-btn" data-explain="${esc(r.op_id)}">What changed</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
       <p class="hint" style="padding:.8rem .9rem">Agents edit this timeline through MCP (<span class="mono">hermes-studio mcp install claude</span>). In Propose mode each edit waits here for Apply or Skip.</p>`;
     document.getElementById("ed-follow").onchange = (e) => { E.follow = e.target.checked; };
     const dn = document.getElementById("dr-new");
@@ -1265,6 +1266,17 @@
     const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
     el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));
     el.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = () => res(b.dataset.skip, "skip")));
+    // What changed: history_explain's outline lines, gone (−) and new (+), on the card; again hides it.
+    el.querySelectorAll("[data-explain]").forEach((b) => (b.onclick = async () => {
+      const box = document.getElementById("wx-" + b.dataset.explain);
+      if (!box.hidden) { box.hidden = true; return; }
+      try {
+        const x = await P("history_explain", { op_id: b.dataset.explain });
+        const len = x.length_s[0] === x.length_s[1] ? "" : `length ${x.length_s[0].toFixed(2)} → ${x.length_s[1].toFixed(2)} s\n`;
+        box.textContent = len + x.removed.map((l) => "− " + l).concat(x.added.map((l) => "+ " + l)).join("\n") || "No visible change.";
+        box.hidden = false;
+      } catch (e) { fail(e); }
+    }));
     // A history card's title: select what that step changed (what still exists) and go to it.
     el.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => {
       const rec = E.records.find((x) => x.op_id === b.dataset.jump); if (!rec) return;

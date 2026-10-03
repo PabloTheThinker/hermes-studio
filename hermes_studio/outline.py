@@ -131,3 +131,40 @@ def outline(doc: dict) -> dict:
         "chapters": chapters(markers, _s(length)) if markers else "",
         "text": "\n".join(lines),
     }
+
+
+def explain(log: Any, op_id: str) -> dict | None:
+    """``history_explain``: what one history entry changed, as outline lines. ``removed`` are the
+    lines of the outline before it that are gone after it, ``added`` the new ones (items, gaps and
+    the markers line; the header line is left out, the lengths are given instead). None when the
+    log has no such entry."""
+    from collections import Counter
+
+    from hermes_studio import frames as F
+
+    e = next((x for x in log._entries if x["op_id"] == op_id), None)
+    if e is None:
+        return None
+    before, after = outline(F.doc_at(log, e["base_version"])), outline(F.doc_at(log, e["new_version"]))
+    b, a = before["text"].splitlines()[1:], after["text"].splitlines()[1:]
+    gone, new = Counter(b) - Counter(a), Counter(a) - Counter(b)
+
+    def pick(lines: list[str], keep: Counter) -> list[str]:
+        out = []
+        for ln in lines:
+            if keep[ln] > 0 and not ln.endswith(":"):  # a track heading alone isn't a change
+                keep[ln] -= 1
+                out.append(ln.strip())
+        return out
+
+    return {
+        "op_id": e["op_id"],
+        "summary": e["summary"],
+        "actor": e["actor"],
+        "undoes": e["undoes"],
+        "before_version": e["base_version"],
+        "after_version": e["new_version"],
+        "length_s": [before["length_s"], after["length_s"]],
+        "removed": pick(b, gone),
+        "added": pick(a, new),
+    }

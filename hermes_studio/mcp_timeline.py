@@ -37,6 +37,7 @@ READ_TOOLS = (
     "validate_timeline",
     "history_list",
     "history_diff",
+    "history_explain",
     "project_status",
 )
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
@@ -142,6 +143,15 @@ TOOLS: list[dict] = [
         "What changed",
         "One short record per entry after since_version, oldest first, at most limit (default 200, 1-500): {records, next_since_version, head_version}.",
         {"since_version": {"type": "integer"}, "limit": {"type": "integer"}},
+        _RO,
+    ),
+    _tool(
+        "history_explain",
+        "What one edit changed",
+        "One history entry (op_id) in plain words: {summary, actor, before_version, after_version, length_s: [before, "
+        "after], removed, added}, where removed / added are timeline_outline lines that went away or appeared (items, "
+        "gaps, markers). Read what a person or another agent did without diffing get_timeline yourself.",
+        {"op_id": _S},
         _RO,
     ),
     _tool(
@@ -673,6 +683,8 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "timeline_outline", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
+    if name == "history_explain":
+        _no_unknown(args, {"project_id", "op_id"})
     if name in ("media_status", "get_scenes"):
         _no_unknown(args, {"project_id", "media_id"})
     if name in ("render_status", "render_cancel"):
@@ -787,6 +799,21 @@ def _read(name: str, args: dict, proj: Any) -> dict:
             return log.history_diff(**args)
         if name == "get_hash":
             return log.head()
+        if name == "history_explain":
+            from hermes_studio.outline import explain
+
+            op_id = args.get("op_id")
+            if not isinstance(op_id, str):
+                raise O.OplogError(
+                    "invalid_op",
+                    "'op_id' must be an op id",
+                    rule="bad_arg" if "op_id" in args else "missing_arg",
+                    path="/op_id",
+                )
+            res = explain(log, op_id)
+            if res is None:
+                raise O.OplogError("not_found", f"no entry {op_id!r}", rule="not_found", path="/op_id", id=op_id)
+            return res
         doc = log.doc
     if name == "get_timeline":
         return doc

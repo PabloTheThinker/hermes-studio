@@ -279,6 +279,12 @@ let PAGE = null;
   if (!shown || !/^p-[0-9a-f]+\/exports\/[^/]+-540x960\.mp4$/.test(shown)) errs.push("show in folder: asked for " + shown);
   if (!/540x960$/.test(rendered)) errs.push("render: " + rendered + ", want a 540x960 render without captions");
   await page.screenshot({ path: path.join(OUT, "10-rendered.png") });
+  // What changed on the "Duplicate c2" card: one + line for the copy, nothing removed
+  const dupCard = page.locator(".card", { has: page.locator('.sum:text-is("Duplicate c2")') });
+  await dupCard.locator("[data-explain]").click();
+  await page.waitForFunction(() => [...document.querySelectorAll("pre[id^=wx-]")].some((p) => !p.hidden), null, { timeout: 15000 });
+  const wx = await dupCard.locator("pre").textContent();
+  if (!/^(length .*\n)?\+ c\d+ [\d.]+-[\d.]+ m1\[[\d.]+-[\d.]+\]( speed [\d.]+)?( volume [\d.]+)?$/.test(wx)) errs.push("what changed: " + JSON.stringify(wx));
   // a history card's title selects what that step changed: "Duplicate c2" -> the copy it made
   await page.click('.card .sum[data-jump]:text-is("Duplicate c2")');
   const jumped = await page.evaluate(() => [...document.querySelectorAll(".it.sel")].map((n) => n.dataset.id));
