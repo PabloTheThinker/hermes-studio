@@ -261,6 +261,14 @@ let PAGE = null;
   if (jumped.length !== 1 || !/^c\d+$/.test(jumped[0]) || jumped[0] === "c2") errs.push("history jump: selected " + jumped);
   const undoTip = await page.getAttribute("#ed-undo", "title");
   if (!/^Undo ".+" \(Ctrl\+Z\)$/.test(undoTip || "")) errs.push("undo tooltip: " + undoTip);
+  // the smallest desktop window (760 x 540): screenshot it, and nothing may scroll the page sideways
+  await page.setViewportSize({ width: 760, height: 540 }); await sleep(400);
+  await page.screenshot({ path: path.join(OUT, "11-small.png") });
+  const sideways = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  if (sideways > 1) errs.push(`small window: the page scrolls ${sideways}px sideways`);
+  const fits = await page.evaluate(() => { const ed = document.querySelector(".ed").getBoundingClientRect(), r = document.getElementById("ed-render"); r.scrollIntoView({ inline: "nearest" }); const rb = r.getBoundingClientRect(); return { bottom: ed.bottom - window.innerHeight, render: rb.right <= window.innerWidth + 1 && rb.left >= -1 }; });
+  if (fits.bottom > 1 || !fits.render) errs.push("small window: " + JSON.stringify(fits));
+  await page.setViewportSize({ width: 1440, height: 900 });
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");

@@ -72,7 +72,10 @@
     main.edit-full { padding: 0; overflow: hidden; }
     main.edit-full .wrap { max-width: none; height: 100%; }
     .ed { display: grid; grid-template-columns: 270px minmax(0,1fr) 340px; grid-template-rows: 48px minmax(0,1fr) 250px; height: calc(100vh - 64px); }
-    .ed-top { grid-column: 1 / -1; display: flex; align-items: center; gap: .9rem; padding: 0 1rem; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .ed-top { grid-column: 1 / -1; display: flex; align-items: center; gap: .9rem; padding: 0 1rem; border-bottom: 1px solid var(--line); font-size: 13px; overflow-x: auto; overflow-y: hidden; min-width: 0; }
+    .ed-top > * { flex: none; }
+    .ed-top .sp { flex: 1 1 0; min-width: 0; }
+    #ed-render-st { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ed-top .pid { font: 600 12px var(--mono); color: var(--mute); }
     .ed-top .ver { font: 500 11px var(--mono); color: var(--dim); }
     .ed-top .sp { flex: 1; }
@@ -110,7 +113,7 @@
     .screen .txt { position: absolute; left: 6%; right: 6%; top: 72%; transform: translateY(-50%); text-align: center; font-weight: 800; font-size: clamp(12px, 3.2vh, 34px); color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke; text-shadow: 0 2px 6px rgba(0,0,0,.6); white-space: pre-wrap; pointer-events: none; }
     .transport { display: flex; align-items: center; gap: .8rem; padding: .45rem .8rem; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); }
     .ed-tl { grid-column: 1 / 3; grid-row: 3; border-top: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-    .tl-tools { display: flex; gap: .5rem; align-items: center; overflow: hidden; padding: .35rem .7rem; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .tl-tools { display: flex; gap: .5rem; align-items: center; overflow-x: auto; overflow-y: hidden; min-width: 0; padding: .35rem .7rem; border-bottom: 1px solid var(--line); font-size: 12px; }
     .tl-scroll { flex: 1; overflow: auto; position: relative; }
     .tl-inner { position: relative; min-height: 100%; }
     .ruler { position: sticky; top: 0; height: 20px; border-bottom: 1px solid var(--line); background: var(--bg); z-index: 2; font: 500 10px var(--mono); color: var(--dim); }
@@ -161,6 +164,19 @@
     .plist .row { display: flex; align-items: baseline; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--line); cursor: pointer; }
     .plist .row:hover .nm { color: var(--amber); }
     .plist .nm { font-weight: 600; } .plist .meta { font: 500 11px var(--mono); color: var(--dim); margin-left: auto; }
+    /* narrow windows (the desktop app goes down to 760 px): last, so they win */
+    @media (max-width: 1100px) {
+      .ed { grid-template-columns: 220px minmax(0,1fr) 270px; grid-template-rows: 44px minmax(0,1fr) 220px; }
+      .ed-top { gap: .5rem; padding: 0 .6rem; }
+      #ed-render-st { max-width: 16ch; }
+      .ed-top select.ed-btn { max-width: 9.5rem; }
+      .tabs { overflow-x: auto; } .tabs button { flex: none; font-size: 10px; letter-spacing: .02em !important; padding: .55rem .45rem; }
+      .tl-tools > * { flex: none; }
+    }
+    @media (max-width: 860px) {
+      .ed { grid-template-columns: 190px minmax(0,1fr) 230px; }
+      .ed-top .pid { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; }
+    }
     `;
     document.head.appendChild(st);
   }
@@ -253,6 +269,7 @@
       E = { pid, doc: null, spans: {}, t: 0, zoom: 60, sel: null, tab: "media", media: {}, words: [], wsel: null, records: [], pending: [],
             mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, sprites: {}, follow: true, sels: new Set() };
       root.innerHTML = layout();
+      fitHeight(); window.addEventListener("resize", fitHeight);
       bindStatic();
       fetch("/api/caption-styles").then((r) => r.json()).then((j) => { if (E && j.ok) { E.capStyles = j; drawCaption(); } }).catch(() => {});
       try { await reload(); } catch (e) { fail(e); if (e.code === "not_found") { location.hash = "#/edit"; return; } }
@@ -260,6 +277,13 @@
     });
   }
 
+  // The editor fills the window below the desk's header, whatever height that header has (it
+  // grows to two rows in a narrow window).
+  function fitHeight() {
+    const ed = ROOT && ROOT.querySelector(".ed"); if (!ed) return;
+    ed.style.height = `calc(100vh - ${Math.max(0, Math.round(ed.getBoundingClientRect().top + window.scrollY))}px)`;
+    if (E && E.doc) timeline();
+  }
   function layout() {
     return `<div class="ed">
       <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
@@ -1330,6 +1354,7 @@
   }
 
   function leave() {
+    window.removeEventListener("resize", fitHeight);
     if (E) { E.ctl.abort(); document.removeEventListener("keydown", E.keys); const v = document.getElementById("ed-video"); if (v) v.pause(); Object.values(E.auds || {}).forEach((a) => { a.pause(); a.removeAttribute("src"); }); }
     E = null;
     const m = document.getElementById("main"); if (m) m.classList.remove("edit-full");
