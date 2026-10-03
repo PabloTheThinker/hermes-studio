@@ -30,6 +30,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-multiselect` | Edit page multi-select (Ctrl/Shift-click, Ctrl+A, Esc); group Delete and Alt-arrow nudge, one entry each | `check-edit-page.js` multi-select step | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-outline` | read tool `timeline_outline` (33 tools) and `GET /api/projects/<id>/outline`: the edit in seconds and plain words (items, crossfades, V1 gaps, markers, length, a `text` sketch); AGENTS.md points agents to it first and lists the newer ops | `tests/test_outline.py` | `outline.py` docstring, AGENTS.md |
 | `feat/editor-caption-preview` | Edit page preview draws word captions like the render (grouping, highlight, size, place; `GET /api/caption-styles` from `captions.preview_styles`); `captions.GROUP_GAP_S` shared with `build_ass` | `test_editor_polish.py` style data; `check-edit-page.js` caption step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-browse` | desktop: Browse… (system file dialog via `pick-file` IPC, desk origin only) and drop-to-import (`webUtils.getPathForFile`) on the Edit page's Media tab | `check-edit-page.js` imports through Browse… with the dialog stubbed; the real Electron dialog and drop are not run here (no Electron in this container), so a person should try them in the app | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

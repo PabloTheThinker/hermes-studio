@@ -1,7 +1,7 @@
 // Drives the Edit page end to end in Chromium (manual check, not run in CI):
 //   node scripts/check-edit-page.js [out-dir]
 // Starts `hermes-studio studio` with a throwaway HOME and a fixed ui token (standing in for the
-// desktop app's preload), makes a project, imports a generated video, adds it to the timeline,
+// desktop app's preload), makes a project, imports a generated video through Browse…, adds it to the timeline,
 // lets an agent (the stdio MCP proxy) add a title in Propose mode, applies it from the sidebar,
 // plays, trims, crossfades, drives markers and keys, and saves slips and rolls, snaps a marker to the playhead, duplicates and copy-pastes, checks the music track's preview plan, multi-selects, renders at half size without captions, and saves screenshots 1-10 to out-dir. Needs ffmpeg, Node and Playwright with Chromium.
 let chromium;
@@ -27,16 +27,19 @@ let PAGE = null;
   PAGE = page;
   const errs = []; page.on("pageerror", (e) => errs.push("pageerror: " + e.message)); page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text()); });
   await page.addInitScript((t) => {
-    window.studio = { uiToken: async () => t, retry: async () => {} };
+    window.studio = { uiToken: async () => t, retry: async () => {}, pickFile: async () => window.__pick, pathOf: () => null };
     window.__toasts = []; // every toast, for the failure report
     new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("toast")) window.__toasts.push(n.textContent); }))).observe(document, { childList: true, subtree: true });
   }, TOKEN);
+  await page.addInitScript((v) => { window.__pick = v; }, vid); // what the desktop app's file dialog would return
   const base = `http://127.0.0.1:${PORT}/`;
   await page.goto(base + "#/edit"); await page.waitForSelector("#ed-new");
   await page.screenshot({ path: path.join(OUT, "1-home.png") });
   await page.click("#ed-new"); await page.waitForSelector("#ed-path");
   await page.uncheck("#ed-words");
-  await page.fill("#ed-path", vid); await page.click("#ed-import");
+  await page.click("#ed-browse"); // the desktop app's Browse… (its dialog stubbed to pick the test video)
+  if ((await page.inputValue("#ed-path")) !== vid) errs.push("browse: the path field wasn't filled");
+  await page.click("#ed-import");
   await page.waitForFunction(() => /ready/.test(document.querySelector("#ed-pane").textContent), null, { timeout: 60000 });
   // words for m1, as the Whisper stage would write them (media ticks), so the preview can caption them
   const pidNow = (await page.evaluate(() => location.hash)).split("/").pop();

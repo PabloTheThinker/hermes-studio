@@ -3,7 +3,7 @@
 // resources/engine. On open it starts that engine on a free loopback port,
 // waits for it, and loads the desk. On quit it stops the engine.
 // Dev fallback: HERMES_STUDIO_URL, or build/engine in the repo.
-const { app, BrowserWindow, Menu, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require("electron");
 const http = require("http");
 const net = require("net");
 const path = require("path");
@@ -149,15 +149,25 @@ async function boot() {
 }
 
 ipcMain.handle("retry", () => boot());
-// Only the desk page this app loaded (same origin as the engine it started) gets the token.
-ipcMain.handle("ui-token", (event) => {
+// Only the desk page this app loaded (same origin as the engine it started) may ask.
+function fromDesk(event) {
   try {
-    const from = new URL(event.senderFrame.url);
-    if (!uiToken || !deskUrl || from.origin !== new URL(deskUrl).origin) return null;
+    return !!deskUrl && new URL(event.senderFrame.url).origin === new URL(deskUrl).origin;
   } catch {
-    return null;
+    return false;
   }
-  return uiToken;
+}
+ipcMain.handle("ui-token", (event) => (uiToken && fromDesk(event) ? uiToken : null));
+// The Edit page's Browse button: the system's file dialog, one video or audio file, its path.
+const MEDIA_EXT = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
+ipcMain.handle("pick-file", async (event) => {
+  if (!fromDesk(event)) return null;
+  const r = await dialog.showOpenDialog(win, {
+    title: "Import into the edit",
+    properties: ["openFile"],
+    filters: [{ name: "Video and audio", extensions: MEDIA_EXT }, { name: "All files", extensions: ["*"] }],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
 });
 
 function createWindow() {

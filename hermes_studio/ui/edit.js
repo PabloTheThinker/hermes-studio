@@ -105,6 +105,7 @@
     .stage { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; }
     .screen { position: relative; height: 100%; max-height: 100%; aspect-ratio: var(--ar, 9/16); max-width: 100%; background: #000; overflow: hidden; }
     .screen video, .screen img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .pane.drop { outline: 2px dashed var(--amber); outline-offset: -6px; }
     .screen .cap { position: absolute; left: 5%; right: 5%; text-align: center; font-weight: 800; font-family: "DejaVu Sans", var(--sans); paint-order: stroke; pointer-events: none; line-height: 1.15; }
     .screen .txt { position: absolute; left: 6%; right: 6%; top: 72%; transform: translateY(-50%); text-align: center; font-weight: 800; font-size: clamp(12px, 3.2vh, 34px); color: #fff; -webkit-text-stroke: 1px #000; paint-order: stroke; text-shadow: 0 2px 6px rgba(0,0,0,.6); white-space: pre-wrap; pointer-events: none; }
     .transport { display: flex; align-items: center; gap: .8rem; padding: .45rem .8rem; border-top: 1px solid var(--line); font: 500 12px var(--mono); color: var(--mute); }
@@ -861,9 +862,11 @@
   /* ---------------------------------------------------------------- left panes */
   function pane() {
     const el = document.getElementById("ed-pane"); if (!el || !E.doc) return;
+    el.ondragover = el.ondragleave = el.ondrop = null; el.classList.remove("drop"); // only the Media tab takes drops
     ROOT.querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === E.tab));
     if (E.tab === "media") {
-      el.innerHTML = `<label class="f">Import a file</label><input type="text" id="ed-path" placeholder="~/Videos/talk.mp4" />
+      const app = window.studio && typeof window.studio.pickFile === "function";
+      el.innerHTML = `<label class="f">Import a file${app ? " (or drop it here)" : ""}</label><div style="display:flex;gap:.4rem"><input type="text" id="ed-path" placeholder="~/Videos/talk.mp4" style="flex:1;min-width:0" />${app ? `<button class="ed-btn" id="ed-browse">Browse…</button>` : ""}</div>
         <label class="chk"><input type="checkbox" id="ed-words" checked /> transcribe words (local Whisper)</label>
         <p><button class="ed-btn amber" id="ed-import">Import</button></p>
         ${Object.entries(E.doc.media).map(([mid, m]) => {
@@ -873,6 +876,17 @@
             ${st.state === "running" || st.state === "queued" ? `<div class="bar"><i style="width:${p}%"></i></div>` : ""}
             <p style="margin:.35rem 0 0;display:flex;gap:.4rem"><button class="ed-btn" data-add="${esc(mid)}">Add to end</button><button class="ed-btn" data-music="${esc(mid)}">Add as music</button></p></div>`;
         }).join("")}`;
+      if (app) {
+        document.getElementById("ed-browse").onclick = async () => { const p = await window.studio.pickFile(); if (p) document.getElementById("ed-path").value = p; };
+        el.ondragover = (e) => { e.preventDefault(); el.classList.add("drop"); };
+        el.ondragleave = () => el.classList.remove("drop");
+        el.ondrop = (e) => {
+          e.preventDefault(); el.classList.remove("drop");
+          const f = e.dataTransfer && e.dataTransfer.files[0], p = f && window.studio.pathOf && window.studio.pathOf(f);
+          if (!p) return toast("Drop a file from your computer.");
+          document.getElementById("ed-path").value = p; document.getElementById("ed-import").click();
+        };
+      }
       document.getElementById("ed-import").onclick = async () => {
         const path = document.getElementById("ed-path").value.trim(); if (!path) return;
         const stages = ["proxy", "thumbs", "wave", "scenes"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
