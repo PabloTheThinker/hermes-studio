@@ -58,6 +58,13 @@ let PAGE = null;
   await page.waitForFunction(() => /shot change/i.test(document.getElementById("ed-pane").textContent), null, { timeout: 15000 });
   await page.click('[data-tab="media"]');
   await sleep(800);
+  const strip = await page.waitForFunction(() => {
+    const c = document.querySelector("canvas[data-fs]"); if (!c || !c.width) return false;
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let lit = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 60) lit++;
+    return lit > (c.width * c.height) / 4;
+  }, null, { timeout: 15000 }).then(() => true, () => false);
+  if (!strip) errs.push("filmstrip: the clip shows no thumbnails");
   await page.screenshot({ path: path.join(OUT, "2-clip.png") });
   // agent edit through the stdio MCP proxy (attaches to the running engine)
   const pid = (await page.evaluate(() => location.hash)).split("/").pop();

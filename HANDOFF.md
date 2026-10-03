@@ -39,6 +39,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-project-list` | `project_list` rows carry `modified`; the Edit home lists newest first with "edited … ago" and folds drafts into their main's row | `test_edit_page.py`; `check-edit-page.js` projects-list step | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-history-jump` | Undo/Redo tooltips name the step; a history card's title selects and goes to what it changed | `check-edit-page.js` jump and tooltip checks | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-render-cancel` | tool `render_cancel` (35 tools; render scope) and `POST .../render_cancel`: stops a queued or running render, `render.cancelled` event; the Edit page's **Stop** link | `test_s6_render.py` cancel test (queued and running, re-render after) | `render_jobs.py` docstring, EDIT-PAGE-SPEC, AGENTS.md |
+| `feat/editor-filmstrip` | Edit page clips show a filmstrip from the S4 thumbs sprite (source-time tiles; live while Alt-drag slipping) instead of one thumbnail | `check-edit-page.js` filmstrip pixels check | `EDIT-PAGE-SPEC.md` |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.

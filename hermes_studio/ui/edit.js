@@ -126,7 +126,7 @@
     .it .h.l { left: 0; } .it .h.r { right: 0; }
     .it .h:hover, .it.sel .h { background: rgba(255,200,61,.35); }
     .it canvas.wv { position: absolute; left: 0; bottom: 0; width: 100%; height: 12px; opacity: .8; pointer-events: none; }
-    .it .th { position: absolute; left: 0; top: 0; bottom: 0; width: 40px; background-size: cover; opacity: .55; pointer-events: none; }
+    .it .fs { position: absolute; left: 0; top: 0; width: 100%; height: 100%; opacity: .5; pointer-events: none; }
     .it.clip .lbl { position: relative; z-index: 1; }
     .mk { position: absolute; top: 0; height: 20px; padding: 3px 6px 0 5px; margin-left: -1px; border-left: 2px solid var(--amber); color: var(--amber); font: 600 10px var(--sans, inherit); white-space: nowrap; cursor: grab; z-index: 3; background: var(--bg); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
     .mk.sel { background: var(--amber); color: #000; }
@@ -251,7 +251,7 @@
     await needToken(root, async () => {
       document.getElementById("main").classList.add("edit-full");
       E = { pid, doc: null, spans: {}, t: 0, zoom: 60, sel: null, tab: "media", media: {}, words: [], wsel: null, records: [], pending: [],
-            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, follow: true, sels: new Set() };
+            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, sprites: {}, follow: true, sels: new Set() };
       root.innerHTML = layout();
       bindStatic();
       fetch("/api/caption-styles").then((r) => r.json()).then((j) => { if (E && j.ok) { E.capStyles = j; drawCaption(); } }).catch(() => {});
@@ -469,7 +469,7 @@
       const label = it.type === "clip" ? `${esc(it.media)} ${tc(it.src[0])}` : it.type === "text" ? esc(it.text) : "xfade";
       const own = it.type !== "transition" && "at" in it;
       const hs = own || it.type === "clip" ? `<span class="h l" data-edge="l"></span><span class="h r" data-edge="r"></span>` : "";
-      const th = it.type === "clip" && E.thumbs[it.media] ? `<span class="th" style="background-image:url('${E.thumbs[it.media]}')"></span>` : "";
+      const th = it.type === "clip" && E.sprites[it.media] ? `<canvas class="fs" data-fs="${esc(it.id)}"></canvas>` : "";
       const wv = it.type === "clip" && E.waves[it.media] ? `<canvas class="wv" data-wave="${esc(it.id)}"></canvas>` : "";
       return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}${it.type === "text" ? " · double-click to edit" : ""}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${th}${wv}${hs}<span class="lbl">${tag}${label}</span></div>`;
     }).join("")}</div>`).join("");
@@ -479,8 +479,22 @@
     el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); E.follow = false; side(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
     el.querySelectorAll(".it").forEach((n) => dragItem(n));
     el.querySelectorAll(".mk").forEach((n) => dragMarker(n));
+    el.querySelectorAll("canvas[data-fs]").forEach(drawStrip);
     el.querySelectorAll("canvas[data-wave]").forEach(drawWave);
     el.querySelectorAll(".it.text").forEach((n) => (n.ondblclick = () => editText(n.dataset.id)));
+  }
+  // A clip's filmstrip: tiles across its width, each the S4 thumbnail nearest the source time
+  // under the tile's middle (one every 2 s of source), so trims and slips show at a glance.
+  function drawStrip(cv, shift = 0) { // shift: source ticks, for the Alt-drag slip preview
+    const it = E.by[cv.dataset.fs], sp = it && E.sprites[it.media]; if (!sp) return;
+    const box = cv.getBoundingClientRect(), { idx, bmp } = sp;
+    cv.width = Math.max(1, Math.round(box.width)); cv.height = Math.max(1, Math.round(box.height));
+    const g = cv.getContext("2d"), tw = Math.max(8, Math.round(cv.height * idx.width / idx.height));
+    for (let x = 0; x < cv.width; x += tw) {
+      const t = (shift + it.src[0] + (it.src[1] - it.src[0]) * Math.min(1, (x + tw / 2) / cv.width)) / TICK;
+      const i = Math.max(0, Math.min(idx.count - 1, Math.floor(t / idx.every_s)));
+      g.drawImage(bmp, (i % idx.cols) * idx.width, Math.floor(i / idx.cols) * idx.height, idx.width, idx.height, x, 0, tw, cv.height);
+    }
   }
   function drawWave(cv) {
     const it = E.by[cv.dataset.wave]; const w = E.waves[it.media]; if (!w) return;
@@ -501,8 +515,7 @@
       if ((stg.thumbs || {}).state === "ready" && !E.thumbs[mid]) {
         try {
           const idx = await (await authed(base + "thumbs.json")).json(); const blob = await (await authed(base + "thumbs")).blob();
-          const bmp = await createImageBitmap(blob, 0, 0, idx.width, idx.height); const c = document.createElement("canvas");
-          c.width = idx.width; c.height = idx.height; c.getContext("2d").drawImage(bmp, 0, 0); E.thumbs[mid] = c.toDataURL("image/jpeg", .8);
+          E.sprites[mid] = { bmp: await createImageBitmap(blob), idx }; E.thumbs[mid] = true;
         } catch {}
       }
     }));
@@ -685,7 +698,7 @@
       const pts = alt && !edge ? [] : snapPoints(id);
       n.onpointermove = (m) => {
         let dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
-        if (alt && !edge) { slipDx = dx; const th = n.querySelector(".th"); if (th) th.style.backgroundPositionX = dx + "px"; return; }
+        if (alt && !edge) { slipDx = dx; const fs = n.querySelector("canvas[data-fs]"); if (fs) drawStrip(fs, Math.round(-dx / E.zoom * TICK * frac((it.props || {}).speed))); return; }
         if (moved) dx = magnet(edges, dx, pts, m.shiftKey);
         if (edge === "r") n.style.width = Math.max(4, w0 + dx) + "px";
         else if (edge === "l") { const d = Math.min(dx, w0 - 4); n.style.left = Math.max(40, left0 + d) + "px"; n.style.width = (w0 - (Math.max(40, left0 + d) - left0)) + "px"; }
