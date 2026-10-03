@@ -1,6 +1,7 @@
 """Run the Phase 2 Q1 eval set.
 
     python -m evals.run --reference            # the reference solutions (must score 20/20)
+    python -m evals.run --reference --set b    # set B: slip, roll, markers, close_gaps (6/6)
     python -m evals.run --check t02-remove-fillers --project <id>   # score a project an agent edited
 
 Scoring (per model and build, PLAN-MERGED Phase 2): correct (the check passes), steps (log
@@ -17,7 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from evals.tasks import TASKS, fixture_doc, fixture_words
+from evals.tasks import SETS, TASKS, fixture_doc, fixture_words
 
 
 def _engine(home: Path):
@@ -60,12 +61,12 @@ def score(task, proj) -> dict:
     return {"id": task.id, "pass": ok, "writes": len(log), "undos": undos}
 
 
-def run_reference() -> dict:
+def run_reference(tasks: list | None = None) -> dict:
     from hermes_studio import mcp_timeline as MT
     from hermes_studio import oplog as O
 
     rows = []
-    for task in TASKS:
+    for task in TASKS if tasks is None else tasks:
         with tempfile.TemporaryDirectory() as tmp:
             eng, proj = _engine(Path(tmp))
             backend = MT.EngineBackend(eng, O.Session(O.Actor("agent", "reference")), frozenset({"read", "write", "render"}))
@@ -107,13 +108,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", metavar="TASK")
     ap.add_argument("--project", metavar="ID")
     ap.add_argument("--model", default="unknown")
+    ap.add_argument("--set", default="a", choices=sorted(SETS), help="a: the 20 pinned tasks (default); b: the later ops")
     a = ap.parse_args(argv)
     if a.reference:
-        out = run_reference()
+        out = run_reference(SETS[a.set])
     elif a.check and a.project:
         from hermes_studio import project as P
 
-        task = next((t for t in TASKS if t.id == a.check), None)
+        task = next((t for t in SETS[a.set] if t.id == a.check), None)
         if task is None:
             ap.error(f"no task {a.check}")
         out = summary([score(task, P.ClosedProject(a.project))], model=a.model)

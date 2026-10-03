@@ -247,3 +247,71 @@ TASKS: list[Task] = [
 def _end_v1(doc: dict) -> int:
     sp = _spans(doc)
     return max((sp[c["id"]][1] for c in _v1(doc)), default=0)
+
+
+# Set B: the editing ops added after the pinned set (slip, roll, markers you edit, close_gaps).
+# Same fixture; run with ``python -m evals.run --reference --set b``. Set A above stays pinned.
+TASKS_B: list[Task] = [
+    Task(
+        "b01-slip",
+        "Keep the second clip where it is, but show the part of the talk 2 seconds later.",
+        lambda d, log, w: _spans(d)["c2"] == (10 * S, 20 * S) and _by_id(d, "c2")["src"] == [22 * S, 32 * S],
+        [("timeline_apply", {"summary": "Slip c2", "ops": [{"op": "slip_clip", "id": "c2", "by_s": 2}]})],
+    ),
+    Task(
+        "b02-roll",
+        "Move the cut between the first and second clips 1 second later, without changing the total length.",
+        lambda d, log, w: (
+            _spans(d)["c1"] == (0, 11 * S) and _spans(d)["c2"] == (11 * S, 20 * S) and _by_id(d, "c2")["src"][0] == 21 * S
+        ),
+        [("timeline_apply", {"summary": "Roll", "ops": [{"op": "roll_edit", "id": "c1", "by_s": 1}]})],
+    ),
+    Task(
+        "b03-close-after-delete",
+        "Delete the first clip without moving the others, then close the gaps as one more step.",
+        lambda d, log, w: (
+            [c["id"] for c in _v1(d)] == ["c2", "c3"] and _spans(d)["c2"][0] == 0 and _end_v1(d) == 20 * S and len(log) == 2
+        ),
+        [
+            ("timeline_apply", {"summary": "Delete c1", "ops": [{"op": "delete_clip", "id": "c1", "ripple": False}]}),
+            ("apply_preset", {"preset": "close_gaps"}),
+        ],
+    ),
+    Task(
+        "b04-marker-edit",
+        'Put a marker "hook" at 2 s. Then move it to 3.5 s and rename it "intro".',
+        lambda d, log, w: [(m["label"], m["at"]) for m in d["markers"]] == [("intro", 7 * S // 2)],
+        [
+            ("timeline_apply", {"summary": "Marker", "ops": [{"op": "add_marker", "at_s": 2, "label": "hook", "id": "hook"}]}),
+            (
+                "timeline_apply",
+                {"summary": "Edit marker", "ops": [{"op": "edit_marker", "id": "hook", "at_s": 3.5, "label": "intro"}]},
+            ),
+        ],
+    ),
+    Task(
+        "b05-impossible-slip",
+        "Show 2 seconds earlier of the source in the first clip, keeping it in place. If that can't be done, change nothing.",
+        lambda d, log, w: log == [],  # c1 starts at 0 s of the talk: there is nothing earlier
+        [],
+    ),
+    Task(
+        "b06-repeat-last",
+        "Play the last clip twice in a row.",
+        lambda d, log, w: len(_v1(d)) == 4 and _v1(d)[-1]["src"] == [40 * S, 50 * S] and _spans(d)[_v1(d)[-1]["id"]][0] == 30 * S,
+        [
+            (
+                "timeline_apply",
+                {
+                    "summary": "Repeat",
+                    "ops": [{"op": "insert_clip", "track": "V1", "media": "m1", "src_s": [40, 50], "at_s": 30}],
+                },
+            )
+        ],
+    ),
+]
+SETS = {"a": TASKS, "b": TASKS_B}
+
+
+def _by_id(doc: dict, iid: str) -> dict:
+    return next(it for t in doc["tracks"] for it in t["items"] if it["id"] == iid)

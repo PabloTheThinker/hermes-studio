@@ -23,6 +23,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-close-gaps` | preset `close_gaps` (V1 clips close up from 0, crossfades and anchors kept, other tracks stay); in the Presets menu and the MCP enum | `tests/test_presets.py` close-gaps tests | `presets.py` docstring |
 | `feat/editor-copy-paste` | Edit page Ctrl+C / Ctrl+V / Ctrl+D for clips and text (page clipboard; plain text copy untouched) | `check-edit-page.js` duplicate and paste step | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-preview-audio` | Edit page preview mixes the other tracks (music, voice) on synced hidden `<audio>` players, clip volume and fades on V1 too | `check-edit-page.js` checks `_audioPlan` (no AAC in headless Chromium; the sound itself is unheard here, needs a person on the desktop app) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-evals-b` | eval set B (`evals/tasks.py` `TASKS_B`, `python -m evals.run --reference --set b`): slip, roll, delete then close gaps, marker move and rename, an impossible slip to decline, repeat a clip; set A stays pinned | reference 6/6 in 7 writes; doing nothing passes only the decline task | `evals/run.py` docstring |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
