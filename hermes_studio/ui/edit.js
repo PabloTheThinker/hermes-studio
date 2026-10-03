@@ -135,6 +135,7 @@
     .card .pv { margin: .5rem 0 0; padding: .45rem .5rem; max-height: 14rem; overflow: auto; font: 500 10.5px/1.45 var(--mono); color: var(--mute); background: var(--bg); border: 1px solid var(--line); white-space: pre; }
     .it.ghost { outline: 2px dashed var(--ember, #ff7a45); outline-offset: 1px; }
     .words span.hit { background: rgba(255,200,61,.22); border-radius: 2px; } .words span.hit.cur { background: var(--amber); color: #000; }
+    .card .sum[data-jump] { cursor: pointer; } .card .sum[data-jump]:hover { color: var(--amber); }
     .snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--amber); z-index: 4; pointer-events: none; display: none; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
@@ -417,8 +418,10 @@
     E.redoTarget = [...out].reverse().find((r) => !cancelled.has(r.op_id) && r.undoes) || null;
     const lastBy = {}; out.forEach((r) => r.changed_ids.forEach((id) => (lastBy[id] = r.actor)));
     E.lastBy = lastBy;
-    document.getElementById("ed-undo").disabled = !E.undoTarget;
-    document.getElementById("ed-redo").disabled = !E.redoTarget;
+    const u = document.getElementById("ed-undo"), r = document.getElementById("ed-redo");
+    u.disabled = !E.undoTarget; r.disabled = !E.redoTarget;
+    u.title = E.undoTarget ? `Undo "${E.undoTarget.summary}" (Ctrl+Z)` : "Nothing to undo";
+    r.title = E.redoTarget ? `Redo "${(E.records.find((x) => x.op_id === (E.redoTarget.undoes || [])[0]) || {}).summary || E.redoTarget.summary}" (Ctrl+Shift+Z)` : "Nothing to redo";
   }
   async function approvals() {
     const a = await P("approval_list"); E.pending = a.pending; E.mode = a.mode;
@@ -1164,7 +1167,7 @@
         <button class="ed-btn" data-preview="${esc(p.pending_id)}">Preview</button>
         <button class="ed-btn" data-rest="${esc(p.pending_id)}">Apply the rest</button></div></div>`).join("")}
       ${recs.map((r) => `<div class="card ${E.cancelled.has(r.op_id) ? "undone" : ""}"><div class="who ${r.actor.kind === "agent" ? "agent" : ""}">${esc(r.actor.kind === "human" ? "you" : r.actor.id)}${r.step != null ? " · step " + esc(r.step) : ""}${r.undoes ? " · undo" : ""}</div>
-        <div class="sum">${esc(r.summary)}</div><div class="v">v${esc(r.base_version)} → v${esc(r.new_version)} · ${esc(r.changed_ids.length)} changed</div>
+        <div class="sum" data-jump="${esc(r.op_id)}" title="Show what this changed">${esc(r.summary)}</div><div class="v">v${esc(r.base_version)} → v${esc(r.new_version)} · ${esc(r.changed_ids.length)} changed</div>
         <div class="ba" id="ba-${esc(r.op_id)}"></div>
         <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
       <p class="hint" style="padding:.8rem .9rem">Agents edit this timeline through MCP (<span class="mono">hermes-studio mcp install claude</span>). In Propose mode each edit waits here for Apply or Skip.</p>`;
@@ -1179,6 +1182,16 @@
     const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
     el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));
     el.querySelectorAll("[data-skip]").forEach((b) => (b.onclick = () => res(b.dataset.skip, "skip")));
+    // A history card's title: select what that step changed (what still exists) and go to it.
+    el.querySelectorAll("[data-jump]").forEach((b) => (b.onclick = () => {
+      const rec = E.records.find((x) => x.op_id === b.dataset.jump); if (!rec) return;
+      const ids = rec.changed_ids.filter((id) => (E.by[id] && E.by[id].type !== "transition") || isMarker(id));
+      if (!ids.length) return toast("Nothing that step changed is on the timeline now.");
+      E.sels = new Set(ids); E.sel = ids[ids.length - 1]; markSel(); E.tab = "item"; pane();
+      const at = (id) => (E.spans[id] ? E.spans[id][0] : (E.doc.markers.find((m) => m.id === id) || {}).at);
+      E.follow = false; seek(Math.min(...ids.map(at)));
+      const n = document.querySelector(`.it[data-id="${CSS.escape(ids[0])}"], .mk[data-mk="${CSS.escape(ids[0])}"]`); if (n) n.scrollIntoView({ block: "nearest", inline: "center" });
+    }));
     // Preview: what Apply would do now (the engine dry-runs the parked edit): the items it would
     // touch get a dashed ember outline on the timeline, the playhead goes to the first, and the
     // outline of the result shows on the card. A second click hides it.

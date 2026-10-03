@@ -248,6 +248,12 @@ let PAGE = null;
   if (!shown || !/^p-[0-9a-f]+\/exports\/[^/]+-540x960\.mp4$/.test(shown)) errs.push("show in folder: asked for " + shown);
   if (!/540x960$/.test(rendered)) errs.push("render: " + rendered + ", want a 540x960 render without captions");
   await page.screenshot({ path: path.join(OUT, "10-rendered.png") });
+  // a history card's title selects what that step changed: "Duplicate c2" -> the copy it made
+  await page.click('.card .sum[data-jump]:text-is("Duplicate c2")');
+  const jumped = await page.evaluate(() => [...document.querySelectorAll(".it.sel")].map((n) => n.dataset.id));
+  if (jumped.length !== 1 || !/^c\d+$/.test(jumped[0]) || jumped[0] === "c2") errs.push("history jump: selected " + jumped);
+  const undoTip = await page.getAttribute("#ed-undo", "title");
+  if (!/^Undo ".+" \(Ctrl\+Z\)$/.test(undoTip || "")) errs.push("undo tooltip: " + undoTip);
   // back on the projects list: this project, newest first, says when it was edited
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   await page.goto(base + "#/edit"); await page.waitForSelector(".plist .row");
