@@ -19,10 +19,12 @@ const env = { ...process.env, HOME, HERMES_STUDIO_UI_TOKEN: TOKEN, PYTHONUNBUFFE
 const srv = spawn(path.join(REPO, ".venv/bin/hermes-studio"), ["studio", "--port", String(PORT)], { env, stdio: ["ignore", "pipe", "pipe"] });
 let log = ""; srv.stdout.on("data", (b) => (log += b)); srv.stderr.on("data", (b) => (log += b));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let PAGE = null;
 (async () => {
   for (let i = 0; i < 60 && !log.includes("Hermes Studio"); i++) await sleep(250);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  PAGE = page;
   const errs = []; page.on("pageerror", (e) => errs.push("pageerror: " + e.message)); page.on("console", (m) => { if (m.type() === "error") errs.push("console: " + m.text()); });
   await page.addInitScript((t) => { window.studio = { uiToken: async () => t, retry: async () => {} }; }, TOKEN);
   const base = `http://127.0.0.1:${PORT}/`;
@@ -69,9 +71,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await page.waitForFunction(() => /Edited title/.test(document.querySelector(".it.text").textContent), null, { timeout: 15000 });
   await page.screenshot({ path: path.join(OUT, "6-trimmed.png") });
   if (Math.abs(clipW - 600) > 2) errs.push("trim: clip is " + clipW + "px, want 600 (10 s at 60 px/s)");
+  // a second clip, a crossfade into it, then 2x speed on the first
+  await page.click('[data-tab="media"]'); await page.click("[data-add]");
+  await page.waitForFunction(() => document.querySelectorAll(".it.clip").length === 2, null, { timeout: 15000 });
+  await page.click(".it.clip >> nth=0", { position: { x: 200, y: 8 } });
+  await page.click("#it-xfade");
+  await page.waitForSelector(".it.transition", { timeout: 15000 });
+  await sleep(500);
+  await page.click(".it.clip >> nth=1", { position: { x: 200, y: 8 } }); // the second clip: 2x makes it 5 s
+  await page.selectOption("#it-speed", "2/1"); await page.click("#it-apply");
+  await page.waitForFunction(() => parseFloat(document.querySelectorAll(".it.clip")[1].style.width) < 400, null, { timeout: 15000 });
+  await page.screenshot({ path: path.join(OUT, "7-inspector.png") });
   const vis = await page.evaluate(() => ({ video: getComputedStyle(document.getElementById("ed-video")).visibility, src: document.getElementById("ed-video").currentSrc, rs: document.getElementById("ed-video").readyState }));
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, played_to: t, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
   mcp.kill(); await browser.close(); srv.kill();
-})().catch(async (e) => { console.error("FAIL", e.message, "\n", log.slice(-1500)); srv.kill(); process.exit(1); });
+})().catch(async (e) => {
+  console.error("FAIL", e.message.split("\n")[0], (e.stack || "").split("\n").find((l) => l.includes("check-edit-page")) || "", "\n", log.slice(-1500));
+  if (PAGE) await PAGE.screenshot({ path: path.join(OUT, "fail.png") }).catch(() => {});
+  srv.kill(); process.exit(1);
+});

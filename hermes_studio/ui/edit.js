@@ -239,7 +239,7 @@
       <div class="ed-top"><a class="ed-btn" href="#/edit">Projects</a><span class="pid">${esc(E.pid)}</span><span class="ver" id="ed-ver"></span>
         <button class="ed-btn" id="ed-undo" title="Undo (Ctrl+Z)">Undo</button><button class="ed-btn" id="ed-redo" title="Redo (Ctrl+Shift+Z)">Redo</button>
         <span class="sp"></span><span class="hint" id="ed-render-st"></span><button class="ed-btn amber" id="ed-render">Render MP4</button></div>
-      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button></div><div class="pane" id="ed-pane"></div></div>
+      <div class="ed-left"><div class="tabs"><button data-tab="media">Media</button><button data-tab="transcript">Transcript</button><button data-tab="item">Item</button></div><div class="pane" id="ed-pane"></div></div>
       <div class="ed-mid"><div class="stage"><div class="screen" id="ed-screen"><img id="ed-still" alt="" /><video id="ed-video" playsinline preload="auto"></video><div class="txt" id="ed-txt"></div></div></div>
         <div class="transport"><button class="ed-btn" id="ed-play">Play</button><span id="ed-tc">0:00.00</span><span class="hint" id="ed-at"></span></div></div>
       <div class="ed-tl"><div class="tl-tools"><button class="ed-btn" id="ed-split">Split at playhead</button><button class="ed-btn" id="ed-del">Delete</button>
@@ -314,6 +314,7 @@
     if (!E) return;
     const t = ev.type || "";
     if (t === "op.applied" || t === "op.undone" || t === "stream.reset") {
+      if (t !== "stream.reset" && E.doc && ev.new_version <= E.doc.version) return; // our own write: already reloaded
       if (E.follow && ev.actor && ev.actor.kind === "agent" && ev.changed_ids) E.followTo = ev.changed_ids; // jump to the agent's change
       soon(reload);
     }
@@ -421,6 +422,7 @@
       const id = n.dataset.id, it = E.by[id];
       E.sel = id;
       document.querySelectorAll(".it.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
+      if (E.tab !== "item") { E.tab = "item"; } pane();
       if (!it || it.type === "transition") return;
       const edge = e.target.dataset ? e.target.dataset.edge : null;
       if (!edge && !("at" in it)) return; // anchored items move with their clip
@@ -554,13 +556,20 @@
           return `<div class="mrow"><div class="nm">${esc(mid)} · ${esc(String(m.path).split(/[\\/]/).pop())}</div>
             <div class="meta">${tc(m.dur)} · ${m.fps ? esc(m.fps[0] / m.fps[1]).slice(0, 5) + " fps" : "audio"} · ${esc(st.state || "none")}${st.stage ? " · " + esc(st.stage) : ""}</div>
             ${st.state === "running" || st.state === "queued" ? `<div class="bar"><i style="width:${p}%"></i></div>` : ""}
-            <p style="margin:.35rem 0 0"><button class="ed-btn" data-add="${esc(mid)}">Add to end</button></p></div>`;
+            <p style="margin:.35rem 0 0;display:flex;gap:.4rem"><button class="ed-btn" data-add="${esc(mid)}">Add to end</button><button class="ed-btn" data-music="${esc(mid)}">Add as music</button></p></div>`;
         }).join("")}`;
       document.getElementById("ed-import").onclick = async () => {
         const path = document.getElementById("ed-path").value.trim(); if (!path) return;
         const stages = ["proxy", "thumbs", "wave"].concat(document.getElementById("ed-words").checked ? ["words"] : []);
         try { await P("import_media", { path, stages, client_op_id: rid() }); toast("Importing", true); await reload(); } catch (e) { fail(e); }
       };
+      el.querySelectorAll("[data-music]").forEach((b) => (b.onclick = () => {
+        const mid = b.dataset.music, m = E.doc.media[mid];
+        const mus = E.doc.tracks.find((tr) => tr.role === "music");
+        if (!mus) return toast("This project has no music track.");
+        const at = Math.max(0, ...mus.items.map((it) => E.spans[it.id][1]));
+        write([{ op: "insert_clip", track: mus.id, media: mid, src: [0, m.dur], at, props: { volume: [1, 4] } }], `Add ${mid} as music`);
+      }));
       el.querySelectorAll("[data-add]").forEach((b) => (b.onclick = () => {
         const mid = b.dataset.add, m = E.doc.media[mid];
         const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
@@ -569,6 +578,7 @@
       }));
       return;
     }
+    if (E.tab === "item") return itemPane(el);
     const ws = E.words;
     el.innerHTML = `<p class="acts" style="display:flex;gap:.4rem;flex-wrap:wrap;margin:0 0 .7rem"><button class="ed-btn" id="ed-fill">Remove fillers</button><button class="ed-btn" id="ed-pause">Tighten pauses</button>
       <button class="ed-btn" id="ed-cutsel" ${E.wsel ? "" : "disabled"}>Cut selection</button></p>
@@ -591,6 +601,80 @@
     document.getElementById("ed-fill").onclick = () => cut({ fillers: true }, "Remove fillers");
     document.getElementById("ed-pause").onclick = () => cut({ pauses: true }, "Tighten pauses");
     document.getElementById("ed-cutsel").onclick = () => { if (!E.wsel) return; const a = ws[E.wsel[0]], b = ws[E.wsel[1]]; cut({ ranges: [{ from_s: sec(a.at), to_s: sec(b.end) }] }, "Cut selection"); };
+  }
+
+  /* ---------------------------------------------------------------- item inspector */
+  const SPEEDS = [[1, 2], [3, 4], [1, 1], [5, 4], [3, 2], [2, 1]];
+  function itemPane(el) {
+    const it = E.sel && E.by[E.sel];
+    if (!it) { el.innerHTML = `<p class="hint">Click an item on the timeline to change it here.</p>`; return; }
+    const [a, b] = E.spans[it.id];
+    const head = `<div class="mrow"><div class="nm">${esc(it.id)} · ${esc(it.type)}</div><div class="meta">${tc(a)} → ${tc(b)} · ${(sec(b - a)).toFixed(2)} s</div></div>`;
+    if (it.type === "transition") { el.innerHTML = head + `<p class="hint">A ${sec(it.dur).toFixed(2)} s crossfade. Delete it to cut straight.</p>`; return; }
+    const fades = `<label class="f" style="margin-top:.8rem">Fade in / out (s)</label><div style="display:flex;gap:.4rem"><input type="text" id="it-fi" value="${sec(it.fade_in || 0)}" /><input type="text" id="it-fo" value="${sec(it.fade_out || 0)}" /></div>`;
+    if (it.type === "text") {
+      el.innerHTML = head + `<label class="f" style="margin-top:.8rem">Text</label><textarea id="it-text" rows="3" style="width:100%;background:var(--panel);color:var(--ink);border:1px solid var(--line-2);font:inherit;padding:.4rem">${esc(it.text)}</textarea>
+        <label class="f" style="margin-top:.6rem">Style</label><select id="it-style" class="ed-btn">${["pop", "impact"].map((x) => `<option ${x === it.style ? "selected" : ""}>${x}</option>`).join("")}</select>${fades}
+        <p style="margin-top:.8rem"><button class="ed-btn amber" id="it-apply">Apply</button></p>`;
+      document.getElementById("it-apply").onclick = () => {
+        const ops = [], text = document.getElementById("it-text").value, style = document.getElementById("it-style").value;
+        if (text !== it.text || style !== it.style) ops.push({ op: "edit_text", id: it.id, text, style });
+        ops.push(...fadeOps(it));
+        if (ops.length) write(ops, `Change ${it.id}`);
+      };
+      return;
+    }
+    const pr = Object.assign({ volume: [1, 1], speed: [1, 1] }, it.props || {});
+    const vol = Math.round(frac(pr.volume) * 100), sp = frac(pr.speed);
+    el.innerHTML = head + `<div class="meta mono">${esc(it.media)} · source ${tc(it.src[0])} → ${tc(it.src[1])}</div>
+      <label class="f" style="margin-top:.8rem">Volume <span id="it-vol-v">${vol}%</span></label><input type="range" id="it-vol" min="0" max="200" step="5" value="${vol}" style="width:100%" />
+      <label class="f" style="margin-top:.6rem">Speed</label><select id="it-speed" class="ed-btn">${SPEEDS.map(([n, d]) => `<option value="${n}/${d}" ${Math.abs(n / d - sp) < 1e-9 ? "selected" : ""}>${(n / d)}×</option>`).join("")}</select>${fades}
+      <p style="margin-top:.8rem;display:flex;gap:.4rem;flex-wrap:wrap"><button class="ed-btn amber" id="it-apply">Apply</button>${nextOf(it) ? `<button class="ed-btn" id="it-xfade">Crossfade into next</button>` : ""}</p>`;
+    document.getElementById("it-vol").oninput = (e) => (document.getElementById("it-vol-v").textContent = e.target.value + "%");
+    document.getElementById("it-apply").onclick = () => {
+      const ops = [];
+      const v = +document.getElementById("it-vol").value, [n, d] = document.getElementById("it-speed").value.split("/").map(Number);
+      const props = {};
+      if (v !== vol) props.volume = [v, 100];
+      if (Math.abs(n / d - sp) > 1e-9) {
+        props.speed = [n, d];
+        const len = it.src[1] - it.src[0], keep = len - (len % n); // (out - in) / speed must be whole ticks
+        if (keep !== len) ops.push({ op: "trim_clip", id: it.id, src_out: it.src[0] + keep });
+      }
+      if (Object.keys(props).length) ops.push({ op: "set_props", id: it.id, props });
+      ops.push(...fadeOps(it));
+      if (ops.length) write(ops, `Change ${it.id}`);
+    };
+    const xb = document.getElementById("it-xfade");
+    if (xb) xb.onclick = () => crossfade(it);
+  }
+  function fadeOps(it) {
+    const fi = ticks(+document.getElementById("it-fi").value || 0), fo = ticks(+document.getElementById("it-fo").value || 0);
+    const fr = TICK * E.doc.fps[1] / E.doc.fps[0], snap = (t) => Math.max(0, Math.round(Math.round(t / fr) * fr));
+    const sets = {};
+    if (snap(fi) !== (it.fade_in || 0)) sets.fade_in = snap(fi);
+    if (snap(fo) !== (it.fade_out || 0)) sets.fade_out = snap(fo);
+    return Object.keys(sets).length ? [Object.assign({ op: "set_fade", id: it.id }, sets)] : [];
+  }
+  function v1Clips() {
+    const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
+    return v1 ? v1.items.filter((x) => x.type === "clip").sort((p, q) => E.spans[p.id][0] - E.spans[q.id][0]) : [];
+  }
+  function nextOf(it) {
+    const cs = v1Clips(), i = cs.findIndex((x) => x.id === it.id);
+    if (i < 0 || i + 1 >= cs.length) return null;
+    const nx = cs[i + 1];
+    const v1 = E.doc.tracks.find((tr) => tr.id === "V1");
+    const joined = v1.items.some((x) => x.type === "transition" && x.between[0] === it.id);
+    return !joined && E.spans[nx.id][0] === E.spans[it.id][1] ? nx : null; // touching, not already faded
+  }
+  function crossfade(it) {
+    const nx = nextOf(it); if (!nx) return toast("Crossfade needs the next clip right after this one.");
+    const fr = TICK * E.doc.fps[1] / E.doc.fps[0], d = Math.round(Math.round(TICK / 2 / fr) * fr);
+    const later = v1Clips().filter((x) => E.spans[x.id][0] >= E.spans[nx.id][0] && "at" in x);
+    const ops = later.map((x) => ({ op: "move_clip", id: x.id, at: x.at - d })); // pull the rest in by the overlap
+    ops.push({ op: "add_transition", between: [it.id, nx.id], dur: d });
+    write(ops, `Crossfade ${it.id} → ${nx.id}`);
   }
 
   /* ---------------------------------------------------------------- sidebar */
