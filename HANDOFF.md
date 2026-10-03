@@ -1,5 +1,29 @@
 # HANDOFF: Hermes Studio editor build
 
+## 0. Update 2026-10-03 (read this first)
+
+The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1179 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
+
+| Branch (stacked) | What | Gate evidence | Spec |
+|---|---|---|---|
+| `feat/editor-s3-store-mcp` = **PR #42** @ `1f854ea` | All §3 owed fixes (F1, F2, O1–O4, decode, 104, Windows lock, blank lines, tests 89/92/101/102/103, As built) | CI green on Linux, Windows (lock test), test, CodeQL; **`sources` needs one re-run** (zlib.net served an 11 KB page; nothing in the PR) | `docs/plans/S3-SPEC.md` §13 |
+| `feat/editor-s4-media` | probe, `add_media` op, import job (proxy, thumbs, wave, words), progress events | 20-min fixture imports with monotonic progress (78 s) | `S4-SPEC.md` |
+| `feat/editor-s5-frames` | frame cache, `timeline_frames`, contact sheet, `history_frames` | C10 tests | `S5-SPEC.md` |
+| `feat/editor-s6-render` | render v1 (two-pass graph, segments), render jobs | C11: duration/frames ±1, h264/aac 1080×1920, SSIM 0.993–0.994 | `S6-SPEC.md` |
+| `feat/editor-s7-cuts` | `transcript_cut` (fillers, pauses, ranges) | C12 filler: 46 ops = 1 entry, 1 undo restores the hash | `S7-SPEC.md` |
+| `feat/editor-s8-gate` | Ask / Propose / Auto, parked writes | C12 gate, E5 | `S8-SPEC.md` |
+| `feat/editor-ui-edit` | the Edit page + sidebar, token delivery, `project_list/new`, captions in clip styles, Phase 1 headline test | `tests/test_phase1_e2e.py` (E1, E2, E4); `scripts/check-edit-page.js` (Playwright) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-presets` | `apply_preset` (Phase 2 Q3) | one entry, one undo per preset | `presets.py` docstring |
+
+**What only people can do now:**
+1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
+2. **Ada's rulings** listed in each spec's "Decisions" (S4 D1/D7, S5 D2, S6 D4/D8, S7 D6, S8 D1–D3, S3 §13.9 Q1).
+3. Then each later branch becomes a PR in order (merge `main` in first, never rebase), with its own verifier gate.
+
+**Not built:** the ACP client and composer (Hermes chat over ACP), draft branches (Phase 2 Q2, needs an engine "merge" design), the eval set (Q1), Phase 3 (keyframes, masks), card latency measurement.
+
+---
+
 This file is for any engineer or AI who picks up the editor work with no prior context. Read all of it before you touch code. Last updated 2026-10-01 at 11:30 PM ET.
 
 ## 1. What this is
