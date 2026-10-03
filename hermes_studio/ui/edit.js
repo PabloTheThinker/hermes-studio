@@ -118,6 +118,12 @@
     .it.agent { outline: 1px solid var(--ember); } .it.mine { outline: 1px solid var(--ink); }
     .it.sel { border-color: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
     .it .tag { font: 600 9px var(--mono); color: var(--ember); margin-right: 4px; }
+    .it .h { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 2; }
+    .it .h.l { left: 0; } .it .h.r { right: 0; }
+    .it .h:hover, .it.sel .h { background: rgba(255,200,61,.35); }
+    .it canvas.wv { position: absolute; left: 0; bottom: 0; width: 100%; height: 12px; opacity: .8; pointer-events: none; }
+    .it .th { position: absolute; left: 0; top: 0; bottom: 0; width: 40px; background-size: cover; opacity: .55; pointer-events: none; }
+    .it.clip .lbl { position: relative; z-index: 1; }
     .ph { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--amber); z-index: 3; pointer-events: none; }
     .ed-side { grid-column: 3; grid-row: 2 / 4; border-left: 1px solid var(--line); overflow: auto; display: flex; flex-direction: column; }
     .side-h { padding: .6rem .9rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
@@ -220,7 +226,7 @@
     await needToken(root, async () => {
       document.getElementById("main").classList.add("edit-full");
       E = { pid, doc: null, spans: {}, t: 0, zoom: 60, sel: null, tab: "media", media: {}, words: [], wsel: null, records: [], pending: [],
-            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {} };
+            mode: "propose", playing: false, render: null, ctl: new AbortController(), frames: {}, by: {}, waves: {}, thumbs: {}, follow: true };
       root.innerHTML = layout();
       bindStatic();
       try { await reload(); } catch (e) { fail(e); if (e.code === "not_found") { location.hash = "#/edit"; return; } }
@@ -270,6 +276,8 @@
     document.getElementById("ed-ver").textContent = `v${doc.version}`;
     if (E.sel && !E.by[E.sel]) E.sel = null;
     await Promise.all([history(), approvals(), mediaStatus(), transcript()]);
+    await mediaArt();
+    if (E.followTo) { const ids = E.followTo; E.followTo = null; const ts = ids.map((i) => (E.spans[i] || [])[0]).filter((x) => x != null); if (ts.length) E.t = Math.min(...ts); }
     timeline(); pane(); side(); seek(E.t, true);
   }
 
@@ -305,7 +313,10 @@
   function onEvent(ev) {
     if (!E) return;
     const t = ev.type || "";
-    if (t === "op.applied" || t === "op.undone" || t === "stream.reset") soon(reload);
+    if (t === "op.applied" || t === "op.undone" || t === "stream.reset") {
+      if (E.follow && ev.actor && ev.actor.kind === "agent" && ev.changed_ids) E.followTo = ev.changed_ids; // jump to the agent's change
+      soon(reload);
+    }
     else if (t.startsWith("approval.")) approvals().then(side).catch(() => {});
     else if (t === "mode.changed") { E.mode = ev.mode; side(); }
     else if (t.startsWith("media.")) {
@@ -362,28 +373,85 @@
       const cls = ["it", it.type, E.sel === it.id ? "sel" : "", who && who.kind === "agent" ? "agent" : who ? "mine" : ""].join(" ");
       const tag = who && who.kind === "agent" ? `<span class="tag">${esc(who.id[0].toUpperCase())}${who.step != null ? " · step " + esc(who.step) : ""}</span>` : "";
       const label = it.type === "clip" ? `${esc(it.media)} ${tc(it.src[0])}` : it.type === "text" ? esc(it.text) : "xfade";
-      return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${tag}${label}</div>`;
+      const own = it.type !== "transition" && "at" in it;
+      const hs = own || it.type === "clip" ? `<span class="h l" data-edge="l"></span><span class="h r" data-edge="r"></span>` : "";
+      const th = it.type === "clip" && E.thumbs[it.media] ? `<span class="th" style="background-image:url('${E.thumbs[it.media]}')"></span>` : "";
+      const wv = it.type === "clip" && E.waves[it.media] ? `<canvas class="wv" data-wave="${esc(it.id)}"></canvas>` : "";
+      return `<div class="${cls}" data-id="${esc(it.id)}" title="${esc(it.id)}${it.type === "text" ? " · double-click to edit" : ""}" style="left:${px(a)}px;width:${Math.max(4, px(b) - px(a))}px">${th}${wv}${hs}<span class="lbl">${tag}${label}</span></div>`;
     }).join("")}</div>`).join("");
     el.style.width = w + "px";
     el.innerHTML = `<div class="ruler" id="ed-ruler">${ruler}</div>${rows}<div class="ph" id="ed-ph" style="left:${px(E.t)}px"></div>`;
-    el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
+    el.querySelector("#ed-ruler").onclick = (e) => { const r = el.getBoundingClientRect(); E.follow = false; side(); seek(ticks(Math.max(0, (e.clientX - r.left - 40) / E.zoom))); };
     el.querySelectorAll(".it").forEach((n) => dragItem(n));
+    el.querySelectorAll("canvas[data-wave]").forEach(drawWave);
+    el.querySelectorAll(".it.text").forEach((n) => (n.ondblclick = () => editText(n.dataset.id)));
+  }
+  function drawWave(cv) {
+    const it = E.by[cv.dataset.wave]; const w = E.waves[it.media]; if (!w) return;
+    const box = cv.getBoundingClientRect(); cv.width = Math.max(1, Math.round(box.width)); cv.height = 24;
+    const g = cv.getContext("2d"); g.fillStyle = "rgba(255,200,61,.75)";
+    const a = (it.src[0] / TICK) * w.peaks_per_s, b = (it.src[1] / TICK) * w.peaks_per_s;
+    for (let x = 0; x < cv.width; x++) {
+      const i = Math.floor(a + (b - a) * x / cv.width), pk = w.peaks[i]; if (!pk) continue;
+      const amp = Math.max(Math.abs(pk[0]), Math.abs(pk[1])) / 128; const h = Math.max(1, amp * 24);
+      g.fillRect(x, 24 - h, 1, h);
+    }
+  }
+  async function mediaArt() {
+    await Promise.all(Object.keys(E.doc.media).map(async (mid) => {
+      const st = E.media[mid] || {}; const stg = st.stages || {};
+      const base = `/api/projects/${encodeURIComponent(E.pid)}/media/${encodeURIComponent(mid)}/`;
+      if ((stg.wave || {}).state === "ready" && !E.waves[mid]) { try { E.waves[mid] = await (await authed(base + "wave")).json(); } catch {} }
+      if ((stg.thumbs || {}).state === "ready" && !E.thumbs[mid]) {
+        try {
+          const idx = await (await authed(base + "thumbs.json")).json(); const blob = await (await authed(base + "thumbs")).blob();
+          const bmp = await createImageBitmap(blob, 0, 0, idx.width, idx.height); const c = document.createElement("canvas");
+          c.width = idx.width; c.height = idx.height; c.getContext("2d").drawImage(bmp, 0, 0); E.thumbs[mid] = c.toDataURL("image/jpeg", .8);
+        } catch {}
+      }
+    }));
+  }
+  async function editText(id) {
+    const it = E.by[id]; if (!it) return;
+    const text = prompt("Text", it.text); if (text == null || text === it.text) return;
+    await write([{ op: "edit_text", id, text }], `Edit ${id}`);
   }
   function dragItem(n) {
     n.onpointerdown = (e) => {
       const id = n.dataset.id, it = E.by[id];
       E.sel = id;
       document.querySelectorAll(".it.sel").forEach((x) => x.classList.remove("sel")); n.classList.add("sel");
-      if (!it || it.type === "transition" || !("at" in it)) return;
-      const x0 = e.clientX, left0 = parseFloat(n.style.left); let moved = false;
+      if (!it || it.type === "transition") return;
+      const edge = e.target.dataset ? e.target.dataset.edge : null;
+      if (!edge && !("at" in it)) return; // anchored items move with their clip
+      e.stopPropagation();
+      const x0 = e.clientX, left0 = parseFloat(n.style.left), w0 = parseFloat(n.style.width); let moved = false;
       n.setPointerCapture(e.pointerId);
-      n.onpointermove = (m) => { const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true; n.style.left = Math.max(40, left0 + dx) + "px"; };
+      n.onpointermove = (m) => {
+        const dx = m.clientX - x0; if (Math.abs(dx) > 3) moved = true;
+        if (edge === "r") n.style.width = Math.max(4, w0 + dx) + "px";
+        else if (edge === "l") { const d = Math.min(dx, w0 - 4); n.style.left = Math.max(40, left0 + d) + "px"; n.style.width = (w0 - (Math.max(40, left0 + d) - left0)) + "px"; }
+        else n.style.left = Math.max(40, left0 + dx) + "px";
+      };
       n.onpointerup = async () => {
         n.onpointermove = n.onpointerup = null;
         if (!moved) return; // a click only selects
         const fr = TICK * E.doc.fps[1] / E.doc.fps[0];
-        const at = Math.max(0, Math.round(ticks((parseFloat(n.style.left) - 40) / E.zoom) / fr) * fr);
-        await write([{ op: "move_clip", id, at: Math.round(at) }], `Move ${id}`); // clips and text with their own 'at'
+        const snap = (pxv) => Math.max(0, Math.round(Math.round(ticks((pxv - 40) / E.zoom) / fr) * fr));
+        const [s0, e0] = E.spans[id];
+        const ns = snap(parseFloat(n.style.left)), ne = snap(parseFloat(n.style.left) + parseFloat(n.style.width));
+        if (!edge) return write([{ op: "move_clip", id, at: ns }], `Move ${id}`);
+        if (it.type === "clip") {
+          const sp = frac((it.props || {}).speed), mdur = E.doc.media[it.media].dur;
+          if (edge === "r") {
+            const out = Math.min(mdur, Math.round(it.src[0] + (ne - s0) * sp));
+            return write([{ op: "trim_clip", id, src_out: out, ripple: document.getElementById("ed-ripple").checked }], `Trim ${id}`);
+          }
+          const inn = Math.max(0, Math.round(it.src[0] + (ns - s0) * sp));
+          return write([{ op: "trim_clip", id, src_in: inn }], `Trim ${id}`);
+        }
+        if (edge === "r") return write([{ op: "trim_clip", id, dur: Math.max(fr, ne - s0) }], `Trim ${id}`);
+        return write([{ op: "move_clip", id, at: ns }, { op: "trim_clip", id, dur: Math.max(Math.round(fr), e0 - ns) }], `Trim ${id}`);
       };
     };
   }
@@ -531,6 +599,7 @@
     const pend = E.pending || [];
     const recs = [...E.records].reverse().slice(0, 40);
     el.innerHTML = `<div class="side-h"><span class="dot ${pend.length ? "live" : ""}"></span><b>Hermes</b><span class="hint">${pend.length ? "waiting for you" : "idle"}</span>
+        <label class="hint chk" style="display:inline-flex;gap:.3rem;align-items:center"><input type="checkbox" id="ed-follow" ${E.follow ? "checked" : ""} style="width:auto;margin:0" /> follow</label>
         <span class="seg">${["ask", "propose", "auto"].map((m) => `<button data-mode="${m}" class="${E.mode === m ? "on" : ""}">${m}</button>`).join("")}</span></div>
       ${pend.map((p) => `<div class="card wait"><div class="who agent">${esc(p.actor.id)}${p.step != null ? " · step " + esc(p.step) : ""} · waiting</div>
         <div class="sum">${esc(p.summary)}</div><div class="v">${esc(p.tool)} · ${esc(p.n_ops)} op${p.n_ops === 1 ? "" : "s"} · on v${esc(p.base_version)}</div>
@@ -541,6 +610,7 @@
         <div class="ba" id="ba-${esc(r.op_id)}"></div>
         <div class="acts"><button class="ed-btn" data-frames="${esc(r.op_id)}">Before / after</button>${!r.undoes && !E.cancelled.has(r.op_id) ? `<button class="ed-btn" data-undo="${esc(r.op_id)}">Undo</button>` : ""}</div></div>`).join("")}
       <p class="hint" style="padding:.8rem .9rem">Agents edit this timeline through MCP (<span class="mono">hermes-studio mcp install claude</span>). In Propose mode each edit waits here for Apply or Skip.</p>`;
+    document.getElementById("ed-follow").onchange = (e) => { E.follow = e.target.checked; };
     el.querySelectorAll("[data-mode]").forEach((b) => (b.onclick = async () => { try { await P("set_mode", { mode: b.dataset.mode }); E.mode = b.dataset.mode; side(); } catch (e) { fail(e); } }));
     const res = (pid, decision, rest) => P("approval_resolve", { pending_id: pid, decision, rest: !!rest }).then((r) => { if (r.resolved.state === "failed") fail(r.resolved.error); return reload(); }).catch(fail);
     el.querySelectorAll("[data-apply]").forEach((b) => (b.onclick = () => res(b.dataset.apply, "apply")));

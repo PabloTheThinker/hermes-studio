@@ -9,8 +9,8 @@ A new **Edit** page in the desk (rail: Clips · **Edit** · Design), in `hermes_
 - **Projects:** list (`project_list`) and **New project** (`project_new`: 9:16, 16:9, 1:1 or 4:5; 30 fps).
 - **Left panel:** *Media* (import a local file with optional Whisper words; per-media state and progress from `media.*` events; **Add to end** puts the whole file at the end of V1) and *Transcript* (words on the timeline, fillers in ember; click to seek, shift-click to select; **Remove fillers**, **Tighten pauses**, **Cut selection**, each previewed first with its cut count and seconds, then one undoable entry).
 - **Centre:** the preview. With H.264 (Chrome, Edge, the desktop app) a sequence player over the S4 proxies; otherwise cached engine frames (S5), about 6 a second while playing. Text items are drawn over live video (engine frames already carry them).
-- **Bottom:** the timeline (ruler, T/V/A tracks, items placed by the engine's resolve rules, playhead). Click selects, drag moves (`move_clip`, snapped to frames), **Split at playhead** (`split_clip`), **Delete** (with ripple), **Add text**. Agent items have an ember outline and a tag (`S · step 3`); a person's last edit an ink outline.
-- **Right sidebar (Hermes):** status dot, the **Ask / Propose / Auto** switch (`set_mode`), one **waiting card** per parked agent edit (**Apply / Skip / Apply the rest**), and one **card per history entry** (who, summary, `v12 → v13`, **Before / after** frames from `history_frames`, **Undo**). Undone entries are dimmed.
+- **Bottom:** the timeline (ruler, T/V/A tracks, items placed by the engine's resolve rules, playhead). Click selects, drag moves (`move_clip`, snapped to frames), **drag an edge to trim** (`trim_clip`: a clip's right edge sets `src_out`, with ripple when ticked; its left edge sets `src_in` and keeps the right edge; a text item's edges set `dur` / `at`), double-click a text item to edit it (`edit_text`), **Split at playhead** (`split_clip`), **Delete** (with ripple), **Add text**. Clips show their first thumbnail and their waveform (S4 files). Agent items have an ember outline and a tag (`S · step 3`); a person's last edit an ink outline.
+- **Right sidebar (Hermes):** status dot, **follow** (on by default: the playhead jumps to each agent change; a click on the ruler turns it off), the **Ask / Propose / Auto** switch (`set_mode`), one **waiting card** per parked agent edit (**Apply / Skip / Apply the rest**), and one **card per history entry** (who, summary, `v12 → v13`, **Before / after** frames from `history_frames`, **Undo**). Undone entries are dimmed.
 - **Top:** project id and version, **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z: linear, whoever made the edit), **Render MP4** (S6) with live progress and a download link.
 - **Live:** the page reads the project's SSE stream (`fetch`, with `Last-Event-ID` on reconnect): `op.*` reloads the doc, `approval.*` the cards, `media.*` / `render.*` the progress, `mode.changed` the switch.
 - **Keys:** Space play/pause, S split, Delete delete, Ctrl+Z / Ctrl+Shift+Z.
@@ -31,8 +31,8 @@ A new **Edit** page in the desk (rail: Clips · **Edit** · Design), in `hermes_
 ## Checks
 
 - `tests/test_edit_page.py` (12): token adoption (and refusal of a bad one), project tools over /mcp and REST, scopes, closed app, the page files and the rail entry.
-- `scripts/check-edit-page.js` (manual, Playwright + Chromium): new project → import → add to end → an agent adds a title over stdio MCP in Propose mode → the waiting card → Apply → seek and play → before/after frames; screenshots 1–5; fails on page errors or a playhead that doesn't move.
+- `scripts/check-edit-page.js` (manual, Playwright + Chromium): new project → import → add to end → an agent adds a title over stdio MCP in Propose mode → the waiting card → Apply → seek and play → before/after frames → drag the clip's right edge 2 s shorter → double-click the title and edit it; screenshots 1–6; fails on page errors, a playhead that doesn't move, or a wrong trim.
 
 ## Not built yet
 
-The ACP client and composer (Hermes chat), follow mode, the Scenes tab, waveform drawing on audio items, trimming by dragging item edges, and keyframes. Card latency (p95 < 250 ms) isn't measured yet.
+The ACP client and composer (Hermes chat), the Scenes tab, slip/roll edits, and keyframes. Card latency (p95 < 250 ms) isn't measured yet.
