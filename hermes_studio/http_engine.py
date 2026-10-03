@@ -199,6 +199,10 @@ def get(h: Any, segs: list[str], query: str) -> None:
             log = proj.oplog()
             if rest == ["hash"]:
                 body = log.head()
+            elif rest == ["outline"]:
+                from hermes_studio.outline import outline
+
+                body = outline(log.doc)
             elif rest == ["history"]:
                 body = log.history_list(**_history_args(query))
             elif rest == ["history", "diff"]:

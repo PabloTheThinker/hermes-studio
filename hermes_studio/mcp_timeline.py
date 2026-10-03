@@ -31,6 +31,7 @@ READ_TOOLS = (
     "get_timeline",
     "get_hash",
     "list_markers",
+    "timeline_outline",
     "export_otio",
     "validate_timeline",
     "history_list",
@@ -94,6 +95,16 @@ TOOLS: list[dict] = [
         _RO,
     ),
     _tool("list_markers", "List markers", "The timeline's markers sorted by time, each time as {ticks, seconds}.", {}, _RO),
+    _tool(
+        "timeline_outline",
+        "Outline the timeline",
+        "The timeline in seconds and plain words, cheaper to read than get_timeline: each track's items in time order "
+        "{id, type, start_s, end_s, media + src_s or text + style, speed, volume, fades, rides_on}, crossfades, the main "
+        "track's gaps_s, markers, length_s, and `text`, the same as a few lines. Write with the ids it gives; for exact "
+        "ticks use get_timeline.",
+        {},
+        _RO,
+    ),
     _tool(
         "export_otio",
         "Export OTIO",
@@ -632,7 +643,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
     )
     _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
     pid = args["project_id"]
-    if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
+    if name in ("get_timeline", "get_hash", "list_markers", "timeline_outline", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
     if name in ("media_status", "get_transcript", "get_scenes"):
         _no_unknown(args, {"project_id", "media_id"})
@@ -747,6 +758,10 @@ def _read(name: str, args: dict, proj: Any) -> dict:
         doc = log.doc
     if name == "get_timeline":
         return doc
+    if name == "timeline_outline":
+        from hermes_studio.outline import outline
+
+        return outline(doc)
     return P.list_markers(doc)
 
 

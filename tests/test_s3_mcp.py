@@ -70,8 +70,9 @@ def test_89_schemas_enforce_nothing_the_engine_does_not():
         s = json.dumps(t["inputSchema"])
         for banned in ('additionalProperties": false', "minItems", "maxItems", "minLength", "maxLength", '"required"'):
             assert banned not in s, (t["name"], banned)
-    # 11 timeline + 3 media (S4) + 3 frames (S5) + 2 render (S6) + 1 cut (S7) + 4 gate (S8) + 2 projects (Edit page) + 1 preset + 4 drafts + get_scenes
-    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 32
+    # 11 timeline + 3 media (S4) + 3 frames (S5) + 2 render (S6) + 1 cut (S7) + 4 gate (S8) + 2 projects (Edit page) + 1 preset + 4 drafts
+    # + get_scenes + timeline_outline
+    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 33
 
 
 # Addendum (test 89): every public op, with args the engine would accept, so a non-string `id`
@@ -214,7 +215,9 @@ def test_89_history_query_parity(app):
     assert st != 200 and (h["rule"], h["path"]) == ("missing_arg", "/since_version")
 
 
-@pytest.mark.parametrize("tool", ["get_timeline", "get_hash", "list_markers", "project_status", "export_otio"])
+@pytest.mark.parametrize(
+    "tool", ["get_timeline", "get_hash", "list_markers", "timeline_outline", "project_status", "export_otio"]
+)
 def test_89_simple_tools(app, tool):
     ok, e = app.mcp(tool, {"project_id": "p1", "zz": 1})
     assert not ok and (e["code"], e["rule"], e["path"]) == ("invalid_op", "unknown_arg", "/zz")

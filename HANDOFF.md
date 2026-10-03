@@ -28,6 +28,7 @@ The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed 
 | `feat/editor-nav` | Edit page: held-key nudges and slips land as one entry; Fit (\\) and Ctrl+wheel zoom; the view follows the playhead; page writes, undo and redo queue one at a time | `check-edit-page.js` held-nudge and Fit checks | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-render-options` | Edit page render: **no captions** and **half size** beside the style | `check-edit-page.js` renders 540×960 without captions (ffprobe: h264 540×960 + aac) | `EDIT-PAGE-SPEC.md` |
 | `feat/editor-multiselect` | Edit page multi-select (Ctrl/Shift-click, Ctrl+A, Esc); group Delete and Alt-arrow nudge, one entry each | `check-edit-page.js` multi-select step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-outline` | read tool `timeline_outline` (33 tools) and `GET /api/projects/<id>/outline`: the edit in seconds and plain words (items, crossfades, V1 gaps, markers, length, a `text` sketch); AGENTS.md points agents to it first and lists the newer ops | `tests/test_outline.py` | `outline.py` docstring, AGENTS.md |
 
 **What only people can do now:**
 1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
