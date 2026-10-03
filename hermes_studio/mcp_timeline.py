@@ -42,7 +42,8 @@ MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
 FRAME_TOOLS = ("timeline_frames", "timeline_contact_sheet", "history_frames")  # S5
 RENDER_TOOLS = ("render_timeline", "render_status")  # S6
 CUT_TOOLS = ("transcript_cut",)  # S7
-NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS
+GATE_TOOLS = ("approval_list", "approval_status", "approval_resolve", "set_mode")  # S8
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -252,6 +253,39 @@ TOOLS: list[dict] = [
             "ranges": {"type": "array", "items": {"type": "object"}},
             "preview": {"type": "boolean"},
         },
+        _W,
+    ),
+    _tool(
+        "approval_list",
+        "Waiting edits",
+        "The project's mode (ask | propose | auto) and the agent edits parked for approval (all:true includes resolved ones): "
+        "{mode, pending:[{pending_id, state, actor, step, tool, summary, n_ops, base_version, created, result, error}]}.",
+        {"all": {"type": "boolean"}},
+        _RO,
+    ),
+    _tool(
+        "approval_status",
+        "Waiting edit status",
+        "One parked edit: state pending | applied | skipped | failed, with result {op_id, new_version, ...} or error. "
+        "In Propose mode an agent's write returns needs_approval with a pending_id; poll this (or watch events) until it "
+        "isn't pending. Don't resend the write with a new client_op_id.",
+        {"pending_id": _S},
+        _RO,
+    ),
+    _tool(
+        "approval_resolve",
+        "Apply or skip",
+        "A person applies or skips a parked agent edit (decision: apply | skip). rest:true does the same to every edit that "
+        "agent has parked. Each edit resolves once; a second answer returns the outcome. Agents can't call this.",
+        {"pending_id": _S, "decision": {"type": "string", "enum": ["apply", "skip"]}, "rest": {"type": "boolean"}},
+        _W,
+    ),
+    _tool(
+        "set_mode",
+        "Set the edit mode",
+        "A person sets how agent edits land: ask (agents only read), propose (each edit waits for Apply/Skip; the default) "
+        "or auto (edits apply at once, undo after). Agents can't call this.",
+        {"mode": {"type": "string", "enum": ["ask", "propose", "auto"]}},
         _W,
     ),
 ]
@@ -492,7 +526,7 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         return {"ok": True, "hash": T.canonical_hash(args["doc"])}
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
-    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media", "transcript_cut")
+    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media", "transcript_cut", "approval_resolve", "set_mode")
     _need_scope(backend, "write" if writes else "render" if name in FRAME_TOOLS or name == "render_timeline" else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
@@ -507,9 +541,23 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         if e.code != "not_found":
             raise
         proj = None
-    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS
+    extra = MEDIA_TOOLS + FRAME_TOOLS + RENDER_TOOLS + CUT_TOOLS + GATE_TOOLS
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
         raise O.Oplog.precheck(name if name not in extra else "get_hash", args if name not in extra else {"project_id": pid})
+    if name in GATE_TOOLS:
+        from hermes_studio import gate as G
+
+        rest = {k: v for k, v in args.items() if k != "project_id"}
+        if name == "approval_list":
+            return G.listing(proj, rest)
+        if name == "approval_status":
+            _no_unknown(rest, {"pending_id"})
+            return G.status(proj, rest)
+        if not backend.writable:
+            raise P.offline()
+        if name == "set_mode":
+            return G.set_mode(proj, backend.session, rest)
+        return G.resolve(proj, backend.session, rest)
     if name == "transcript_cut":
         from hermes_studio import cuts as CU
 

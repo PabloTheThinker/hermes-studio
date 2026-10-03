@@ -41,7 +41,16 @@ STATUS = {
     "failed": 500,
 }
 _QUERY_INT = re.compile(r"\A(0|[1-9][0-9]*)\Z")  # ASCII only (D26)
-WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media", "render_timeline", "transcript_cut")
+WRITE_ROUTES = (
+    "timeline_apply",
+    "history_undo",
+    "history_redo",
+    "import_media",
+    "render_timeline",
+    "transcript_cut",
+    "approval_resolve",
+    "set_mode",
+)
 MEDIA_FILES = {
     "proxy": ("proxy", "video/mp4"),
     "thumbs": ("thumbs", "image/jpeg"),
@@ -162,6 +171,15 @@ def get(h: Any, segs: list[str], query: str) -> None:
             if st["state"] != "ready":
                 return _json(h, 409, {"ok": False, "error": f"render is {st['state']}", "code": "conflict"})
             return h._file(RJ._paths(proj, rest[1])[0], "video/mp4")
+        if rest == ["approvals"]:
+            from hermes_studio import gate as G
+
+            q = parse_qs(query, keep_blank_values=True)
+            return _json(h, 200, G.listing(proj, {"all": True} if q.get("all", [""])[-1] == "1" else {}))
+        if len(rest) == 2 and rest[0] == "approvals":
+            from hermes_studio import gate as G
+
+            return _json(h, 200, G.status(proj, {"pending_id": rest[1]}))
         if rest == ["frame"]:
             return _frame_get(h, tok, proj, query)
         if rest == ["transcript"]:
@@ -341,6 +359,11 @@ def rest_post(h: Any, segs: list[str]) -> None:
             from hermes_studio import render_jobs as RJ
 
             return _json(h, 200, RJ.render_timeline(proj, body, ENGINE.renders))
+        if parts[1] in ("approval_resolve", "set_mode"):
+            from hermes_studio import gate as G
+
+            fn = G.resolve if parts[1] == "approval_resolve" else G.set_mode
+            return _json(h, 200, fn(proj, tok.session, body))
         if parts[1] == "transcript_cut":
             from hermes_studio import cuts as CU
 

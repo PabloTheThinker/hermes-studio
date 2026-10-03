@@ -56,6 +56,7 @@ _EXIT_AS = {
     "invalid_doc": "bad_input",
     "engine_offline": "failed",
     "permission_denied": "failed",
+    "needs_approval": "failed",  # S8: not final; the call is parked
 }
 
 
@@ -412,10 +413,11 @@ class Project:
         self.id = project_id
         self.dir = d
         self.lock_fd = lock_fd
-        self.mutex = threading.Lock()
+        self.mutex = threading.RLock()  # re-entrant: the S8 gate and S4/S6 notify run under it
         self.log: O.Oplog | None = None
         self.broken: HermesStudioError | None = None  # a damaged store: every tool gets this body
         self.subscribers: list[Subscriber] = []
+        self._mode: str | None = None
 
     # ---- open (D2)
 
@@ -484,8 +486,24 @@ class Project:
         with self.mutex:
             return self.write_locked(session, tool, args)
 
-    def write_locked(self, session: O.Session, tool: str, args: Any) -> dict:
+    @property
+    def mode(self) -> str:
+        """S8: ask | propose | auto (``mode.json``; Propose when unset)."""
+        if self._mode is None:
+            from hermes_studio import gate
+
+            self._mode = gate.mode_of(self.dir)
+        return self._mode
+
+    def write_locked(self, session: O.Session, tool: str, args: Any, *, gated: bool = True, after: dict | None = None) -> dict:
         log = self.oplog()
+        if gated:
+            from hermes_studio import gate
+
+            held = gate.gate(self, session, tool, args, after=after)
+            if held is not None:  # a parked call the person skipped: the non-error 'skipped' status
+                rec = held["skipped"]
+                return {"ok": True, "status": "skipped", "pending_id": rec["pending_id"], "summary": rec["summary"]}
         before = len(log._entries)
         res = log.call(session, tool, args)
         if len(log._entries) > before:  # a new entry (a cached retry adds none and emits nothing)
@@ -538,7 +556,7 @@ class Project:
     def status(self) -> dict:
         with self.mutex:
             head = self.oplog().head()
-            return {**head, "engine": self.engine.info(), "mode": None}
+            return {**head, "engine": self.engine.info(), "mode": self.mode}
 
     def export_otio(self) -> dict:
         with self.mutex:
@@ -707,7 +725,9 @@ class ClosedProject:
     def status(self) -> dict:
         held = engine_holding(self.dir)
         engine = None if held is None else {k: held.get(k) for k in ("pid", "port", "started_at")}
-        return {**self.log.head(), "engine": engine, "mode": None}
+        from hermes_studio import gate
+
+        return {**self.log.head(), "engine": engine, "mode": gate.mode_of(self.dir)}
 
 
 def list_markers(doc: dict) -> dict:

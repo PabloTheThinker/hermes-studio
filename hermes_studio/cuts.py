@@ -189,7 +189,9 @@ def transcript_cut(proj: Any, session: O.Session, args: Any) -> dict:
     """The ``transcript_cut`` tool: ``{base_version, client_op_id, summary?, group_id?, fillers?,
     pauses?, ranges?, preview?}``. With ``preview`` nothing is written."""
     from hermes_studio import frames as F
+    from hermes_studio import gate
 
+    gate.refuse_in_ask(proj, session)
     if not isinstance(args, dict):
         raise _bad("", "bad_arg", "arguments must be an object")
     allowed = {"base_version", "client_op_id", "summary", "group_id", "fillers", "pauses", "ranges", "preview"}

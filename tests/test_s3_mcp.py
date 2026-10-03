@@ -70,7 +70,8 @@ def test_89_schemas_enforce_nothing_the_engine_does_not():
         s = json.dumps(t["inputSchema"])
         for banned in ('additionalProperties": false', "minItems", "maxItems", "minLength", "maxLength", '"required"'):
             assert banned not in s, (t["name"], banned)
-    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 20  # 11 timeline + 3 media (S4) + 3 frames (S5) + 2 render (S6) + 1 cut (S7)
+    # 11 timeline + 3 media (S4) + 3 frames (S5) + 2 render (S6) + 1 cut (S7) + 4 gate (S8)
+    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 24
 
 
 # Addendum (test 89): every public op, with args the engine would accept, so a non-string `id`
@@ -767,7 +768,8 @@ def test_get_mcp_stream_hears_projects_opened_mid_stream(app):
     assert r.status == 200 and r.getheader("Content-Type").startswith("text/event-stream")
     doc2 = base()
     doc2["id"] = "p2"
-    P.create_project(doc2)  # after the stream connected; the engine opens it lazily on first use
+    d2 = P.create_project(doc2)  # after the stream connected; the engine opens it lazily on first use
+    (d2 / "mode.json").write_text('{"mode": "auto"}')  # S8: agent writes apply (this test predates the gate)
     assert "p2" not in app.eng.projects
     ok, res = app.mcp(
         "timeline_apply",

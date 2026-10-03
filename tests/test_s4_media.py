@@ -357,7 +357,7 @@ def test_closed_app_media_reads_and_offline_import(home):
 
 
 def test_tools_list_names():
-    assert len(MT.TOOLS) == 20 and {"import_media", "media_status", "get_transcript"} <= set(MT.BY_NAME)
+    assert len(MT.TOOLS) == 24 and {"import_media", "media_status", "get_transcript"} <= set(MT.BY_NAME)
 
 
 def test_status_reads_interrupted_when_no_worker_owns_it(home):

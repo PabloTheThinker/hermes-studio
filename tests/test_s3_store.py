@@ -439,7 +439,9 @@ def test_d5_d6_lock_second_engine_and_stale_lock(home):
     assert e.value.code == "failed" and str(os.getpid()) in e.value.message and "4242" in e.value.message
     assert e.value.hint == P.LOCKED_HINT and "rule" not in e.value.as_dict()
     st = P.ClosedProject("p1").status()
-    assert st["engine"] == {"pid": os.getpid(), "port": 4242, "started_at": info["started_at"]} and st["mode"] is None
+    assert (
+        st["engine"] == {"pid": os.getpid(), "port": 4242, "started_at": info["started_at"]} and st["mode"] == "propose"
+    )  # S8 default
     eng.close()
     assert not attach.exists() and P.engine_holding(p.dir) is None  # stale .lock file: no OS lock
     eng2, p2 = opened(P.Engine(port=6000))
@@ -469,7 +471,8 @@ def test_d3_writes_are_serialised(home):
 
 
 def test_d9_d11_events_replay_and_reset(home):
-    P.create_project(base())
+    d = P.create_project(base())
+    (d / "mode.json").write_text('{"mode": "auto"}')  # S8: agent writes apply (this test predates the gate)
     eng, p = opened()
     sub, replay, reset = p.subscribe(None)
     r = write(p, hermes(3), marker(0), key="a")

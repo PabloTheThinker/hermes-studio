@@ -21,8 +21,11 @@ def key(e: dict) -> tuple:
 
 
 class App:
-    def __init__(self, base_doc: dict) -> None:
-        P.create_project(base_doc)
+    def __init__(self, base_doc: dict, mode: str = "auto") -> None:
+        d = P.create_project(base_doc)
+        # S8: Propose is the engine default; the S3-S7 contract tests predate the gate and expect
+        # agent writes to apply, so the harness opens projects in Auto unless a test asks otherwise.
+        (d / "mode.json").write_text(json.dumps({"mode": mode}))
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), studio.StudioHandler)
         self.srv.daemon_threads = True
         self.port = self.srv.server_address[1]

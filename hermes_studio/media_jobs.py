@@ -209,6 +209,9 @@ def import_media(proj: P.Project, session: O.Session, args: Any, jobs: MediaJobs
     entry, then the derived files in the background. Returns the write result plus ``media_id``,
     the probe and the initial status. A retry with the same ``client_op_id`` returns the cached
     write and does not start a second job."""
+    from hermes_studio import gate
+
+    gate.refuse_in_ask(proj, session)
     if not isinstance(args, dict):
         raise _bad("", "bad_arg", "arguments must be an object")
     known = {"path", "client_op_id", "id", "stages", "whisper", "summary"}
@@ -248,7 +251,18 @@ def import_media(proj: P.Project, session: O.Session, args: Any, jobs: MediaJobs
         if prior is not None:  # a retry: the engine's dedupe needs the call as first sent
             call["base_version"] = prior["base_version"]
         before = len(log._entries)
-        res = proj.write_locked(session, "timeline_apply", call)
+        after = {
+            "kind": "media",
+            "src": str(src),
+            "info": info,
+            "stages": stages,
+            "model": model,
+            "client_op_id": call["client_op_id"],
+            "actor": {"kind": session.actor.kind, "id": session.actor.id},
+        }
+        res = proj.write_locked(session, "timeline_apply", call, after=after)  # S8: may park (needs_approval)
+        if res.get("status") == "skipped":
+            return {**res, "media_id": None, "probe": info, "status": None}
         fresh = len(log._entries) > before
         entry = next(e for e in reversed(log._entries) if e["op_id"] == res["op_id"])
     mid = next(o["id"] for o in entry["ops"] if o["op"] == "add_media")
@@ -299,3 +313,20 @@ def get_transcript(proj: Any, args: Any) -> dict:
     for r in rows:
         r["at_s"], r["end_s"] = r["at"] / sec, r["end"] / sec
     return {"version": doc["version"], "hash": doc["hash"], "media": sorted(words), "words": rows}
+
+
+def after_import(proj: P.Project, after: dict) -> None:
+    """S8: a parked import was applied by a person: start its derived files now."""
+    key = (after["actor"]["kind"], after["actor"]["id"])
+    entry = next(
+        (
+            e
+            for e in reversed(proj.oplog()._entries)
+            if (e["actor"]["kind"], e["actor"]["id"]) == key and e["client_op_id"] == after["client_op_id"]
+        ),
+        None,
+    )
+    if entry is None:
+        return
+    mid = next(o["id"] for o in entry["ops"] if o["op"] == "add_media")
+    proj.engine.media.submit(proj, mid, Path(after["src"]), after["info"], after["stages"], after["model"])
