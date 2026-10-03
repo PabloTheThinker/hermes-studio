@@ -507,6 +507,13 @@ class Project:
             with contextlib.suppress(Exception):
                 fn(event)
 
+    def notify(self, event: dict) -> None:
+        """A transient event for this project's SSE clients only (S4 ``media.*``): no ``seq``, so
+        it is never replayed, and /mcp listeners (which follow log entries) don't hear it."""
+        with self.mutex:
+            keep = [s for s in self.subscribers if s.put(event)]
+            self.subscribers = keep
+
     def subscribe(self, last_id: int | None) -> tuple[Subscriber, list[dict], int | None]:
         """Register a client; return (it, the events after ``last_id`` to replay first, and the
         head seq when ``last_id`` is above the head, for ``stream.reset``)."""
@@ -564,6 +571,7 @@ class Engine:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     # callables(event) that hear every project, including ones opened later (GET /mcp, D12)
     listeners: list[Any] = field(default_factory=list)
+    _media: Any = None
 
     def __post_init__(self) -> None:
         if not self.attach_token:
@@ -571,6 +579,16 @@ class Engine:
 
     def info(self) -> dict:
         return {"pid": os.getpid(), "port": self.port, "started_at": self.started_at}
+
+    @property
+    def media(self) -> Any:
+        """The S4 media worker pool, started on first use."""
+        with self._lock:
+            if self._media is None:
+                from hermes_studio.media_jobs import MediaJobs
+
+                self._media = MediaJobs()
+            return self._media
 
     def listen(self, fn: Any) -> None:
         with self._lock:
@@ -637,6 +655,8 @@ class Engine:
     def close(self) -> None:
         with self._lock:
             for p in self.projects.values():
+                if self._media is not None:
+                    self._media.cancel_project(p.id)  # a running ffmpeg is killed; its status reads cancelled
                 p.close()
             self.projects.clear()
 

@@ -70,7 +70,7 @@ def test_89_schemas_enforce_nothing_the_engine_does_not():
         s = json.dumps(t["inputSchema"])
         for banned in ('additionalProperties": false', "minItems", "maxItems", "minLength", "maxLength", '"required"'):
             assert banned not in s, (t["name"], banned)
-    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 11
+    assert {t["name"] for t in MT.TOOLS} == set(MT.NAMES) and len(MT.TOOLS) == 14  # 11 timeline tools + 3 S4 media tools
 
 
 # Addendum (test 89): every public op, with args the engine would accept, so a non-string `id`
@@ -91,6 +91,7 @@ VALID_OPS = [
     {"op": "remove_track"},
     {"op": "add_marker", "at": 0, "label": "m"},
     {"op": "remove_marker"},
+    {"op": "add_media", "path": "media/b.mp4", "dur": S, "fps": [30, 1]},  # S4
 ]
 assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
 

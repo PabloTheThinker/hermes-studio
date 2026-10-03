@@ -16,6 +16,9 @@ from urllib.parse import parse_qs
 
 from hermes_studio import __version__
 from hermes_studio import mcp_timeline as MT
+from hermes_studio import media as M
+from hermes_studio import media_jobs as MJ
+from hermes_studio import oplog as O
 from hermes_studio import project as P
 from hermes_studio.api import HermesStudioError
 from hermes_studio.jsonrpc import PARSE_ERROR, dumps, parse_message
@@ -38,7 +41,14 @@ STATUS = {
     "failed": 500,
 }
 _QUERY_INT = re.compile(r"\A(0|[1-9][0-9]*)\Z")  # ASCII only (D26)
-WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo")
+WRITE_ROUTES = ("timeline_apply", "history_undo", "history_redo", "import_media")
+MEDIA_FILES = {
+    "proxy": ("proxy", "video/mp4"),
+    "thumbs": ("thumbs", "image/jpeg"),
+    "thumbs.json": ("thumbs_index", None),
+    "wave": ("wave", None),
+    "words": ("words", None),
+}  # S4: GET /api/projects/<id>/media/<mid>/<name>
 
 
 def start(port: int) -> P.Engine:
@@ -141,6 +151,12 @@ def get(h: Any, segs: list[str], query: str) -> None:
             return _events(h, proj)
         if rest == ["status"]:
             return _json(h, 200, proj.status())
+        if rest == ["transcript"]:
+            q = parse_qs(query, keep_blank_values=True)
+            args = {"media_id": q["media_id"][-1]} if "media_id" in q else {}
+            return _json(h, 200, MJ.get_transcript(proj, args))
+        if len(rest) in (2, 3) and rest[0] == "media":
+            return _media_get(h, proj, rest[1], rest[2] if len(rest) == 3 else None)
         with proj.mutex:
             log = proj.oplog()
             if rest == ["hash"]:
@@ -154,6 +170,24 @@ def get(h: Any, segs: list[str], query: str) -> None:
         return _json(h, 200, body)
     except HermesStudioError as e:
         return _error(h, e)
+
+
+def _media_get(h: Any, proj: P.Project, mid: str, name: str | None) -> None:
+    """S4: a media's status (``media/<mid>``) or one of its derived files. ``mid`` must be in the
+    doc's media table, so it is a validated id and can't name a path outside the cache."""
+    if name is None:
+        return _json(h, 200, MJ.media_status(proj, {"media_id": mid}, ENGINE.media.live_for(proj.id)))
+    if name not in MEDIA_FILES:
+        return _json(h, 404, {"ok": False, "error": "unknown project route"})
+    with proj.mutex:
+        known = mid in proj.oplog().doc["media"]
+    if not known:
+        raise O.OplogError("not_found", f"no media {mid!r}", rule="not_found", path="/media_id", id=mid)
+    key, ctype = MEDIA_FILES[name]
+    path = M.cache_paths(proj.dir, mid)[key]
+    if not path.is_file():
+        return _json(h, 404, {"ok": False, "error": f"{name} is not built yet", "code": "not_found"})
+    return h._file(path, ctype or "application/json; charset=utf-8")
 
 
 def _sse_head(h: Any) -> None:
@@ -188,7 +222,7 @@ def _events(h: Any, proj: P.Project) -> None:
                 h.wfile.write(b": keepalive\n\n")
                 h.wfile.flush()
                 continue
-            h.wfile.write(_sse(ev["seq"], ev["type"], ev))
+            h.wfile.write(_sse(ev.get("seq"), ev["type"], ev))  # media.* events have no seq
             h.wfile.flush()
     except OSError:
         pass
@@ -257,6 +291,9 @@ def rest_post(h: Any, segs: list[str]) -> None:
         return _error(h, _denied("write"))
     try:
         proj = ENGINE.get(parts[0])
+        if parts[1] == "import_media":
+            stripped, _ = O.strip_forged(body) if isinstance(body, dict) else (body, [])
+            return _json(h, 200, MJ.import_media(proj, tok.session, stripped, ENGINE.media))
         return _json(h, 200, proj.write(tok.session, parts[1], body))
     except HermesStudioError as e:
         return _error(h, e)

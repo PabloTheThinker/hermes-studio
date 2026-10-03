@@ -38,7 +38,8 @@ READ_TOOLS = (
     "project_status",
 )
 WRITE_TOOLS = ("timeline_apply", "history_undo", "history_redo")
-NAMES = READ_TOOLS + WRITE_TOOLS
+MEDIA_TOOLS = ("import_media", "media_status", "get_transcript")  # S4
+NAMES = READ_TOOLS + WRITE_TOOLS + MEDIA_TOOLS
 
 _S = {"type": "string"}
 _PID = {"type": "string", "description": "the project id (the timeline's id)"}
@@ -117,7 +118,7 @@ TOOLS: list[dict] = [
         "(at_s, src_s, src_in_s, src_out_s, dur_s, fade_in_s, fade_out_s, anchor.offset_s). Needs base_version, summary and "
         "a fresh client_op_id; resend the exact same call to retry. Ops: insert_clip, move_clip, trim_clip, split_clip, "
         "delete_clip, set_props, set_fade, set_anchor, edit_text, add_text, add_transition, add_track, remove_track, add_marker, "
-        "remove_marker.",
+        "remove_marker, add_media (import_media is easier: it probes the file for you).",
         {
             "base_version": {"type": "integer"},
             "ops": {"type": "array", "items": {"type": "object"}},
@@ -140,6 +141,39 @@ TOOLS: list[dict] = [
         "Redo an undo entry (its op_id) as a new entry.",
         {"client_op_id": _S, "op_id": _S, "summary": _S, "base_version": {"type": "integer"}},
         _W,
+    ),
+    _tool(
+        "import_media",
+        "Import media",
+        "Add a local video or audio file to the project: probes it, logs one add_media entry (undoable) and returns "
+        "{media_id, probe, status, op_id, new_version}. Then builds, in the background, a 540p proxy, a thumbnail strip, "
+        "a waveform and (with 'words' in stages) Whisper words. Poll media_status or watch the project's events for "
+        "media.progress / media.ready. Needs the app running. The file is read where it is, never copied or uploaded.",
+        {
+            "path": _S,
+            "client_op_id": _S,
+            "id": _S,
+            "summary": _S,
+            "stages": {"type": "array", "items": {"type": "string", "enum": ["proxy", "thumbs", "wave", "words"]}},
+            "whisper": {"type": "string", "enum": ["tiny", "base", "small", "medium"]},
+        },
+        _W,
+    ),
+    _tool(
+        "media_status",
+        "Media status",
+        "Progress and files of one media's background work: {state: queued|running|ready|failed|cancelled|interrupted|none, "
+        "progress 0-1, stage, stages:{proxy|thumbs|wave|words: {state, ...}}, probe}.",
+        {"media_id": _S},
+        _RO,
+    ),
+    _tool(
+        "get_transcript",
+        "Get the transcript",
+        "Words on the timeline: each {w, at, end, at_s, end_s, clip, media, src_in, src_out}, sorted by time, mapped through "
+        "every clip that shows them. Only media imported with 'words' have any.",
+        {"media_id": _S},
+        _RO,
     ),
 ]
 BY_NAME = {t["name"]: t for t in TOOLS}
@@ -379,10 +413,13 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
         return {"ok": True, "hash": T.canonical_hash(args["doc"])}
     if "project_id" not in args:  # D4, §11 row G: before any other tool-level check
         raise O.OplogError("invalid_op", "'project_id' is required", rule="missing_arg", path="/project_id")
-    _need_scope(backend, "write" if name in WRITE_TOOLS or name == "export_otio" else "read")
+    writes = name in WRITE_TOOLS or name in ("export_otio", "import_media")
+    _need_scope(backend, "write" if writes else "read")
     pid = args["project_id"]
     if name in ("get_timeline", "get_hash", "list_markers", "export_otio", "project_status"):
         _no_unknown(args, {"project_id"})
+    if name in ("media_status", "get_transcript"):
+        _no_unknown(args, {"project_id", "media_id"})
     try:
         proj = backend.project(pid) if isinstance(pid, str) else None
     except O.OplogError as e:
@@ -390,12 +427,31 @@ def run_tool(name: str, args: dict, backend: Backend) -> dict:
             raise
         proj = None
     if proj is None:  # the engine's own answer, in the engine's order, for a project that isn't here
-        raise O.Oplog.precheck(name, args)
-    if name in WRITE_TOOLS or name == "export_otio":
+        raise O.Oplog.precheck(
+            name if name not in MEDIA_TOOLS else "get_hash", args if name not in MEDIA_TOOLS else {"project_id": pid}
+        )
+    if name in MEDIA_TOOLS:
+        return _media(name, args, proj, backend)
+    if writes:
         if not backend.writable:
             raise P.offline()
         return _write(name, args, proj, backend) if name != "export_otio" else proj.export_otio()
     return _read(name, args, proj)
+
+
+def _media(name: str, args: dict, proj: Any, backend: Backend) -> dict:
+    from hermes_studio import media_jobs as MJ
+
+    rest = {k: v for k, v in args.items() if k != "project_id"}
+    if name == "get_transcript":
+        return MJ.get_transcript(proj, rest)
+    if name == "media_status":
+        live = backend.engine.media.live_for(proj.id) if isinstance(backend, EngineBackend) else set()
+        return MJ.media_status(proj, rest, live)
+    if not backend.writable:
+        raise P.offline()
+    stripped, _ = O.strip_forged(rest)  # the actor is the token's, as on every write
+    return MJ.import_media(proj, backend.session, stripped, backend.engine.media)
 
 
 def _locked(proj: Any):

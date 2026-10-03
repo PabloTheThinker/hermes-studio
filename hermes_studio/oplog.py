@@ -398,6 +398,27 @@ def op_insert_marker(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "remove_marker", "id": a["marker"]["id"]}]
 
 
+def op_add_media(ctx: _Ctx, a: dict) -> list[dict]:
+    """S4: a new entry in the doc's media table. The values are checked by the validator, like
+    every other field (``/media/<id>/...``); the id is the caller's or the first free ``m<n>``."""
+    mid = _new_id(ctx, a, "m")
+    m = {"path": a["path"], "dur": a["dur"], "fps": copy.deepcopy(a["fps"])}
+    if "proxy" in a:
+        m["proxy"] = a["proxy"]
+    ctx.doc.setdefault("media", {})[mid] = m
+    return [{"op": "delete_media", "id": mid}]
+
+
+def op_delete_media(ctx: _Ctx, a: dict) -> list[dict]:
+    m = ctx.doc["media"].pop(a["id"])
+    return [{"op": "insert_media", "id": a["id"], "media": m}]
+
+
+def op_insert_media(ctx: _Ctx, a: dict) -> list[dict]:
+    ctx.doc["media"][a["id"]] = copy.deepcopy(a["media"])
+    return [{"op": "delete_media", "id": a["id"]}]
+
+
 def op_add_track(ctx: _Ctx, a: dict) -> list[dict]:
     role = a["role"]
     if not isinstance(role, str) or role not in T.ROLES:  # S1's role rule: a non-string is bad_track_role
@@ -725,6 +746,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
     "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
+    "add_media": (op_add_media, frozenset({"path", "dur", "fps"}), frozenset({"id", "proxy"})),
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fields": (op_set_fields, frozenset({"id"}), frozenset({"set", "unset"})),
@@ -733,6 +755,8 @@ INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "insert_item": (op_insert_item, frozenset({"track", "index", "item"}), frozenset()),
     "insert_marker": (op_insert_marker, frozenset({"index", "marker"}), frozenset()),
     "insert_track": (op_insert_track, frozenset({"index", "track"}), frozenset()),
+    "delete_media": (op_delete_media, frozenset({"id"}), frozenset()),
+    "insert_media": (op_insert_media, frozenset({"id", "media"}), frozenset()),
     "join_clips": (op_join_clips, frozenset({"a", "b", "item", "index", "transitions", "anchors"}), frozenset()),
 }
 
