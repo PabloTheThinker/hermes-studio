@@ -98,6 +98,7 @@ def view(doc: dict) -> dict:
         "version": doc["version"],
         "hash": doc["hash"],
         "duration": round(end, 3) or 1,
+        "size": list(doc.get("size") or [1080, 1920]),
         "tracks": tracks,
     }
 
@@ -257,6 +258,13 @@ def set_edge(pid: str, item_id: str, edge: str, at_seconds: float, *, ripple: bo
 def move(pid: str, item_id: str, at_seconds: float) -> dict:
     at = max(0, T.seconds_to_ticks(at_seconds))
     return apply(pid, [{"op": "move_clip", "id": item_id, "at": at}], f"Move {item_id}")
+
+
+def set_canvas(pid: str, width: int, height: int) -> dict:
+    w, h = int(width), int(height)
+    if not (1 <= w <= 16384 and 1 <= h <= 16384):
+        raise EditorError("canvas must be 1 to 16384 on each side")
+    return apply(pid, [{"op": "set_canvas", "width": w, "height": h}], f"Canvas {w}×{h}")
 
 
 def lift(pid: str, item_id: str, *, ripple: bool = False) -> dict:

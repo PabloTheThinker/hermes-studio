@@ -20,9 +20,13 @@
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
-      .tl-frame{width:min(220px,70%);aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden}
-      .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505;z-index:0}
-      .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505;z-index:1}
+      .tl-frame{height:auto;width:auto;max-height:86%;max-width:94%;aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden}
+      .tl-vid,.tl-pic{object-fit:contain}
+      .tl-can{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+      .tl-can2{display:flex;gap:6px;align-items:center;margin:0 0 8px}
+      .tl-can2 input{width:5.2rem;margin:0;padding:.35rem .4rem}
+      .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
+      .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
       .tl-pick{padding:8px 4px 24px;max-width:760px}
       .tl-film{display:flex;justify-content:space-between;align-items:baseline;gap:16px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font:600 16px var(--sans)}
       .tl-film span{color:var(--dim);font:500 12px var(--mono)}
@@ -111,6 +115,9 @@
     const keep = live && !live.paused ? live : null;
     if (keep) keep.remove();
     const d = doc, w = Math.max(d.duration, 1);
+    const size = d.size || [1080, 1920];
+    const cw = Number(size[0]) || 1080, ch = Number(size[1]) || 1920;
+    const preset = cw === 1920 && ch === 1080 ? "desktop" : cw === 1080 && ch === 1920 ? "phone" : cw === ch ? "square" : "";
     const width = LAB + w * pps + 16;
     const ticks = [];
     const step = pps >= 36 ? 1 : pps >= 16 ? 2 : 5;
@@ -132,17 +139,27 @@
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
         <div class="tl-stage">
-          <div class="tl-view"><div class="tl-frame">
+          <div class="tl-view"><div class="tl-frame" style="aspect-ratio:${cw}/${ch}">
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
             <span class="tl-shade"></span>
-            <span class="k">Cut</span>
+            <span class="k">${esc(cw)} × ${esc(ch)}</span>
             <span class="big">${esc(fmt(play))}</span>
             <span class="who">${esc(it ? it.label : "No clip under the playhead")}</span>
             <span class="tl-bar" style="width:${(play / w) * 100}%"></span>
           </div></div>
           <aside class="tl-insp">
             <h3>${esc(it ? it.label : "Nothing selected")}</h3>
+            <div class="tl-can">
+              <button type="button" data-canvas="phone" class="${preset === "phone" ? "on" : ""}">Phone</button>
+              <button type="button" data-canvas="desktop" class="${preset === "desktop" ? "on" : ""}">Desktop</button>
+              <button type="button" data-canvas="square" class="${preset === "square" ? "on" : ""}">Square</button>
+            </div>
+            <div class="tl-can2">
+              <input data-cw type="number" min="1" max="16384" value="${cw}" aria-label="Canvas width">
+              <input data-ch type="number" min="1" max="16384" value="${ch}" aria-label="Canvas height">
+              <button type="button" data-act="canvas">Set</button>
+            </div>
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
@@ -176,9 +193,24 @@
       bindFilm(keep);
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+    root.querySelectorAll("[data-canvas]").forEach((b) => b.addEventListener("click", () => {
+      const map = { phone: [1080, 1920], desktop: [1920, 1080], square: [1080, 1080] };
+      const pair = map[b.dataset.canvas];
+      if (pair) commit({ op: "canvas", width: pair[0], height: pair[1] });
+    }));
     const pic = root.querySelector(".tl-pic");
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
     showFrame();
+    const stage = root.querySelector(".tl-view");
+    const frame = root.querySelector(".tl-frame");
+    if (stage && frame) {
+      const box = stage.getBoundingClientRect();
+      const ratio = cw / ch;
+      let fh = box.height * 0.86, fw = fh * ratio;
+      if (fw > box.width * 0.94) { fw = box.width * 0.94; fh = fw / ratio; }
+      frame.style.width = Math.max(120, fw) + "px";
+      frame.style.height = Math.max(80, fh) + "px";
+    }
     const sc = root.querySelector(".tl-scroll");
     sc.addEventListener("pointerdown", down);
     sc.addEventListener("pointermove", movePtr);
@@ -372,6 +404,12 @@
     if (name === "snap") { snapOn = !snapOn; paint(); return; }
     if (name === "zoom-in" || name === "zoom-out") { pps = Math.max(8, Math.min(220, pps * (name === "zoom-in" ? 1.25 : 0.8))); paint(); return; }
     if (name === "fit") { fit(); paint(); return; }
+    if (name === "canvas") {
+      const w = Number(root.querySelector("[data-cw]") && root.querySelector("[data-cw]").value);
+      const h = Number(root.querySelector("[data-ch]") && root.querySelector("[data-ch]").value);
+      await commit({ op: "canvas", width: w, height: h });
+      return;
+    }
     if (name === "split" && playing) {
       const target = under();
       if (!target) { msg = "Move the playhead inside a clip."; return; }

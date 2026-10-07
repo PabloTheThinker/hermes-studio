@@ -22,6 +22,15 @@ See [PLAN-MERGED.md §3 and §5](docs/plans/PLAN-MERGED.md).
 | 2 Agent quality | A 20-task eval set, draft branches and presets | Not started |
 | 3 Pro and reach | Keyframes, transitions, speed and masks | Not specified yet |
 
+## Edit page, still open
+
+Sir, 2026-10-07. This list is the hand editor, not the parked CapCut plan.
+
+- Agent sidebar.
+- Desktop canvas, and the ability to adjust the canvas. On the Edit page: Phone 1080×1920, Desktop 1920×1080, Square 1080×1080, or type a width and height. The size lives on the timeline and changes only through `set_canvas`, so undo puts the old canvas back.
+- Transcript tab.
+- Render the canvas to a file.
+
 Phase 0 ends when S3 merges. Every phase exit is a release, and each release needs the owner's yes (see section 4).
 
 ## 3. S3 state, exactly

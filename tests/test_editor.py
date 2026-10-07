@@ -91,6 +91,16 @@ def test_import_lays_clips_end_to_end(home):
     assert view["summary"].startswith("Opened")
 
 
+def test_canvas_desktop_undo_and_reject(home):
+    E.create("demo")
+    desk = E.set_canvas("demo", 1920, 1080)
+    assert desk["size"] == [1920, 1080]
+    back = E.undo("demo")
+    assert back["size"] == [1080, 1920]
+    with pytest.raises(E.EditorError):
+        E.set_canvas("demo", 0, 1080)
+
+
 def test_import_refuses_a_film_outside_the_library(home):
     with pytest.raises(E.EditorError):
         E.import_run("not-a-library-film")

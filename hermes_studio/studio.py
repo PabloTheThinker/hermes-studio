@@ -744,6 +744,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "canvas":
+                project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
             elif op == "import":
                 project = editor.import_run(pid)
             elif op == "reset":
