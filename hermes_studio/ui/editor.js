@@ -107,6 +107,9 @@
 
   function paint() {
     if (!root || !doc) return;
+    const live = root.querySelector(".tl-vid");
+    const keep = live && !live.paused ? live : null;
+    if (keep) keep.remove();
     const d = doc, w = Math.max(d.duration, 1);
     const width = LAB + w * pps + 16;
     const ticks = [];
@@ -165,6 +168,13 @@
           </div>
         </div>
       </div>`;
+    const slot = root.querySelector(".tl-vid");
+    if (keep && slot) {
+      slot.replaceWith(keep);
+      const img = root.querySelector(".tl-pic");
+      if (img) img.hidden = true;
+      bindFilm(keep);
+    }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
     const pic = root.querySelector(".tl-pic");
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
@@ -294,35 +304,47 @@
     const tr = doc.tracks.find((x) => x.role === "main");
     return tr && tr.items.find((i) => t >= i.at && t < i.at + i.dur - 0.02);
   }
+  function pieceAt(file, srcT) {
+    const tr = doc.tracks.find((x) => x.role === "main");
+    if (!tr) return null;
+    return tr.items.find((i) => i.file === file && srcT >= (i.src_in || 0) - 0.04 && srcT < (i.src_out != null ? i.src_out : 1e9) - 0.03) || null;
+  }
+  function bindFilm(v) {
+    v.ontimeupdate = () => {
+      if (!playing || !doc) return;
+      const piece = pieceAt(v.dataset.file, v.currentTime);
+      if (piece) {
+        play = piece.at + (v.currentTime - (piece.src_in || 0));
+        head();
+        return;
+      }
+      const items = (doc.tracks.find((x) => x.role === "main") || {}).items || [];
+      const nxt = items.find((i) => i.at >= play - 0.05);
+      if (!nxt) { stop(); paint(); return; }
+      play = nxt.at;
+      if (nxt.file !== v.dataset.file) startFilm();
+      else head();
+    };
+  }
   function startFilm() {
     const v = root.querySelector(".tl-vid");
     const it = mainClip(play);
     if (!v || !it || !it.file) return false;
     v.hidden = false;
+    v.muted = false;
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
     const want = (it.src_in || 0) + Math.max(0, play - it.at);
-    const go = () => {
-      if (Math.abs((v.currentTime || 0) - want) > 0.3) v.currentTime = want;
-      v.play().catch(() => {});
-    };
     if (v.dataset.file !== it.file) {
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
-      v.addEventListener("loadedmetadata", go, { once: true });
-    } else go();
-    v.ontimeupdate = () => {
-      if (!playing || v.dataset.file !== it.file) return;
-      play = it.at + (v.currentTime - (it.src_in || 0));
-      head();
-    };
-    v.onended = () => {
-      const items = (doc.tracks.find((x) => x.role === "main") || {}).items || [];
-      const nxt = items[items.findIndex((i) => i.file === it.file) + 1];
-      if (!nxt) { stop(); paint(); return; }
-      play = nxt.at;
-      startFilm();
-    };
+    }
+    const arm = () => { if (Math.abs((v.currentTime || 0) - want) > 0.25) v.currentTime = want; };
+    if (v.readyState >= 1) arm();
+    else v.addEventListener("loadedmetadata", arm, { once: true });
+    const pending = v.play();
+    if (pending && pending.catch) pending.catch(() => { msg = "Press Play again for sound."; playing = false; });
+    bindFilm(v);
     return true;
   }
   function loop(t) {
@@ -350,6 +372,17 @@
     if (name === "snap") { snapOn = !snapOn; paint(); return; }
     if (name === "zoom-in" || name === "zoom-out") { pps = Math.max(8, Math.min(220, pps * (name === "zoom-in" ? 1.25 : 0.8))); paint(); return; }
     if (name === "fit") { fit(); paint(); return; }
+    if (name === "split" && playing) {
+      const target = under();
+      if (!target) { msg = "Move the playhead inside a clip."; return; }
+      sel = target.id;
+      await commit({ op: "split", item: target.id, at: play });
+      playing = true;
+      const v = root.querySelector(".tl-vid");
+      if (v && !v.paused) bindFilm(v);
+      else startFilm();
+      return;
+    }
     stop();
     if (name === "undo" || name === "redo" || name === "reset") { await commit({ op: name === "reset" ? "reset" : name }); return; }
     const target = name === "split" ? under() : find(sel);
