@@ -15,7 +15,9 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 - Another Hermes agent must clip, caption, recommend, copy, trim, or split
 - User is on the localhost desk (Create / Library / Jobs)
 
-Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline editor (parked).
+Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`). The hand timeline is the Edit page (`#/edit`).
+
+Edit page: class prefix `tl-` only. Never `ed` or `ed-top` — those names are the Design page grid, and reusing them shoves the timeline into that grid. Writes go through `/api/editor` (`editor.py`); the desk must not write `timeline.json` itself.
 
 ## Fastest path (any agent)
 
