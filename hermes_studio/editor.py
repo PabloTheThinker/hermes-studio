@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
+import subprocess
 from pathlib import Path
 
 from hermes_studio import oplog as O
@@ -256,8 +258,6 @@ def lift(pid: str, item_id: str, *, ripple: bool = False) -> dict:
 def reset(pid: str = "demo") -> dict:
     folder = _dir(pid)
     if folder.exists():
-        import shutil
-
         shutil.rmtree(folder)
     return create(pid)
 
@@ -288,3 +288,106 @@ def undo(pid: str) -> dict:
 def redo(pid: str) -> dict:
     log = _log(_dir(pid))
     return _call(pid, "history_redo", {"client_op_id": _cid(), "op_id": _latest(log, redo=True)})
+
+
+def source_time(doc: dict, seconds: float) -> tuple[str, float] | None:
+    """Timeline seconds to (media id, source seconds) on the main track. None in a gap."""
+    ticks = T.seconds_to_ticks(seconds)
+    rate = doc["tick_rate"]
+    for tr in doc["tracks"]:
+        if tr.get("role") != "main":
+            continue
+        for it in tr["items"]:
+            if it.get("type") != "clip" or "at" not in it or "src" not in it:
+                continue
+            start, dur = it["at"], it["src"][1] - it["src"][0]
+            if start <= ticks < start + dur:
+                return it["media"], (it["src"][0] + (ticks - start)) / rate
+    return None
+
+
+def resolve_media(folder: Path, rel: str) -> Path:
+    """A project-relative media path. Absolute paths and '..' are refused."""
+    parts = Path(rel or "").parts
+    if not parts or Path(rel).is_absolute() or ".." in parts:
+        raise EditorError("media path leaves the project")
+    path = (folder / rel).resolve()
+    root = folder.resolve()
+    if path != root and root not in path.parents:
+        raise EditorError("media path leaves the project")
+    return path
+
+
+def _demo_plate(dest: Path) -> None:
+    """A short 9:16 plate so the demo has a real picture. Not a stand-in for a user's film."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=360x640:rate=15:duration=70",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            str(dest),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0 or not dest.is_file():
+        raise EditorError("could not draw the preview plate")
+
+
+def frame_jpeg(pid: str, seconds: float) -> bytes:
+    """One JPEG at the playhead. The file must live inside the project."""
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    doc = _log(folder).doc
+    hit = source_time(doc, max(0.0, seconds))
+    if not hit:
+        raise EditorError("no picture at this time")
+    media_id, src_s = hit
+    rel = str(doc.get("media", {}).get(media_id, {}).get("path") or "")
+    path = resolve_media(folder, rel)
+    if not path.is_file():
+        if rel == "media/talk.mp4":
+            _demo_plate(path)
+        else:
+            raise EditorError("picture file is missing")
+    slot = max(0, int(round(src_s * 5)))
+    cache = folder / "frames" / f"{slot:05d}.jpg"
+    if not cache.is_file() or cache.stat().st_size < 100:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_name("." + cache.stem + ".tmp.jpg")
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                f"{src_s:.3f}",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-q:v",
+                "5",
+                str(tmp),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if proc.returncode != 0 or not tmp.is_file():
+            tmp.unlink(missing_ok=True)
+            raise EditorError("could not read that frame")
+        tmp.replace(cache)
+    return cache.read_bytes()

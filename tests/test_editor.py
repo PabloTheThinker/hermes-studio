@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from hermes_studio import editor as E
@@ -57,3 +59,24 @@ def test_lift_move_and_edge(home):
     with pytest.raises(E.EditorError):
         E.split("demo", "c1", 0)
     assert E.open_project("demo")["version"] == before
+
+
+def test_media_path_cannot_leave_the_project(home):
+    E.create("demo")
+    with pytest.raises(E.EditorError):
+        E.resolve_media(home / "demo", "../secret.mp4")
+    assert E.resolve_media(home / "demo", "media/talk.mp4") == (home / "demo" / "media" / "talk.mp4").resolve()
+
+
+def test_playhead_maps_into_the_source(home):
+    E.create("demo")
+    doc = json.loads((home / "demo" / "timeline.json").read_text())
+    hit = E.source_time(doc, 4)
+    assert hit is not None
+    media, src = hit
+    assert media == "m1"
+    assert src == pytest.approx(4, abs=0.02)
+    jumped = E.source_time(doc, 10)
+    assert jumped is not None and jumped[1] == pytest.approx(22, abs=0.02)
+    later = E.source_time(doc, 20)
+    assert later is not None and later[1] == pytest.approx(50, abs=0.05)

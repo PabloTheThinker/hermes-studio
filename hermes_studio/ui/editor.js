@@ -20,7 +20,10 @@
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
-      .tl-frame{width:min(220px,70%);aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;padding:14px;position:relative;overflow:hidden}
+      .tl-frame{width:min(220px,70%);aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden}
+      .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505}
+      .tl-shade{position:absolute;left:0;right:0;bottom:0;height:42%;background:linear-gradient(transparent,#050505);z-index:1}
+      .tl-frame .k,.tl-frame .big,.tl-frame .who{position:relative;z-index:2}
       .tl-frame .k{font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
       .tl-frame .big{font:500 28px/1 var(--mono);color:var(--amber);margin:.4rem 0 .2rem}
       .tl-frame .who{color:var(--mute);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -123,6 +126,8 @@
         </div>
         <div class="tl-stage">
           <div class="tl-view"><div class="tl-frame">
+            <img class="tl-pic" alt="" />
+            <span class="tl-shade"></span>
             <span class="k">Cut</span>
             <span class="big">${esc(fmt(play))}</span>
             <span class="who">${esc(it ? it.label : "No clip under the playhead")}</span>
@@ -156,6 +161,9 @@
         </div>
       </div>`;
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+    const pic = root.querySelector(".tl-pic");
+    if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
+    showFrame();
     const sc = root.querySelector(".tl-scroll");
     sc.addEventListener("pointerdown", down);
     sc.addEventListener("pointermove", movePtr);
@@ -172,6 +180,18 @@
     if (clock) clock.textContent = fmt(play) + " / " + fmt(doc.duration);
     if (big) big.textContent = fmt(play);
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
+    showFrame();
+  }
+
+  let shown = -1;
+  function showFrame() {
+    const img = root && root.querySelector(".tl-pic");
+    if (!img || !doc) return;
+    const t = Math.max(0, Math.round(play * 5) / 5);
+    if (t === shown && img.getAttribute("src")) return;
+    shown = t;
+    img.hidden = false;
+    img.src = "/api/editor/demo/frame?t=" + t;
   }
 
   function xToTime(e) {

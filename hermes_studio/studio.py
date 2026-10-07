@@ -676,6 +676,24 @@ class StudioHandler(BaseHTTPRequestHandler):
         from hermes_studio import editor
 
         pid = path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else ""
+        parts = [p for p in path.split("/") if p]
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                at = float((qs.get("t") or ["0"])[0])
+            except ValueError:
+                return _json(self, 400, {"ok": False, "error": "bad time"})
+            try:
+                data = editor.frame_jpeg(parts[2], at)
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
