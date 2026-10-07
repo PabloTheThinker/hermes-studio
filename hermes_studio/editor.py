@@ -55,6 +55,13 @@ def _log(folder: Path) -> O.Oplog:
 def view(doc: dict) -> dict:
     """Ticks become seconds so the page can draw. The engine still stores ticks."""
     rate = doc["tick_rate"]
+    text_at = {
+        it.get("at", 0): it.get("text")
+        for tr in doc["tracks"]
+        if tr.get("role") == "text"
+        for it in tr["items"]
+        if it.get("text")
+    }
     tracks = []
     end = 0.0
     for tr in doc["tracks"]:
@@ -65,8 +72,8 @@ def view(doc: dict) -> dict:
             at = it.get("at", 0) / rate
             dur = ((it["src"][1] - it["src"][0]) if it["type"] == "clip" else it.get("dur", 0)) / rate
             end = max(end, at + dur)
-            label = it.get("text") or it["id"]
-            if it["type"] == "clip":
+            label = text_at.get(it.get("at")) or it.get("text") or it["id"]
+            if it["type"] == "clip" and not text_at.get(it.get("at")):
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 stem = Path(str(media.get("path") or it.get("media") or it["id"])).stem
                 label = stem.replace("_", " ").replace("-", " ").title()
@@ -83,6 +90,7 @@ def view(doc: dict) -> dict:
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
+                row["file"] = Path(str(media.get("path") or "")).name
             items.append(row)
         tracks.append({"id": tr["id"], "role": tr["role"], "items": items})
     return {
@@ -391,3 +399,134 @@ def frame_jpeg(pid: str, seconds: float) -> bytes:
             raise EditorError("could not read that frame")
         tmp.replace(cache)
     return cache.read_bytes()
+
+
+def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> dict:
+    """Lay named clips end to end. Each tuple is (filename, seconds, title)."""
+    if not placed:
+        raise EditorError("that run has no picture")
+    d = T.new_timeline(pid)
+    media: dict = {}
+    v_items: list[dict] = []
+    a_items: list[dict] = []
+    t_items: list[dict] = []
+    at = 0
+    for i, (name, seconds, label) in enumerate(placed, 1):
+        ticks = T.seconds_to_ticks(seconds)
+        if ticks <= 0:
+            raise EditorError("a clip has no length")
+        mid = f"m{i}"
+        media[mid] = {"path": f"media/{name}", "dur": ticks, "fps": [30, 1]}
+        v_items.append({"id": f"c{i}", "type": "clip", "media": mid, "src": [0, ticks], "at": at, "fade_in": 0, "fade_out": 0})
+        a_items.append({"id": f"a{i}", "type": "clip", "media": mid, "src": [0, ticks], "at": at, "fade_in": 0, "fade_out": 0})
+        text = " ".join((label or "").split())[:80]
+        if text:
+            t_items.append(
+                {
+                    "id": f"x{i}",
+                    "type": "text",
+                    "dur": min(ticks, T.seconds_to_ticks(8)),
+                    "text": text,
+                    "style": "pop",
+                    "fade_in": 0,
+                    "fade_out": 0,
+                    "at": at,
+                }
+            )
+        at += ticks
+    by_id = {t["id"]: t for t in d["tracks"]}
+    d["media"] = media
+    by_id["V1"]["items"] = v_items
+    by_id["A1"]["items"] = a_items
+    by_id["T1"]["items"] = t_items
+    d, _ = T.stamp_hash(d)
+    folder = _dir(pid)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "base.json").write_text(json.dumps(d))
+    log = O.Oplog(d, path=folder / "oplog.jsonl")
+    _save_current(folder, log.doc)
+    out = view(log.doc)
+    out["summary"] = f"Opened {title}"[:120]
+    out["title"] = title
+    return out
+
+
+def _run_clips(folder: Path) -> list[Path]:
+    root = folder.resolve()
+    found = []
+    for p in sorted(root.glob("clip-*.mp4")):
+        if not p.is_file() or ".trash" in p.parts:
+            continue
+        rp = p.resolve()
+        if root not in rp.parents:
+            continue
+        found.append(rp)
+    return found
+
+
+def list_films() -> list[dict]:
+    from hermes_studio.pipeline import library_root, list_jobs
+
+    lib = library_root().resolve()
+    out = []
+    for job in list_jobs():
+        if (job.title or "") == "demo-cli-test":
+            continue
+        run = Path(job.dir).resolve()
+        if lib not in run.parents:
+            continue
+        clips = _run_clips(run)
+        if not clips:
+            continue
+        out.append({"id": job.id, "title": job.title or job.id, "clips": len(clips)})
+    return out
+
+
+def project_media(pid: str, name: str) -> Path:
+    if Path(name).name != name or Path(name).suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+        raise EditorError("bad media name")
+    path = resolve_media(_dir(pid), f"media/{name}")
+    if not path.is_file():
+        raise EditorError("no such picture")
+    return path
+
+
+def import_run(job_id: str) -> dict:
+    """Copy a library run's clips into a project and open that cut. Does not read outside the library."""
+    if not T.ID_RE.fullmatch(job_id or ""):
+        raise EditorError("bad project id")
+    folder = _dir(job_id)
+    if (folder / "base.json").exists():
+        opened = open_project(job_id)
+        opened["summary"] = "Opened the cut."
+        return opened
+    from hermes_studio.pipeline import library_root, load_job
+
+    job = load_job(job_id)
+    if not job:
+        raise EditorError("no such film")
+    run = Path(job.dir).resolve()
+    lib = library_root().resolve()
+    if lib not in run.parents:
+        raise EditorError("that film is not in the library")
+    clips = _run_clips(run)
+    if not clips:
+        raise EditorError("that run has no picture")
+    titles = {str(c.get("file") or ""): str(c.get("title") or "") for c in (job.clips or [])}
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    placed = []
+    for i, src in enumerate(clips, 1):
+        name = f"c{i:02d}.mp4"
+        dest = folder / "media" / name
+        if not dest.exists():
+            shutil.copy2(src, dest)
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(dest)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if proc.returncode != 0:
+            raise EditorError("could not read the film")
+        placed.append((name, float(proc.stdout.strip() or "0"), titles.get(src.name) or src.stem))
+    return write_import(job_id, job.title or job_id, placed)

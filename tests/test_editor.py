@@ -80,3 +80,17 @@ def test_playhead_maps_into_the_source(home):
     assert jumped is not None and jumped[1] == pytest.approx(22, abs=0.02)
     later = E.source_time(doc, 20)
     assert later is not None and later[1] == pytest.approx(50, abs=0.05)
+
+
+def test_import_lays_clips_end_to_end(home):
+    view = E.write_import("cut1", "A film", [("c01.mp4", 3.0, "Hook"), ("c02.mp4", 2.5, "Payoff")])
+    main = next(t for t in view["tracks"] if t["role"] == "main")
+    assert [i["at"] for i in main["items"]] == pytest.approx([0, 3], abs=0.02)
+    assert main["items"][1]["dur"] == pytest.approx(2.5, abs=0.02)
+    assert main["items"][0]["file"] == "c01.mp4"
+    assert view["summary"].startswith("Opened")
+
+
+def test_import_refuses_a_film_outside_the_library(home):
+    with pytest.raises(E.EditorError):
+        E.import_run("not-a-library-film")

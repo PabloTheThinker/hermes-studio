@@ -677,6 +677,15 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         pid = path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else ""
         parts = [p for p in path.split("/") if p]
+        if parts == ["api", "editor", "films"]:
+            return _json(self, 200, {"ok": True, "films": editor.list_films()})
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "media":
+            try:
+                media = editor.project_media(parts[2], parts[4])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            kind = "video/mp4" if media.suffix.lower() == ".mp4" else "video/webm"
+            return self._file(media, kind)
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
             qs = parse_qs(urlparse(self.path).query)
             try:
@@ -735,6 +744,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "import":
+                project = editor.import_run(pid)
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":

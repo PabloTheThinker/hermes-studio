@@ -8,7 +8,7 @@
     const s = document.createElement("style");
     s.id = "tl-css";
     s.textContent = `
-      .tl{display:grid;grid-template-rows:52px minmax(0,1fr) 292px;height:calc(100vh - 64px);background:var(--bg);color:var(--ink)}
+      .tl{display:grid;grid-template-rows:52px minmax(0,1fr) 292px;height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
       .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);min-width:0}
       .tl-top b{font-weight:800;letter-spacing:.04em;text-transform:uppercase;font-variation-settings:"wdth" 125}
       .tl-clock{font:500 13px var(--mono);color:var(--amber);white-space:nowrap}
@@ -21,7 +21,11 @@
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
       .tl-frame{width:min(220px,70%);aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden}
-      .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505}
+      .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505;z-index:0}
+      .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#050505;z-index:1}
+      .tl-pick{padding:8px 4px 24px;max-width:760px}
+      .tl-film{display:flex;justify-content:space-between;align-items:baseline;gap:16px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font:600 16px var(--sans)}
+      .tl-film span{color:var(--dim);font:500 12px var(--mono)}
       .tl-shade{position:absolute;left:0;right:0;bottom:0;height:42%;background:linear-gradient(transparent,#050505);z-index:1}
       .tl-frame .k,.tl-frame .big,.tl-frame .who{position:relative;z-index:2}
       .tl-frame .k{font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
@@ -54,11 +58,11 @@
     document.head.appendChild(s);
   }
 
-  let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24;
+  let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "";
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
 
   async function api(body) {
-    const res = await fetch("/api/editor/demo", {
+    const res = await fetch("/api/editor/" + encodeURIComponent(pid || "demo"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
@@ -126,6 +130,7 @@
         </div>
         <div class="tl-stage">
           <div class="tl-view"><div class="tl-frame">
+            <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
             <span class="tl-shade"></span>
             <span class="k">Cut</span>
@@ -187,11 +192,12 @@
   function showFrame() {
     const img = root && root.querySelector(".tl-pic");
     if (!img || !doc) return;
+    if (playing) return;
     const t = Math.max(0, Math.round(play * 5) / 5);
     if (t === shown && img.getAttribute("src")) return;
     shown = t;
     img.hidden = false;
-    img.src = "/api/editor/demo/frame?t=" + t;
+    img.src = "/api/editor/" + encodeURIComponent(pid || "demo") + "/frame?t=" + t;
   }
 
   function xToTime(e) {
@@ -281,6 +287,43 @@
     playing = false;
     lastT = 0;
     if (raf) cancelAnimationFrame(raf);
+    const v = root && root.querySelector(".tl-vid");
+    if (v) v.pause();
+  }
+  function mainClip(t) {
+    const tr = doc.tracks.find((x) => x.role === "main");
+    return tr && tr.items.find((i) => t >= i.at && t < i.at + i.dur - 0.02);
+  }
+  function startFilm() {
+    const v = root.querySelector(".tl-vid");
+    const it = mainClip(play);
+    if (!v || !it || !it.file) return false;
+    v.hidden = false;
+    const img = root.querySelector(".tl-pic");
+    if (img) img.hidden = true;
+    const want = (it.src_in || 0) + Math.max(0, play - it.at);
+    const go = () => {
+      if (Math.abs((v.currentTime || 0) - want) > 0.3) v.currentTime = want;
+      v.play().catch(() => {});
+    };
+    if (v.dataset.file !== it.file) {
+      v.dataset.file = it.file;
+      v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
+      v.addEventListener("loadedmetadata", go, { once: true });
+    } else go();
+    v.ontimeupdate = () => {
+      if (!playing || v.dataset.file !== it.file) return;
+      play = it.at + (v.currentTime - (it.src_in || 0));
+      head();
+    };
+    v.onended = () => {
+      const items = (doc.tracks.find((x) => x.role === "main") || {}).items || [];
+      const nxt = items[items.findIndex((i) => i.file === it.file) + 1];
+      if (!nxt) { stop(); paint(); return; }
+      play = nxt.at;
+      startFilm();
+    };
+    return true;
   }
   function loop(t) {
     if (!playing) return;
@@ -300,7 +343,7 @@
       if (play >= doc.duration) play = 0;
       playing = true;
       paint();
-      raf = requestAnimationFrame(loop);
+      if (!startFilm()) raf = requestAnimationFrame(loop);
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }
@@ -317,8 +360,7 @@
   }
 
   function fit() {
-    const sc = root && root.querySelector(".tl-scroll");
-    const box = sc ? sc.clientWidth : 900;
+    const box = root ? root.clientWidth : 900;
     pps = Math.max(8, (box - LAB - 48) / Math.max(doc.duration, 1));
   }
 
@@ -336,17 +378,27 @@
     else if (e.ctrlKey && k === "z") act(e.shiftKey ? "redo" : "undo");
   }
 
-  async function open(node) {
+  async function films(node) {
+    const res = await fetch("/api/editor/films");
+    const data = await res.json().catch(() => ({}));
+    const rows = (data.films || []).map((f) => `<button type="button" class="tl-film" data-film="${esc(f.id)}"><b>${esc(f.title)}</b><span>${esc(f.clips)} clips</span></button>`).join("");
+    node.innerHTML = `<div class="tl-pick"><b>EDIT</b><p class="tl-status">Open a film from the library.</p>${rows || "<p class='tl-status'>No films in the library.</p>"}</div>`;
+    node.querySelectorAll("[data-film]").forEach((b) => b.addEventListener("click", () => { location.hash = "#/edit/" + encodeURIComponent(b.dataset.film); }));
+  }
+
+  async function open(node, id) {
     root = node;
+    pid = id || "";
     document.body.classList.add("editing");
-    node.innerHTML = `<p class="tl-status">Opening the timeline…</p>`;
+    if (!pid) { await films(node); return; }
+    node.innerHTML = `<p class="tl-status">Opening the film…</p>`;
     try {
-      const data = await api({ op: "open" }).catch(() => api({ op: "reset" }));
+      const data = pid === "demo" ? await api({ op: "open" }).catch(() => api({ op: "reset" })) : await api({ op: "import" });
       doc = data.project;
       sel = (doc.tracks[1].items[0] || {}).id || "";
       const first = find(sel);
       play = first ? first.at + Math.min(1, first.dur / 2) : 0;
-      msg = "";
+      msg = data.project.summary || "";
       paint();
       requestAnimationFrame(() => { if (root && doc) { fit(); paint(); } });
     } catch (e) {
