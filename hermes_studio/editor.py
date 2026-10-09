@@ -451,7 +451,10 @@ def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> 
     folder = _dir(pid)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "base.json").write_text(json.dumps(d))
+    # An imported cut starts with an empty log, but the log file must exist: without it
+    # the film has no history surface until somebody happens to make an edit.
     log = O.Oplog(d, path=folder / "oplog.jsonl")
+    (folder / "oplog.jsonl").touch(exist_ok=True)
     _save_current(folder, log.doc)
     out = view(log.doc)
     out["summary"] = f"Opened {title}"[:120]
@@ -537,6 +540,32 @@ def _copy_transcript(run: Path, dest: Path, placed: list[dict]) -> None:
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps({"source": str(src), "words": out}, separators=(",", ":")))
+
+
+def history(pid: str, since_version: int = 0) -> list[dict]:
+    """Who did what to this cut, oldest first. Empty history is an empty list, not an error."""
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    out = []
+    for e in _log(folder).history_diff(max(0, int(since_version))):
+        actor = e.get("actor") or {}
+        kind = str(actor.get("kind") or "human")
+        who = str(actor.get("id") or "unknown")
+        out.append(
+            {
+                "seq": e.get("seq"),
+                "summary": str(e.get("summary") or ""),
+                "actor": who,
+                "kind": kind,
+                "step": e.get("step"),
+                "from": e.get("base_version"),
+                "to": e.get("new_version"),
+                "ids": list(e.get("changed_ids") or []),
+                "undone": bool(e.get("undoes")),
+            }
+        )
+    return out
 
 
 def transcript(pid: str) -> list[dict]:

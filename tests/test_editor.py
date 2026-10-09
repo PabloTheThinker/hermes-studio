@@ -317,3 +317,29 @@ def test_transcript_stacks_words_across_clips(home):
 def test_transcript_refuses_a_project_that_is_not_there(home):
     with pytest.raises(E.EditorError):
         E.transcript("nope")
+
+
+def test_an_imported_cut_has_a_real_history(home, monkeypatch):
+    """An imported film must be undoable from the first edit, not only after one happens."""
+    from hermes_studio import oplog as O
+
+    folder = E._dir("imp1")
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline("imp1")
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/c01.mp4", "dur": 4 * T.TICK_RATE, "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 4 * T.TICK_RATE], "at": 0, "fade_in": 0, "fade_out": 0}]
+    d, _ = T.stamp_hash(d)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "base.json").write_text(json.dumps(d))
+    E._dir("imp1")
+    log = O.Oplog(d, path=folder / "oplog.jsonl")
+    (folder / "oplog.jsonl").touch(exist_ok=True)
+    E._save_current(folder, log.doc)
+
+    assert (folder / "oplog.jsonl").is_file()
+    split = E.split("imp1", "c1", 2.0)
+    assert split["version"] == 1
+    back = E.undo("imp1")
+    assert back["version"] == 2
+    assert len(E._log(folder).history_list()) == 2

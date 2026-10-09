@@ -703,6 +703,17 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "history":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                since = int((qs.get("since") or ["0"])[0])
+            except ValueError:
+                since = 0
+            try:
+                rows = editor.history(parts[2], since)
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "history": rows})
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "transcript":
             try:
                 words = editor.transcript(parts[2])

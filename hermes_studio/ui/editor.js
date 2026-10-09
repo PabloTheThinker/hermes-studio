@@ -48,6 +48,13 @@
       .tl-word{cursor:pointer;border-radius:3px;padding:1px 2px}
       .tl-word:hover{background:rgba(255,200,61,.14)}
       .tl-word.on{background:var(--amber);color:var(--amber-ink)}
+      .tl-act{padding:8px 16px;font-size:13px}
+      .tl-act .row{display:flex;gap:8px;align-items:baseline;border-top:1px solid var(--line);padding:7px 0}
+      .tl-act .who{font:600 10px var(--sans);letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line-2);border-radius:99px;padding:1px 7px;white-space:nowrap;color:var(--mute)}
+      .tl-act .who.agent{color:var(--amber);border-color:var(--amber)}
+      .tl-act .what{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tl-act .who.undone,.tl-act .what.undone{opacity:.45;text-decoration:line-through}
+      .tl-act .ver{font:500 11px var(--mono);color:var(--dim);white-space:nowrap}
       .tl-sheet{min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
@@ -70,7 +77,7 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
-  let tab = "clips", words = [];
+  let tab = "clips", words = [], hist = [];
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
 
   async function api(body) {
@@ -178,6 +185,7 @@
           <div class="tl-tools">
             <button type="button" data-tab="clips" class="${tab === "clips" ? "on" : ""}">Clips</button>
             <button type="button" data-tab="words" class="${tab === "words" ? "on" : ""}">Transcript</button>
+            <button type="button" data-tab="act" class="${tab === "act" ? "on" : ""}">Activity</button>
             <span style="flex:1"></span>
             <button type="button" data-act="lift">Lift</button>
             <button type="button" data-act="ripple" class="${ripple ? "on" : ""}">Ripple ${ripple ? "on" : "off"}</button>
@@ -187,7 +195,7 @@
             <button type="button" data-act="fit">Fit</button>
           </div>
           <div class="tl-scroll">
-            ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : `
+            ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : tab === "act" ? `<div class="tl-act">${hist.length ? hist.map((h) => `<div class="row"><span class="who ${h.kind === "agent" ? "agent" : ""} ${h.undone ? "undone" : ""}">${esc(h.actor)}</span><span class="what ${h.undone ? "undone" : ""}">${esc(h.summary)}</span><span class="ver">v${esc(h.to)}</span></div>`).join("") : `<span style="color:var(--dim)">No changes yet. Trim, split or lift and each step lands here.</span>`}</div>` : `
             <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
@@ -342,6 +350,8 @@
     } catch (e) {
       msg = e.message;
     }
+    paint();
+    await loadHist();
     paint();
   }
 
@@ -502,10 +512,21 @@
     }
   }
 
+  async function loadHist() {
+    try {
+      const res = await fetch("/api/editor/" + encodeURIComponent(pid) + "/history");
+      const data = await res.json().catch(() => ({}));
+      hist = data.history || [];
+    } catch (e) {
+      hist = [];
+    }
+  }
+
   async function open(node, id) {
     root = node;
     pid = id || "";
     words = [];
+    hist = [];
     document.body.classList.add("editing");
     if (!pid) { await films(node); return; }
     node.innerHTML = `<p class="tl-status">Opening the film…</p>`;
@@ -517,6 +538,7 @@
       play = first ? first.at + Math.min(1, first.dur / 2) : 0;
       msg = data.project.summary || "";
       await loadWords();
+      await loadHist();
       paint();
       requestAnimationFrame(() => { if (root && doc) { fit(); paint(); } });
     } catch (e) {
