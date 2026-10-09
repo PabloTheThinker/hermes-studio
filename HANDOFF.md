@@ -29,7 +29,7 @@ Sir, 2026-10-07. This list is the hand editor, not the parked CapCut plan.
 - Agent sidebar.
 - Desktop canvas, and the ability to adjust the canvas. On the Edit page: Phone 1080×1920, Desktop 1920×1080, Square 1080×1080, or type a width and height. The size lives on the timeline and changes only through `set_canvas`, so undo puts the old canvas back.
 - Transcript tab.
-- Render the canvas to a file.
+- ~~Render the canvas to a file.~~ **Done 2026-10-09:** `hermes_studio/render_timeline.py` renders a timeline to a real mp4. Every main-track clip is trimmed from its source, scaled to the canvas with `contain` (whole frame kept, never cropped) and laid end to end; a gap renders as black, not a frozen frame. Voice and music sit at their own times through `adelay`, so a gap in a sound track stays a gap; voice at full level, music under it, output loudness-normalised. Text items burn in as captions through the same ASS builder the clips use, so the Edit page and a finished clip look like one product. Output is exactly the canvas size. Surfaces: the desk's **Render** button (op `render`, then `GET /api/editor/<id>/render` to save the file) and `hermes-studio render <id>`. The same source cut more than once is `split`/`asplit` so each piece keeps its own trim. `_contain` refuses a zero canvas with a clean error instead of dividing by zero.
 
 Phase 0 ends when S3 merges. Every phase exit is a release, and each release needs the owner's yes (see section 4).
 

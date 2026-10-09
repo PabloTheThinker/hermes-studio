@@ -13,6 +13,8 @@
       .tl-top b{font-weight:800;letter-spacing:.04em;text-transform:uppercase;font-variation-settings:"wdth" 125}
       .tl-clock{font:500 13px var(--mono);color:var(--amber);white-space:nowrap}
       .tl-status{flex:1;min-width:0;color:var(--dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tl-dl{color:var(--amber,#ffc83d);font-weight:600;text-decoration:none}
+      .tl-dl:hover{text-decoration:underline}
       .tl-pill{border:1px solid var(--line-2);border-radius:99px;padding:2px 8px;color:var(--mute);font:500 11px var(--mono);white-space:nowrap}
       .tl button{background:none;border:1px solid var(--line-2);border-radius:7px;padding:5px 10px;cursor:pointer;color:var(--mute);font:600 11px var(--sans);letter-spacing:.08em;text-transform:uppercase}
       .tl button:hover{color:var(--ink);border-color:var(--amber)}
@@ -62,7 +64,7 @@
     document.head.appendChild(s);
   }
 
-  let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "";
+  let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
 
   async function api(body) {
@@ -132,10 +134,11 @@
           <b>Edit</b>
           <span class="tl-pill">v${esc(d.version)}</span>
           <span class="tl-clock">${esc(fmt(play))} / ${esc(fmt(w))}</span>
-          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}</span>
+          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
+          <button type="button" class="tl-go" data-act="render">Render</button>
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
         <div class="tl-stage">
@@ -408,6 +411,21 @@
       const w = Number(root.querySelector("[data-cw]") && root.querySelector("[data-cw]").value);
       const h = Number(root.querySelector("[data-ch]") && root.querySelector("[data-ch]").value);
       await commit({ op: "canvas", width: w, height: h });
+      return;
+    }
+    if (name === "render") {
+      msg = "Rendering… this takes a moment.";
+      paint();
+      try {
+        const res = await api({ op: "render" });
+        doc = res.project;
+        const r = res.render || {};
+        msg = `Rendered ${r.name || "file"} — ${r.size ? r.size[0] + "×" + r.size[1] : ""} ${r.duration || ""}s`;
+        renderOut = { name: r.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render" };
+      } catch (e) {
+        msg = e.message;
+      }
+      paint();
       return;
     }
     if (name === "split" && playing) {

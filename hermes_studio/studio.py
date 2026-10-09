@@ -703,6 +703,17 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "render":
+            from hermes_studio import editor as _e
+
+            try:
+                out = _e._dir(parts[2]) / f"{parts[2]}-render.mp4"
+                out = _e.resolve_media(_e._dir(parts[2]), out.name)
+            except _e.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            if not out.is_file():
+                return _json(self, 404, {"ok": False, "error": "no render yet"})
+            return self._file(out, "video/mp4")
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
@@ -748,6 +759,14 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
             elif op == "import":
                 project = editor.import_run(pid)
+            elif op == "render":
+                from hermes_studio import render_timeline as R
+
+                try:
+                    out = R.render_project(pid)
+                except R.RenderError as exc:
+                    return _json(self, 400, {"ok": False, "error": str(exc)})
+                return _json(self, 200, {"ok": True, "render": out, "project": editor.open_project(pid)})
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":

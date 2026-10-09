@@ -273,6 +273,11 @@ def build_parser() -> argparse.ArgumentParser:
     ed.add_argument("-o", "--out", default="")
     _common(ed)
 
+    rn = sub.add_parser("render", help="render an Edit page timeline to a real video file")
+    rn.add_argument("id", help="project id (the Edit page url has it)")
+    rn.add_argument("-o", "--out", default="", help="output path (defaults into the project folder)")
+    _common(rn)
+
     nm = sub.add_parser("name", help="AI titles for every clip in a run (local Ollama first), or rename one clip")
     nm.add_argument("id")
     nm.add_argument("--file", default="")
@@ -587,6 +592,21 @@ def cmd_edit(a: argparse.Namespace, o: Out) -> int:
     return 0
 
 
+def cmd_render(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio.api import HermesStudioError
+    from hermes_studio.editor import EditorError
+    from hermes_studio.render_timeline import RenderError, render_project
+
+    out = Path(a.out).expanduser() if a.out else None
+    try:
+        res = render_project(a.id, out)
+    except (RenderError, EditorError) as exc:
+        return o.error(HermesStudioError(str(exc), code="failed"))
+    o.emit(res)
+    o.say(o.green("✓ ") + f"rendered {res['name']}  {res['size'][0]}×{res['size'][1]}  {res['duration']}s")
+    return 0
+
+
 def cmd_name(a: argparse.Namespace, o: Out) -> int:
     from hermes_studio import api
 
@@ -810,6 +830,7 @@ COMMANDS = {
     "probe": cmd_probe, "recommend": cmd_recommend, "restyle": cmd_restyle, "edit": cmd_edit, "name": cmd_name,
     "copy": cmd_copy, "transcribe": cmd_transcribe, "plan": cmd_plan, "tools": cmd_tools, "doctor": cmd_doctor,
     "studio": cmd_studio, "organize": cmd_organize, "design": cmd_design, "photo": cmd_photo, "mcp": cmd_mcp, "app": cmd_app, "update": cmd_update,
+    "render": cmd_render,
 }
 
 
