@@ -345,6 +345,17 @@ let PAGE = null;
   await page.focus(".plist .row"); await page.keyboard.press("Enter");
   await page.waitForSelector("#ed-tc", { timeout: 15000 }).catch(() => errs.push("keyboard: Enter on a project row didn't open it"));
   await page.waitForSelector('[data-mode="propose"][aria-pressed="true"]', { timeout: 15000 }).catch(() => errs.push("a11y: the mode switch has no aria-pressed"));
+  // canvas size (from PR #44): nothing selected → Item tab → Desktop is one entry; Ctrl+Z puts the phone canvas back
+  const ar = () => page.evaluate(() => document.getElementById("ed-screen").style.getPropertyValue("--ar"));
+  await page.keyboard.press("Escape"); await page.click('[data-tab="item"]');
+  await page.waitForSelector('[data-cv="Desktop"]', { timeout: 15000 }).catch(() => errs.push("canvas: no size buttons on the Item tab"));
+  if (await page.$('[data-cv="Desktop"]')) {
+    const ar0 = await ar();
+    await page.click('[data-cv="Desktop"]');
+    await page.waitForFunction(() => document.getElementById("ed-screen").style.getPropertyValue("--ar") === "1920/1080", null, { timeout: 15000 }).catch(() => errs.push("canvas: Desktop didn't set 1920×1080"));
+    await page.click("#ed-tc"); await page.keyboard.press("Control+z");
+    await page.waitForFunction((a) => document.getElementById("ed-screen").style.getPropertyValue("--ar") === a, ar0, { timeout: 15000 }).catch(() => errs.push("canvas: undo didn't restore " + ar0));
+  }
   const bad = errs.filter((e) => !/fonts\.g|ERR_CERT|ERR_NAME|ERR_INTERNET/.test(e));
   console.log(JSON.stringify({ out: OUT, stills_in_2s: stills, captions: capHi, rendered, played_to: t, jumped_to: tcJump, music: aud, video: vis, agent: mout.split("\n").filter(Boolean).map((l) => l.slice(0, 160)), errors: bad }, null, 1));
   if (bad.length || t === "0:02.00") process.exitCode = 1;
