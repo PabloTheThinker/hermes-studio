@@ -169,7 +169,7 @@ TOOLS: list[dict] = [
         "a fresh client_op_id; resend the exact same call to retry. Ops: insert_clip, move_clip, trim_clip, split_clip, "
         "slip_clip (same place and length, source moved by `by`), roll_edit (move the cut after clip `id` by `by`; "
         "the total length stays), delete_clip, set_props, set_fade, set_anchor, edit_text, add_text, add_transition, add_track, remove_track, add_marker, "
-        "remove_marker, edit_marker (move and/or rename), add_media (import_media is easier: it probes the file for you).",
+        "remove_marker, edit_marker (move and/or rename), set_canvas (width, height in pixels; undo restores the old size), add_media (import_media is easier: it probes the file for you).",
         {
             "base_version": {"type": "integer"},
             "ops": {"type": "array", "items": {"type": "object"}},

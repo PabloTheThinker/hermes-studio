@@ -375,6 +375,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             return http_engine.projects_route(self, "GET")
         if path in ("/edit/edit.js", "/sw.js"):  # the Edit page and its media header worker
             return self._file(UI_DIR / path.rsplit("/", 1)[1], "text/javascript; charset=utf-8")
+        if path.split("?")[0] == "/editor.js":
+            return self._file(UI_DIR / "editor.js", "text/javascript; charset=utf-8", cache=False)
+        if path == "/api/editor" or path.startswith("/api/editor/"):
+            return self._editor_get(path)
         if path.startswith("/api/probe"):
             qs = parse_qs(parsed.query)
             src = (qs.get("src") or [""])[0]
@@ -480,9 +484,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path == "/api/designs":
             from hermes_studio import design
 
-            return _json(self, 200, {"ok": True, "designs": design.list_designs(), "sizes": {
-                k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
-                "templates": design.templates(), "fonts": {k: [v[1], v[2]] for k, v in design.FONTS.items()}})
+            return _json(
+                self,
+                200,
+                {
+                    "ok": True,
+                    "designs": design.list_designs(),
+                    "sizes": {k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
+                    "templates": design.templates(),
+                    "fonts": {k: [v[1], v[2]] for k, v in design.FONTS.items()},
+                },
+            )
         if path.startswith("/api/design-template/"):
             from hermes_studio import design
 
@@ -541,6 +553,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio import http_engine
 
             return http_engine.projects_route(self, "POST")
+        if path == "/api/editor" or path.startswith("/api/editor/"):
+            return self._editor_post(path)
         if path == "/api/design" or path.startswith("/api/design/"):
             return self._design_post(path)
         if path == "/api/jobs":
@@ -600,13 +614,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return _seconds(v) if v not in (None, "") else None
 
             res = restyle_clip(
-                str(body.get("job") or ""), str(body.get("file") or ""),
+                str(body.get("job") or ""),
+                str(body.get("file") or ""),
                 look=body.get("look") if isinstance(body.get("look"), dict) else None,
                 style=body.get("style") or None,
                 captions=body.get("captions") if body.get("captions") in (True, False) else None,
                 hook=body.get("hook") if body.get("hook") in (True, False) else None,
-                start=_f("start"), end=_f("end"),
-                fixes=body.get("fixes"), title=body.get("title") or None,
+                start=_f("start"),
+                end=_f("end"),
+                fixes=body.get("fixes"),
+                title=body.get("title") or None,
             )
             return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/name":
@@ -620,7 +637,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio.pipeline import set_clip_meta
 
             liked = body.get("liked")
-            res = set_clip_meta(str(body.get("job") or ""), str(body.get("file") or ""), liked if liked in (True, False) else None)
+            res = set_clip_meta(
+                str(body.get("job") or ""), str(body.get("file") or ""), liked if liked in (True, False) else None
+            )
             return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/rename":
             body = _read_json(self)
@@ -656,8 +675,24 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if op == "split":
                     a, b = split_file(media, float(body.get("at") or 0))
                     extra = [
-                        {"file": a.name, "title": (Path(name).stem + " A"), "start": 0, "end": float(body.get("at") or 0), "score": 0, "virality": 0, "thumb": ""},
-                        {"file": b.name, "title": (Path(name).stem + " B"), "start": float(body.get("at") or 0), "end": 0, "score": 0, "virality": 0, "thumb": ""},
+                        {
+                            "file": a.name,
+                            "title": (Path(name).stem + " A"),
+                            "start": 0,
+                            "end": float(body.get("at") or 0),
+                            "score": 0,
+                            "virality": 0,
+                            "thumb": "",
+                        },
+                        {
+                            "file": b.name,
+                            "title": (Path(name).stem + " B"),
+                            "start": float(body.get("at") or 0),
+                            "end": 0,
+                            "score": 0,
+                            "virality": 0,
+                            "thumb": "",
+                        },
                     ]
                     job.clips = list(job.clips or []) + extra
                     job.save()
@@ -729,6 +764,96 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ design
 
+    def _editor_get(self, path: str) -> None:
+        from hermes_studio import editor
+
+        pid = path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else ""
+        parts = [p for p in path.split("/") if p]
+        if parts == ["api", "editor", "films"]:
+            return _json(self, 200, {"ok": True, "films": editor.list_films()})
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "media":
+            try:
+                media = editor.project_media(parts[2], parts[4])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            kind = "video/mp4" if media.suffix.lower() == ".mp4" else "video/webm"
+            return self._file(media, kind)
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                at = float((qs.get("t") or ["0"])[0])
+            except ValueError:
+                return _json(self, 400, {"ok": False, "error": "bad time"})
+            try:
+                data = editor.frame_jpeg(parts[2], at)
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        try:
+            if pid:
+                return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
+            return _json(self, 200, {"ok": True, "projects": editor.list_projects()})
+        except editor.EditorError as exc:
+            return _json(self, 404, {"ok": False, "error": str(exc)})
+
+    def _editor_post(self, path: str) -> None:
+        from hermes_studio import editor
+
+        body = _read_json(self)
+        pid = (
+            path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else str(body.get("id") or "demo")
+        )
+        op = str(body.get("op") or "open")
+        try:
+            if op == "new":
+                project = editor.create(pid)
+            elif op == "nudge":
+                project = editor.nudge(
+                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), float(body.get("seconds") or 0.5)
+                )
+            elif op == "trim":
+                project = editor.trim(
+                    pid,
+                    str(body.get("id_item") or body.get("item") or ""),
+                    src_in=body.get("src_in"),
+                    src_out=body.get("src_out"),
+                )
+            elif op == "edge":
+                project = editor.set_edge(
+                    pid,
+                    str(body.get("item") or ""),
+                    str(body.get("edge") or "end"),
+                    float(body.get("at") or 0),
+                    ripple=bool(body.get("ripple")),
+                )
+            elif op == "move":
+                project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+            elif op == "lift":
+                project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "canvas":
+                project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "import":
+                project = editor.import_run(pid)
+            elif op == "reset":
+                project = editor.reset(pid)
+            elif op == "split":
+                project = editor.split(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+            elif op == "undo":
+                project = editor.undo(pid)
+            elif op == "redo":
+                project = editor.redo(pid)
+            else:
+                project = editor.open_project(pid)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        return _json(self, 200, {"ok": True, "project": project})
+
     def _design_get(self, path: str) -> None:
         """/design/fabric.min.js · /design/fonts/<file> · /design/<id>/(assets|export)/<file>."""
         from hermes_studio import design
@@ -771,8 +896,13 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         try:
             if len(parts) == 2:  # create
-                doc = design.create(str(body.get("title") or ""), str(body.get("size") or "tiktok-carousel"),
-                                    str(body.get("template") or "blank"), body.get("w"), body.get("h"))
+                doc = design.create(
+                    str(body.get("title") or ""),
+                    str(body.get("size") or "tiktok-carousel"),
+                    str(body.get("template") or "blank"),
+                    body.get("w"),
+                    body.get("h"),
+                )
                 return _json(self, 200, {"ok": True, "design": doc})
             if len(parts) != 4:
                 return _json(self, 404, {"ok": False, "error": "unknown design route"})

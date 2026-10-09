@@ -1170,6 +1170,23 @@
     };
     $("mk-del").onclick = () => { selOnly(null); write([{ op: "remove_marker", id: m.id }], "Delete marker"); };
   }
+  // Canvas size (from PR #44): Phone, Desktop, Square or typed. One set_canvas op, so Undo restores the old size.
+  const CANVAS = { Phone: [1080, 1920], Desktop: [1920, 1080], Square: [1080, 1080] };
+  function canvasPane(el) {
+    const [cw, ch] = E.doc.size;
+    const btns = Object.entries(CANVAS).map(([n, [w, h]]) =>
+      `<button class="ed-btn${cw === w && ch === h ? " amber" : ""}" data-cv="${n}" aria-pressed="${cw === w && ch === h}">${n}</button>`).join("");
+    el.innerHTML = `<p class="hint">Click an item on the timeline to change it here.</p>
+      <label class="f" style="margin-top:.8rem">Canvas</label><div style="display:flex;gap:.4rem;flex-wrap:wrap">${btns}</div>
+      <div style="display:flex;gap:.4rem;margin-top:.4rem;align-items:center"><input type="number" id="cv-w" min="1" max="16384" value="${cw}" aria-label="Canvas width" style="width:6em" /> × <input type="number" id="cv-h" min="1" max="16384" value="${ch}" aria-label="Canvas height" style="width:6em" /><button class="ed-btn" id="cv-set">Set</button></div>`;
+    const set = (w, h) => {
+      if (!(Number.isInteger(w) && Number.isInteger(h) && w >= 1 && h >= 1 && w <= 16384 && h <= 16384)) return toast("Width and height must be whole numbers from 1 to 16384");
+      if (w === E.doc.size[0] && h === E.doc.size[1]) return null;
+      return write([{ op: "set_canvas", width: w, height: h }], `Canvas ${w}×${h}`);
+    };
+    el.querySelectorAll("[data-cv]").forEach((b) => (b.onclick = () => set(...CANVAS[b.dataset.cv])));
+    document.getElementById("cv-set").onclick = () => set(Number(document.getElementById("cv-w").value), Number(document.getElementById("cv-h").value));
+  }
   function itemPane(el) {
     if (E.sels.size > 1) {
       el.innerHTML = `<div class="mrow"><div class="nm">${E.sels.size} selected</div><div class="meta">${[...E.sels].map(esc).join(" · ")}</div></div>
@@ -1181,7 +1198,7 @@
     const mk = E.sel && (E.doc.markers || []).find((x) => x.id === E.sel);
     if (mk) return markerPane(el, mk);
     const it = E.sel && E.by[E.sel];
-    if (!it) { el.innerHTML = `<p class="hint">Click an item on the timeline to change it here.</p>`; return; }
+    if (!it) return canvasPane(el);
     const [a, b] = E.spans[it.id];
     const head = `<div class="mrow"><div class="nm">${esc(it.id)} · ${esc(it.type)}</div><div class="meta">${tc(a)} → ${tc(b)} · ${(sec(b - a)).toFixed(2)} s</div></div>`;
     if (it.type === "transition") { el.innerHTML = head + `<p class="hint">A ${sec(it.dur).toFixed(2)} s crossfade. Delete it to cut straight.</p>`; return; }

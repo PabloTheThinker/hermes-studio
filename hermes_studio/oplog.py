@@ -823,6 +823,18 @@ def op_edit_text(ctx: _Ctx, a: dict) -> list[dict]:
     return _set(ctx, it["id"], {k: a[k] for k in _TEXT_FIELDS if k in a})
 
 
+def op_set_canvas(ctx: _Ctx, a: dict) -> list[dict]:
+    """Set the canvas. Inverse restores the old size so undo works."""
+    w, h = a["width"], a["height"]
+    if not (isinstance(w, int) and isinstance(h, int) and not isinstance(w, bool) and not isinstance(h, bool)):
+        raise _OpError("bad_arg", "width and height must be integers", "width")
+    if not (1 <= w <= 16384 and 1 <= h <= 16384):
+        raise _OpError("out_of_range", "width and height must be from 1 to 16384", "width")
+    old = list(ctx.doc["size"])
+    ctx.doc["size"] = [w, h]
+    return [{"op": "set_canvas", "width": old[0], "height": old[1]}]
+
+
 def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     if a["anchor"] is None:
@@ -848,6 +860,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_props": (op_set_props, frozenset({"id", "props"}), frozenset()),
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
+    "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
     "add_text": (
         op_add_text,

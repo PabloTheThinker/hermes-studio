@@ -125,3 +125,20 @@ def test_the_page_files_are_served(app):
 def test_the_desk_has_the_edit_page():
     html = (P.Path(__file__).resolve().parent.parent / "hermes_studio" / "ui" / "index.html").read_text()
     assert 'data-page="edit"' in html and "/edit/edit.js" in html and 'state.page === "edit") return;' in html
+
+
+def test_set_canvas_from_the_edit_page_and_undo_puts_the_old_size_back(app):
+    """PR #44's canvas size, folded into the engine Edit page: one set_canvas entry, undone as one."""
+    doc0 = app.proj.log.doc
+    size0, hash0 = list(doc0["size"]), doc0["hash"]
+    ok, r = app.mcp_apply({"op": "set_canvas", "width": 1920, "height": 1080}, token=app.ui)
+    assert ok, r
+    assert app.proj.log.doc["size"] == [1920, 1080]
+    ok, u = app.mcp("history_undo", {"project_id": "p1", "op_id": r["op_id"], "client_op_id": "u-canvas"}, app.ui)
+    assert ok, u
+    doc = app.proj.log.doc
+    assert doc["size"] == size0 and doc["hash"] == hash0
+    ok, e = app.mcp_apply({"op": "set_canvas", "width": 0, "height": 1080}, token=app.ui)
+    assert not ok and e["code"] == "invalid_op" and e["rule"] == "out_of_range"
+    js = open(os.path.join(os.path.dirname(__file__), "..", "hermes_studio", "ui", "edit.js"), encoding="utf-8").read()
+    assert '"set_canvas"' in js and "Phone" in js and "Desktop" in js and "Square" in js

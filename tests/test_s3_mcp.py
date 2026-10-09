@@ -97,8 +97,10 @@ VALID_OPS = [
     {"op": "slip_clip", "by": S // 2},
     {"op": "roll_edit", "by": -S // 2},
     {"op": "add_media", "path": "media/b.mp4", "dur": S, "fps": [30, 1]},  # S4
+    {"op": "set_canvas", "width": 1920, "height": 1080},  # canvas size (PR #44)
 ]
 assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
+NO_ID_OPS = {"set_canvas"}  # whole-timeline ops: an `id` is an unknown arg, not a bad one
 
 WRITE_CASES = [
     ("timeline_apply", {"ops": [], "summary": "s", "base_version": 0}),
@@ -143,7 +145,8 @@ def test_89_a_non_string_op_id_is_bad_arg_on_every_op(app, op):
     args = {"client_op_id": "k89", "ops": [{**op, "id": 5}], "summary": "s", "base_version": 0}
     m = refused(app, app.mcp("timeline_apply", {"project_id": "p1", **args}), h0)
     h = refused(app, app.rest("timeline_apply", args), h0)
-    assert key(m) == key(h) == ("invalid_op", "bad_arg", "/ops/0/id", 0, False, None), (m, h)
+    rule = "unknown_arg" if op["op"] in NO_ID_OPS else "bad_arg"  # set_canvas has no id at all
+    assert key(m) == key(h) == ("invalid_op", rule, "/ops/0/id", 0, False, None), (m, h)
     good = {**op, "id": ID_FOR[op["op"]]} if op["op"] in ID_FOR else op  # create ops: the engine picks the id
     ops = (
         [{"op": "move_clip", "id": "c2", "at": 3 * S + S // 2}, good] if op["op"] == "add_transition" else [good]

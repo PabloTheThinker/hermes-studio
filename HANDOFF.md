@@ -88,6 +88,16 @@ See [PLAN-MERGED.md §3 and §5](docs/plans/PLAN-MERGED.md).
 | 2 Agent quality | A 20-task eval set, draft branches and presets | Not started |
 | 3 Pro and reach | Keyframes, transitions, speed and masks | Not specified yet |
 
+## Edit page, still open (from PR #44, 2026-10-07), status after the 2026-10-08 consolidation
+
+PR #44 built a second, smaller hand timeline (`editor.py`, `/api/editor`, `ui/editor.js`) beside the stacked engine Edit page. The consolidation keeps one Edit page, `#/edit` = `ui/edit.js` on the engine, and folds #44 in:
+
+- Agent sidebar: on the engine Edit page (Hermes sidebar, Propose cards).
+- Desktop canvas and adjustable canvas: **done**. `set_canvas` op from #44 is public; the Edit page Item tab (nothing selected) has Phone 1080×1920, Desktop 1920×1080, Square 1080×1080 or a typed width and height. One entry, so Undo puts the old canvas back.
+- Transcript tab: on the engine Edit page.
+- Render the canvas to a file: S6 render from the Edit page.
+- `editor.py` and its `/api/editor` routes stay in the tree (tests pass) but the desk no longer loads `ui/editor.js`. Remove them in a later cleanup if nobody needs the separate store.
+
 Phase 0 ends when S3 merges. Every phase exit is a release, and each release needs the owner's yes (see section 4).
 
 ## 3. S3 state, exactly
