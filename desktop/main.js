@@ -3,17 +3,23 @@
 // resources/engine. On open it starts that engine on a free loopback port,
 // waits for it, and loads the desk. On quit it stops the engine.
 // Dev fallback: HERMES_STUDIO_URL, or build/engine in the repo.
-const { app, BrowserWindow, Menu, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require("electron");
 const http = require("http");
 const net = require("net");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
+const { renderFile } = require("./paths");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 
 let win = null;
 let engine = null;
 let engineLog = [];
 let deskUrl = process.env.HERMES_STUDIO_URL || null;
+// The Edit page's token (S3 §13.3): made here, handed to the engine in its environment and to the
+// desk page over IPC, both in memory. Never a URL, a file, a cookie or web storage.
+let uiToken = null;
 
 function engineDir() {
   const packed = path.join(process.resourcesPath || "", "engine");
@@ -74,6 +80,8 @@ async function startEngine() {
   };
   delete env.PYTHONPATH;
   delete env.PYTHONHOME;
+  uiToken = crypto.randomBytes(32).toString("hex");
+  env.HERMES_STUDIO_UI_TOKEN = uiToken;
   engineLog = [];
   engine = spawn(
     py,
@@ -143,6 +151,35 @@ async function boot() {
 }
 
 ipcMain.handle("retry", () => boot());
+// Only the desk page this app loaded (same origin as the engine it started) may ask.
+function fromDesk(event) {
+  try {
+    return !!deskUrl && new URL(event.senderFrame.url).origin === new URL(deskUrl).origin;
+  } catch {
+    return false;
+  }
+}
+ipcMain.handle("ui-token", (event) => (uiToken && fromDesk(event) ? uiToken : null));
+// The Edit page's Browse button: the system's file dialog, one video or audio file, its path.
+const MEDIA_EXT = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
+// The Edit page's "Show in folder" for a finished render: only an .mp4 inside a project's
+// exports folder (~/.hermes/clips/projects/<id>/exports/), after resolving links.
+// The page sends the project id and render_status's path (relative to the project).
+ipcMain.handle("show-render", (event, projectId, rel) => {
+  if (!fromDesk(event)) return false;
+  const file = renderFile(path.join(os.homedir(), ".hermes", "clips", "projects"), projectId, rel);
+  if (file) shell.showItemInFolder(file);
+  return !!file;
+});
+ipcMain.handle("pick-file", async (event) => {
+  if (!fromDesk(event)) return null;
+  const r = await dialog.showOpenDialog(win, {
+    title: "Import into the edit",
+    properties: ["openFile"],
+    filters: [{ name: "Video and audio", extensions: MEDIA_EXT }, { name: "All files", extensions: ["*"] }],
+  });
+  return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+});
 
 function createWindow() {
   win = new BrowserWindow({

@@ -534,8 +534,9 @@ This records what PR #42 does where §1–§12 left room, as Ada ruled at 8:29 P
 - **Lazy open.** A project folder created after startup is opened on **first use** by any engine route (REST GET/POST, HTTP /mcp, an attached stdio call): `Engine.get(id)` → `Engine.open(id)`. An id with no folder or no `base.json` gets the engine's own `not_found` (`rule: not_found`, `path: /project_id`, `id`).
 - **Replay on open.** `Engine.open` takes the lock, repairs the tail (D2: truncates a torn final line, or adds a missing final `\n` with an fsync), then runs `Oplog.load(base, oplog.jsonl)`. That is a **full replay from `base.json`**. **Replaying from the nearest snapshot is deferred**: snapshots are written (every 50 versions) but not read on open.
   - After loading, `timeline.json` is rewritten if its bytes differ from the loaded doc.
-- **Closed-app reads** (stdio with no engine holding the project) use D28(a). They take `timeline.json` when it validates and its `hash`/`version` equal the log head. Otherwise they replay from the newest valid snapshot on the log, else from `base.json`. They never write anything.
-  - **[R] F1 (Ada 8:58 PM):** whatever source a closed read uses, every log line it replays is checked exactly as `Oplog.load` checks it, `inverse` included, so a tampered middle line gives the same `failed` `seq` body open or closed (§11 row F). The fast path above predates that ruling.
+- **Closed-app reads** (stdio with no engine holding the project) use D28(a). **As built after F1:** `doc_at_head` always does a **full replay from `base.json`**, checking every log line exactly as `Oplog.load` checks it (`hash`, `new_version` and `inverse`). `timeline.json` and snapshots are caches for the open engine; a closed read never trusts them. They never write anything.
+  - **[R] F1 (Ada 8:58 PM):** a tampered middle line gives the same `failed` `seq` body open or closed (§11 row F; `tests/test_s3_store.py::test_61d_f1_*`). The `timeline.json`/snapshot fast path described before the ruling was removed, which also closes the tampered-middle-`hash` gap of §12 finding 8 (the closed read now names `seq: 2` too).
+  - On the open path, when `Oplog.load` fails, the store replays the parsed lines with the same checks to name the bad line. It **never falls back to the last line's seq**; if that replay somehow passes, it uses the `seq` named by `load`.
 
 ### 13.2 Tokens
 
@@ -666,7 +667,7 @@ How the Edit page (the `ui` token) and Electron main (the `acp:hermes` and `cont
 8. `Engine.get` (lazy open; `not_found`; `failed` when locked).
 9. `Project.write` → `Oplog.call` (a damaged store → its body).
 
-**REST GET:**
+**REST GET** (HEAD and OPTIONS run the same body checks right after the guard; OPTIONS has no guard and then gets 405):
 1. Guard.
 2. **[R]** Body checks before routing (Ada 8:58/9:02 PM): `Transfer-Encoding` → valid single `Content-Length` → a length above 0 gets `request body not allowed`; each is 400 + close.
 3. Token → 401.
@@ -683,7 +684,7 @@ How the Edit page (the `ui` token) and Electron main (the `acp:hermes` and `cont
 - **No blank-line skip on stdio.** Once a stdio session is in `Content-Length` mode, **every** line between frames must start a valid header block. A blank line (`\r\n`, `\n`, or whitespace-only) where a header block should start is a malformed header block: `-32700` `id: null`, a stderr line (`mcp: broken Content-Length framing: …`), then exit with status 1. Nothing after it runs.
   - Newline-framed sessions still skip blank lines between messages.
 - **[R] Newline-mode cap (O1, Ada 8:58 PM).** A newline-framed read takes at most `MAX_BODY + 1` bytes per line. A longer line gets `-32700` `id: null`, a stderr line and a nonzero exit, and is never parsed (test 102(b2)).
-- **[R] Formatting (O3).** `ruff format --check` passes on the files the PR touches (at `0282e9f` it failed on 8 of them; CI runs only `ruff check`).
+- **[R] Formatting (O3).** `ruff format --check` passes on the files the PR touches (at `0282e9f` it failed on 8 of them; CI runs only `ruff check`). **As built:** every touched file that was clean at `c6de84e` or is new is formatted. `cli.py`, `mcp.py` and `studio.py` already failed `ruff format --check` at `c6de84e`; reformatting them whole would bury the S3 diff, so they are left for a separate formatting-only PR.
 
 ### 13.9 Open questions recorded with this section (not ruled)
 
@@ -694,6 +695,19 @@ How the Edit page (the `ui` token) and Electron main (the `acp:hermes` and `cont
 **[R] Still open after recovery:** Q1 (the control token on `GET /mcp`, `resources/list` and `resources/read`). The addendum rules only that the control token gets `permission_denied` on every **tool**; no recovered source rules Q1.
 
 ### 13.10 Tests owed in the S3 commit ([R], Ada 8:58–9:02 PM, from the addendum)
+
+**Status (commit `b5f9b7f` on `feat/editor-s3-store-mcp`):** every item below is in the test suite except the evidence probes, which live outside the repo (see the last item). Where each one is:
+- 89: `tests/test_s3_mcp.py::test_89_a_non_string_op_id_is_bad_arg_on_every_op` (all 15 public ops, valid args, plus a pass with a real id).
+- 92: `test_92_nfd_retries_never_mismatch` asserts `/markers/1/label` and `mk1`.
+- 94: `tests/test_s3_stdio.py::test_94_c5_over_attached_stdio_matches_http`.
+- 101: `test_101_5_6_7_broken_stream_closes` (`5\r`, empty).
+- 102(a): `test_102_a_malformed_or_duplicate_headers_*` (both lists) and `test_102_a_blank_line_between_frames_is_a_malformed_header`.
+- 102(b): `test_102_b_over_drain_bound_closes`. 102(b2): `test_102_b2_newline_line_*`.
+- 103(v): the `TE` list in `tests/test_s3_http.py`. 103(vi): `test_103_vi_*` (GET on REST, static, project and unknown routes; GET /mcp; HEAD; OPTIONS; no body unchanged).
+- 104: `test_get_mcp_stream_hears_projects_opened_mid_stream`. D26 decode: `test_get_routes_url_decode_the_project_id_like_post`.
+- Windows: `tests/test_s3_lock.py`, run by the windows desktop job (step "Project lock test").
+- F1 / O2 (rows F / E): `tests/test_s3_store.py::test_61d_f1_*`, `test_61_o2_*`.
+- Evidence probes: **not in the repo** (evidence never is, see HANDOFF §6). The verifier reruns the §11 row probes against the head.
 
 - **89:** use real ops with valid args, plus the ops whose id is optional, so every case reaches `bad_arg` at `/ops/0/id`.
 - **92:** assert `/markers/1/label` and `mk1` literally.

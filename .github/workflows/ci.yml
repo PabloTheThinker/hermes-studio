@@ -97,6 +97,8 @@ jobs:
       - name: Lint (bugs, imports, security)
         run: ruff check hermes_studio tests hermes_plugin
       - name: Tests
+        env:
+          HERMES_SLOW_TESTS: "1"  # S4 gate: a 20-minute fixture imports with progress (~2 min)
         run: pytest -q -rs
   secrets:
     runs-on: ubuntu-latest

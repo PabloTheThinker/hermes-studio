@@ -92,12 +92,12 @@ class Out:
 
     def emit(self, obj: dict) -> None:
         if self.json:
-            print(json.dumps(obj, ensure_ascii=False, default=str), flush=True)
+            print(json.dumps(obj, ensure_ascii=True, default=str), flush=True)
 
     def error(self, e: HermesStudioError) -> int:
         self.end_bar()
         if self.json:
-            print(json.dumps(e.as_dict(), ensure_ascii=False), flush=True)
+            print(json.dumps(e.as_dict(), ensure_ascii=True), flush=True)
         else:
             print(self.red("error: ", err=True) + e.message, file=sys.stderr)
             if e.hint:
@@ -341,6 +341,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     dr = sub.add_parser("doctor", help="check FFmpeg, captions, speech, links and the library")
     _common(dr)
+
+    ca = sub.add_parser("cache", help="editor cache sizes; --clear frees frames (and --all: proxies, thumbnails, waveforms)")
+    ca.add_argument("--clear", action="store_true", help="delete the cheap cache (frames, work files)")
+    ca.add_argument("--all", action="store_true", help="with --clear: also proxies, thumbnails and waveforms (re-import to rebuild)")
+    _common(ca)
 
     st = sub.add_parser("studio", help="open the desk in your browser (loopback only)")
     st.add_argument("--host", default="127.0.0.1")
@@ -674,6 +679,22 @@ def cmd_doctor(a: argparse.Namespace, o: Out) -> int:
     return 0 if res["ok"] else EXIT["missing_dependency"]
 
 
+def cmd_cache(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio import api
+
+    if a.all and not a.clear:
+        raise HermesStudioError("--all only goes with --clear.", hint="hermes-studio cache --clear --all")
+    res = api.cache(clear=a.clear, everything=a.all)
+    o.emit(res)
+    if not o.json:
+        mb = lambda n: f"{n / 1e6:.1f} MB"  # noqa: E731
+        for r in res["projects"]:
+            parts = ", ".join(f"{k} {mb(v)}" for k, v in r["bytes"].items() if v)
+            o.say(f"  {r['project_id']:<16} {mb(r['total']):>10}  {o.dim(parts)}")
+        o.say(f"Freed {mb(res['freed'])}." if a.clear else f"Total {mb(res['total'])}. Free it with: hermes-studio cache --clear")
+    return 0
+
+
 def cmd_studio(a: argparse.Namespace, o: Out) -> int:
     import threading
     import webbrowser
@@ -808,7 +829,7 @@ def cmd_photo(a: argparse.Namespace, o: Out) -> int:
 COMMANDS = {
     "run": cmd_run, "captions": cmd_run, "list": cmd_list, "ls": cmd_list, "show": cmd_show, "open": cmd_open,
     "probe": cmd_probe, "recommend": cmd_recommend, "restyle": cmd_restyle, "edit": cmd_edit, "name": cmd_name,
-    "copy": cmd_copy, "transcribe": cmd_transcribe, "plan": cmd_plan, "tools": cmd_tools, "doctor": cmd_doctor,
+    "copy": cmd_copy, "transcribe": cmd_transcribe, "plan": cmd_plan, "tools": cmd_tools, "doctor": cmd_doctor, "cache": cmd_cache,
     "studio": cmd_studio, "organize": cmd_organize, "design": cmd_design, "photo": cmd_photo, "mcp": cmd_mcp, "app": cmd_app, "update": cmd_update,
 }
 

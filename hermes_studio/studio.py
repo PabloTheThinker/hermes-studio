@@ -144,13 +144,55 @@ def _seconds(value):
     return float(text)
 
 
-def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+class BodyRefused(ValueError):
+    """A request body we won't read: answered with 400 and a closed connection (D27(d))."""
+
+
+def body_length(handler: BaseHTTPRequestHandler) -> int:
+    """The request body length, from headers only (nothing is read). Any Transfer-Encoding is
+    refused first; then there must be at most one Content-Length, whose value (spaces and tabs
+    stripped) is 1-8 ASCII digits. No Content-Length is 0, as before."""
+    from hermes_studio.jsonrpc import content_length
+
+    if handler.headers.get_all("Transfer-Encoding"):
+        raise BodyRefused("unsupported transfer encoding")
+    values = handler.headers.get_all("Content-Length") or []
+    if not values:
+        return 0
+    if len(values) != 1:
+        raise BodyRefused("invalid content length")
     try:
-        length = int(handler.headers.get("Content-Length") or 0)
-    except ValueError:
-        length = 0
-    if length < 0 or length > limit:
-        raise ValueError("request body too large")
+        raw = values[0].encode("latin-1")
+    except (UnicodeEncodeError, AttributeError):
+        raise BodyRefused("invalid content length") from None
+    n, _ = content_length(raw)
+    if n is None:
+        raise BodyRefused("invalid content length")
+    return n
+
+
+def no_body(handler: BaseHTTPRequestHandler) -> None:
+    """D27(d) for every method that takes no body (GET, HEAD, OPTIONS), checked before routing:
+    Transfer-Encoding, then exactly one valid Content-Length, then a valid length > 0 (over the
+    cap included) is refused. Nothing is read; the caller answers 400 and closes."""
+    if body_length(handler) > 0:
+        raise BodyRefused("request body not allowed")
+
+
+def path_segments(raw: str) -> list[str]:
+    """Split the raw URL path on '/' first, then percent-decode each segment once, so an
+    encoded '/' (%2F) stays inside its segment (GET and POST alike)."""
+    return [unquote(seg) for seg in raw.split("/")]
+
+
+def is_project_route(segs: list[str]) -> bool:
+    return len(segs) >= 4 and segs[1] == "api" and segs[2] == "projects"
+
+
+def _read_json(handler: BaseHTTPRequestHandler, limit: int = MAX_BODY) -> dict:
+    length = body_length(handler)
+    if length > limit:
+        raise BodyRefused("request body too large")
     raw = handler.rfile.read(length) if length else b"{}"
     if not raw:
         return {}
@@ -270,12 +312,28 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return False
         return True
 
+    def _no_body(self, segs: list[str] | None = None) -> bool:
+        """True if the request carries no body; refuses (400 + close, nothing read) otherwise."""
+        try:
+            no_body(self)
+            return True
+        except BodyRefused as exc:
+            if segs == ["", "mcp"]:
+                from hermes_studio import http_engine
+
+                http_engine._mcp_refuse(self)
+            else:
+                self._refuse(400, str(exc))
+            return False
+
     def do_OPTIONS(self) -> None:  # noqa: N802
+        if not self._no_body():
+            return
         # No CORS: cross-site preflights get nothing to work with.
         self._refuse(405, "no cross-origin access")
 
     def do_HEAD(self) -> None:  # noqa: N802
-        if not self._guard(write=False):
+        if not self._guard(write=False) or not self._no_body():
             return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -301,9 +359,26 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not self._guard(write=False):
             return
         parsed = urlparse(self.path)
-        path = unquote(parsed.path)
+        segs = path_segments(parsed.path)  # split first, then decode each segment
+        if not self._no_body(segs):  # D27(d) before any route
+            return
+        path = "/".join(segs)
         if path in {"/", "/index.html"}:
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
+        if is_project_route(segs) or segs == ["", "mcp"]:
+            from hermes_studio import http_engine
+
+            return http_engine.get(self, segs, parsed.query)
+        if segs == ["", "api", "projects"]:
+            from hermes_studio import http_engine
+
+            return http_engine.projects_route(self, "GET")
+        if path in ("/edit/edit.js", "/sw.js"):  # the Edit page and its media header worker
+            return self._file(UI_DIR / path.rsplit("/", 1)[1], "text/javascript; charset=utf-8")
+        if path.split("?")[0] == "/editor.js":
+            return self._file(UI_DIR / "editor.js", "text/javascript; charset=utf-8", cache=False)
+        if path == "/api/editor" or path.startswith("/api/editor/"):
+            return self._editor_get(path)
         if path.startswith("/api/probe"):
             qs = parse_qs(parsed.query)
             src = (qs.get("src") or [""])[0]
@@ -380,6 +455,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio.tools import catalogue
 
             return _json(self, 200, {"ok": True, **catalogue()})
+        if path == "/api/caption-styles":
+            from hermes_studio.captions import preview_styles
+
+            return _json(self, 200, {"ok": True, **preview_styles()})
         if path == "/api/library":
             jobs = [asdict(j) for j in list_jobs() if j.status == "completed"]
             counts: dict[str, int] = {}
@@ -405,9 +484,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         if path == "/api/designs":
             from hermes_studio import design
 
-            return _json(self, 200, {"ok": True, "designs": design.list_designs(), "sizes": {
-                k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
-                "templates": design.templates(), "fonts": {k: [v[1], v[2]] for k, v in design.FONTS.items()}})
+            return _json(
+                self,
+                200,
+                {
+                    "ok": True,
+                    "designs": design.list_designs(),
+                    "sizes": {k: {"w": w, "h": h, "label": lab} for k, (w, h, lab) in design.SIZES.items()},
+                    "templates": design.templates(),
+                    "fonts": {k: [v[1], v[2]] for k, v in design.FONTS.items()},
+                },
+            )
         if path.startswith("/api/design-template/"):
             from hermes_studio import design
 
@@ -441,14 +528,33 @@ class StudioHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if not self._guard(write=True):
             return
+        segs = path_segments(urlparse(self.path).path)
+        if segs == ["", "mcp"]:
+            from hermes_studio import http_engine
+
+            return http_engine.mcp_post(self)
         try:
+            body_length(self)  # Transfer-Encoding and Content-Length checked before any route
             self._post()
-        except ValueError as exc:  # bad JSON, oversized body
+        except BodyRefused as exc:  # nothing more is read: one response, then the connection closes
+            return self._refuse(400, str(exc))
+        except ValueError as exc:  # bad JSON
             return _json(self, 400, {"ok": False, "error": str(exc)[:200]})
 
     def _post(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        segs = path_segments(path)  # split first, then decode each segment, as on GET
+        if is_project_route(segs):
+            from hermes_studio import http_engine
+
+            return http_engine.rest_post(self, segs)
+        if segs == ["", "api", "projects"]:
+            from hermes_studio import http_engine
+
+            return http_engine.projects_route(self, "POST")
+        if path == "/api/editor" or path.startswith("/api/editor/"):
+            return self._editor_post(path)
         if path == "/api/design" or path.startswith("/api/design/"):
             return self._design_post(path)
         if path == "/api/jobs":
@@ -508,13 +614,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return _seconds(v) if v not in (None, "") else None
 
             res = restyle_clip(
-                str(body.get("job") or ""), str(body.get("file") or ""),
+                str(body.get("job") or ""),
+                str(body.get("file") or ""),
                 look=body.get("look") if isinstance(body.get("look"), dict) else None,
                 style=body.get("style") or None,
                 captions=body.get("captions") if body.get("captions") in (True, False) else None,
                 hook=body.get("hook") if body.get("hook") in (True, False) else None,
-                start=_f("start"), end=_f("end"),
-                fixes=body.get("fixes"), title=body.get("title") or None,
+                start=_f("start"),
+                end=_f("end"),
+                fixes=body.get("fixes"),
+                title=body.get("title") or None,
             )
             return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/name":
@@ -528,7 +637,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio.pipeline import set_clip_meta
 
             liked = body.get("liked")
-            res = set_clip_meta(str(body.get("job") or ""), str(body.get("file") or ""), liked if liked in (True, False) else None)
+            res = set_clip_meta(
+                str(body.get("job") or ""), str(body.get("file") or ""), liked if liked in (True, False) else None
+            )
             return _json(self, 200 if res.get("ok") else 400, res)
         if path == "/api/rename":
             body = _read_json(self)
@@ -564,8 +675,24 @@ class StudioHandler(BaseHTTPRequestHandler):
                 if op == "split":
                     a, b = split_file(media, float(body.get("at") or 0))
                     extra = [
-                        {"file": a.name, "title": (Path(name).stem + " A"), "start": 0, "end": float(body.get("at") or 0), "score": 0, "virality": 0, "thumb": ""},
-                        {"file": b.name, "title": (Path(name).stem + " B"), "start": float(body.get("at") or 0), "end": 0, "score": 0, "virality": 0, "thumb": ""},
+                        {
+                            "file": a.name,
+                            "title": (Path(name).stem + " A"),
+                            "start": 0,
+                            "end": float(body.get("at") or 0),
+                            "score": 0,
+                            "virality": 0,
+                            "thumb": "",
+                        },
+                        {
+                            "file": b.name,
+                            "title": (Path(name).stem + " B"),
+                            "start": float(body.get("at") or 0),
+                            "end": 0,
+                            "score": 0,
+                            "virality": 0,
+                            "thumb": "",
+                        },
                     ]
                     job.clips = list(job.clips or []) + extra
                     job.save()
@@ -637,6 +764,96 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ design
 
+    def _editor_get(self, path: str) -> None:
+        from hermes_studio import editor
+
+        pid = path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else ""
+        parts = [p for p in path.split("/") if p]
+        if parts == ["api", "editor", "films"]:
+            return _json(self, 200, {"ok": True, "films": editor.list_films()})
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "media":
+            try:
+                media = editor.project_media(parts[2], parts[4])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            kind = "video/mp4" if media.suffix.lower() == ".mp4" else "video/webm"
+            return self._file(media, kind)
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                at = float((qs.get("t") or ["0"])[0])
+            except ValueError:
+                return _json(self, 400, {"ok": False, "error": "bad time"})
+            try:
+                data = editor.frame_jpeg(parts[2], at)
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        try:
+            if pid:
+                return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
+            return _json(self, 200, {"ok": True, "projects": editor.list_projects()})
+        except editor.EditorError as exc:
+            return _json(self, 404, {"ok": False, "error": str(exc)})
+
+    def _editor_post(self, path: str) -> None:
+        from hermes_studio import editor
+
+        body = _read_json(self)
+        pid = (
+            path.split("/")[3] if path.startswith("/api/editor/") and len(path.split("/")) > 3 else str(body.get("id") or "demo")
+        )
+        op = str(body.get("op") or "open")
+        try:
+            if op == "new":
+                project = editor.create(pid)
+            elif op == "nudge":
+                project = editor.nudge(
+                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), float(body.get("seconds") or 0.5)
+                )
+            elif op == "trim":
+                project = editor.trim(
+                    pid,
+                    str(body.get("id_item") or body.get("item") or ""),
+                    src_in=body.get("src_in"),
+                    src_out=body.get("src_out"),
+                )
+            elif op == "edge":
+                project = editor.set_edge(
+                    pid,
+                    str(body.get("item") or ""),
+                    str(body.get("edge") or "end"),
+                    float(body.get("at") or 0),
+                    ripple=bool(body.get("ripple")),
+                )
+            elif op == "move":
+                project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+            elif op == "lift":
+                project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "canvas":
+                project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "import":
+                project = editor.import_run(pid)
+            elif op == "reset":
+                project = editor.reset(pid)
+            elif op == "split":
+                project = editor.split(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+            elif op == "undo":
+                project = editor.undo(pid)
+            elif op == "redo":
+                project = editor.redo(pid)
+            else:
+                project = editor.open_project(pid)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        return _json(self, 200, {"ok": True, "project": project})
+
     def _design_get(self, path: str) -> None:
         """/design/fabric.min.js · /design/fonts/<file> · /design/<id>/(assets|export)/<file>."""
         from hermes_studio import design
@@ -679,8 +896,13 @@ class StudioHandler(BaseHTTPRequestHandler):
 
         try:
             if len(parts) == 2:  # create
-                doc = design.create(str(body.get("title") or ""), str(body.get("size") or "tiktok-carousel"),
-                                    str(body.get("template") or "blank"), body.get("w"), body.get("h"))
+                doc = design.create(
+                    str(body.get("title") or ""),
+                    str(body.get("size") or "tiktok-carousel"),
+                    str(body.get("template") or "blank"),
+                    body.get("w"),
+                    body.get("h"),
+                )
                 return _json(self, 200, {"ok": True, "design": doc})
             if len(parts) != 4:
                 return _json(self, 404, {"ok": False, "error": "unknown design route"})
@@ -790,6 +1012,14 @@ def serve(host: str = HOST_DEFAULT, port: int = PORT_DEFAULT) -> None:
         pass
     _start_worker()
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
+    from hermes_studio import http_engine
+
+    engine = http_engine.start(httpd.server_address[1])  # the timeline engine: locks its projects (D5, D6)
     print(f"Hermes Studio  http://{host}:{port}/", flush=True)
+    if not engine.ui_token_given:  # a browser has no app to hand it over: the person pastes it once
+        print(f"Edit page code (paste it when the Edit page asks; keep it private): {http_engine.UI_TOKEN}", flush=True)
     print("Library  Create  Jobs  — loopback only. Does not post.", flush=True)
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        http_engine.stop(engine)

@@ -15,7 +15,9 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 - Another Hermes agent must clip, caption, recommend, copy, trim, or split
 - User is on the localhost desk (Create / Library / Jobs)
 
-Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`), CapCut-class timeline editor (parked).
+Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`). The hand timeline is the Edit page (`#/edit`).
+
+Edit page: `#/edit` is `ui/edit.js` on the project engine (`/api/projects/...`, op log is the only writer). A second, earlier hand-timeline store (`editor.py`, `/api/editor`, `ui/editor.js`, from PR #44) is kept for reference but not loaded by the desk. Footguns from it still hold: an ffmpeg frame temp file must end in `.jpg` (a `.part` suffix makes image2 refuse the write); `video.play()` must run in the click itself or the browser refuses sound; a split while playing must keep the same video element.
 
 ## Fastest path (any agent)
 

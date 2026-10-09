@@ -89,6 +89,38 @@ STYLES = {
 }
 
 
+GROUP_GAP_S = 0.55  # a pause longer than this starts a new caption line (build_ass)
+
+
+def _css(ass: str) -> str:
+    """ASS ``&HAABBGGRR`` as CSS ``#rrggbb``."""
+    h = ass[-6:]
+    return f"#{h[4:6]}{h[2:4]}{h[0:2]}".lower()
+
+
+def preview_styles() -> dict:
+    """What the Edit page needs to draw captions the way ``build_ass`` burns them: per style the
+    line length in words, upper case or not, the colours and sizes (at a 1920 px tall frame), and
+    the pause that breaks a line."""
+    return {
+        "gap_s": GROUP_GAP_S,
+        "play_y": 1920,
+        "styles": {
+            n: {
+                "words_per_line": st.words_per_line,
+                "uppercase": st.uppercase,
+                "primary": _css(st.primary),
+                "highlight": _css(st.highlight),
+                "outline": _css(st.outline),
+                "outline_w": st.outline_w,
+                "size": st.size,
+                "margin_v": st.margin_v_fit,
+            }
+            for n, st in STYLES.items()
+        },
+    }
+
+
 def _ts(sec: float) -> str:
     if sec < 0:
         sec = 0.0
@@ -144,7 +176,7 @@ def build_ass(
             continue
         gap = w.start - cur[-1].end
         endish = cur[-1].text[-1:] in ".!?"
-        if len(cur) >= st.words_per_line or gap > 0.55 or endish:
+        if len(cur) >= st.words_per_line or gap > GROUP_GAP_S or endish:
             groups.append(cur)
             cur = [w]
         else:

@@ -1,5 +1,71 @@
 # HANDOFF: Hermes Studio editor build
 
+## 0. Update 2026-10-03 (read this first)
+
+The owner (Pablo) asked to keep going on the editor. S3's owed fixes are pushed to PR #42, and Phase 1 (S4–S8 plus the Edit page) and Phase 2 presets are built, **each on its own branch, stacked in order**. Nothing new is merged, tagged or released. Every branch's head passes the full suite (1194 passed at the top; the one skip is the 20-minute S4 gate, which CI runs with `HERMES_SLOW_TESTS=1`).
+
+| Branch (stacked) | What | Gate evidence | Spec |
+|---|---|---|---|
+| `feat/editor-s3-store-mcp` = **PR #42** @ `1f854ea` | All §3 owed fixes (F1, F2, O1–O4, decode, 104, Windows lock, blank lines, tests 89/92/101/102/103, As built) | CI green on Linux, Windows (lock test), test, CodeQL; **`sources` needs one re-run** (zlib.net served an 11 KB page; nothing in the PR) | `docs/plans/S3-SPEC.md` §13 |
+| `feat/editor-s4-media` | probe, `add_media` op, import job (proxy, thumbs, wave, words), progress events | 20-min fixture imports with monotonic progress (78 s) | `S4-SPEC.md` |
+| `feat/editor-s5-frames` | frame cache, `timeline_frames`, contact sheet, `history_frames` | C10 tests | `S5-SPEC.md` |
+| `feat/editor-s6-render` | render v1 (two-pass graph, segments), render jobs | C11: duration/frames ±1, h264/aac 1080×1920, SSIM 0.993–0.994 | `S6-SPEC.md` |
+| `feat/editor-s7-cuts` | `transcript_cut` (fillers, pauses, ranges) | C12 filler: 46 ops = 1 entry, 1 undo restores the hash | `S7-SPEC.md` |
+| `feat/editor-s8-gate` | Ask / Propose / Auto, parked writes | C12 gate, E5 | `S8-SPEC.md` |
+| `feat/editor-ui-edit` | the Edit page + sidebar, token delivery, `project_list/new`, captions in clip styles, Phase 1 headline test | `tests/test_phase1_e2e.py` (E1, E2, E4); `scripts/check-edit-page.js` (Playwright) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-presets` | `apply_preset` (Phase 2 Q3) | one entry, one undo per preset | `presets.py` docstring |
+| `feat/editor-polish` | `hermes-studio cache [--clear [--all]]`; Phase 2 Q1 eval set (`evals/`: 20 pinned tasks, checks, reference solutions, `python -m evals.run`); latency measurement | reference 20/20, a do-nothing agent passes only the 2 no-change tasks; engine op → SSE event p95 ≈ 10 ms (< 250 ms) | `evals/run.py` docstring |
+| `feat/editor-drafts` | Phase 2 Q2 draft branches (`draft_new/list/keep/discard`, internal op `replace_body`, `call(..., "keep_body")`), Edit page draft banner | Discard keeps the main hash exactly; Keep equals the branch in one entry, one undo | `DRAFTS-SPEC.md` |
+| `feat/editor-scenes` | Shot changes: S4 `scenes` stage (FFmpeg scene score 0.3), `get_scenes` through the clips, REST, Edit page Scenes tab with thumbnails and "Split at every shot change" (one entry) | cuts found at 3 s / 6 s on a 3-shot fixture; mapping through clips and speed | `media.py` / `media_jobs.py` docstrings |
+| `feat/editor-markers` | `edit_marker` op (move and/or rename; inverse is the old values; `at_s` over MCP); Edit page markers on the ruler (add, select, drag, rename, delete, Item tab), frame/second stepping, [ ] edit points, Alt-arrow nudges, Keys list; drags hold redraws (fixes a drag lost to a mid-drag reload); top bar and toolbar no longer stretch or wrap | `tests/test_markers.py`; `check-edit-page.js` step 8 | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-slip-roll` | public ops `slip_clip` and `roll_edit` (`by_s` over MCP; media bounds and crossfade lengths checked in the op); Edit page Slip / Roll buttons, , and . keys, Alt-drag | `tests/test_slip_roll.py`; `check-edit-page.js` step 9 | `docs/oplog.md`, `EDIT-PAGE-SPEC.md` |
+| `feat/editor-snapping` | Edit page: magnetic snapping (8 px to item edges, markers, the playhead; snap line; Shift or the **snap** box turns it off); a reload cancels queued reloads (no double redraw from our own write's echo); compact one-line toolbar | `check-edit-page.js` snap step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-close-gaps` | preset `close_gaps` (V1 clips close up from 0, crossfades and anchors kept, other tracks stay); in the Presets menu and the MCP enum | `tests/test_presets.py` close-gaps tests | `presets.py` docstring |
+| `feat/editor-copy-paste` | Edit page Ctrl+C / Ctrl+V / Ctrl+D for clips and text (page clipboard; plain text copy untouched) | `check-edit-page.js` duplicate and paste step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-preview-audio` | Edit page preview mixes the other tracks (music, voice) on synced hidden `<audio>` players, clip volume and fades on V1 too | `check-edit-page.js` checks `_audioPlan` (no AAC in headless Chromium; the sound itself is unheard here, needs a person on the desktop app) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-evals-b` | eval set B (`evals/tasks.py` `TASKS_B`, `python -m evals.run --reference --set b`): slip, roll, delete then close gaps, marker move and rename, an impossible slip to decline, repeat a clip; set A stays pinned | reference 6/6 in 7 writes; doing nothing passes only the decline task | `evals/run.py` docstring |
+| `fix/editor-slip-rules` | `slip_clip` / `roll_edit` refuse with the validator's own rule ids at the op path: `negative_time`, `src_out_of_media`, `empty_range` (were `out_of_range` / `bad_arg`) | `tests/test_slip_roll.py` | `docs/oplog.md` |
+| `feat/editor-nav` | Edit page: held-key nudges and slips land as one entry; Fit (\\) and Ctrl+wheel zoom; the view follows the playhead; page writes, undo and redo queue one at a time | `check-edit-page.js` held-nudge and Fit checks | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-render-options` | Edit page render: **no captions** and **half size** beside the style | `check-edit-page.js` renders 540×960 without captions (ffprobe: h264 540×960 + aac) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-multiselect` | Edit page multi-select (Ctrl/Shift-click, Ctrl+A, Esc); group Delete and Alt-arrow nudge, one entry each | `check-edit-page.js` multi-select step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-outline` | read tool `timeline_outline` (33 tools) and `GET /api/projects/<id>/outline`: the edit in seconds and plain words (items, crossfades, V1 gaps, markers, length, a `text` sketch); AGENTS.md points agents to it first and lists the newer ops | `tests/test_outline.py` | `outline.py` docstring, AGENTS.md |
+| `feat/editor-caption-preview` | Edit page preview draws word captions like the render (grouping, highlight, size, place; `GET /api/caption-styles` from `captions.preview_styles`); `captions.GROUP_GAP_S` shared with `build_ass` | `test_editor_polish.py` style data; `check-edit-page.js` caption step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-browse` | desktop: Browse… (system file dialog via `pick-file` IPC, desk origin only) and drop-to-import (`webUtils.getPathForFile`) on the Edit page's Media tab | `check-edit-page.js` imports through Browse… with the dialog stubbed; the real Electron dialog and drop are not run here (no Electron in this container), so a person should try them in the app | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-show-render` | desktop: **Show in folder** for a finished render (`show-render` IPC; only an .mp4 directly in that project's `exports/`, checked on real paths) | `check-edit-page.js` with the IPC stubbed; the Electron side is not run here | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-shuttle` | Edit page J/K/L shuttle (to 4×; J steps back at 1×), one clock per play | `check-edit-page.js` 2× run and J step | `EDIT-PAGE-SPEC.md` |
+| `feat/agents-timeline-check` | read tool `timeline_check` (34 tools): timeline_apply's whole path on a scratch log; `{would_apply, version, changed_ids, length_s, outline}` or the same refusal; works in Ask mode; `gate._dry_run` now returns the result and doc | `tests/test_timeline_check.py` | `mcp_timeline.py` `_check` docstring, AGENTS.md |
+| `feat/editor-pending-preview` | `approval_status {preview: true}` (REST `?preview=1`): a parked edit dry-run now, `{would_apply, changed_ids, length_s, outline}` or the refusal Apply would meet; the waiting card's **Preview** shows it and outlines the touched items | `test_s8_gate.py` preview test; `check-edit-page.js` Preview step | `EDIT-PAGE-SPEC.md`, AGENTS.md |
+| `feat/editor-transcript-search` | Transcript tab Find: phrase match (case/punctuation ignored), Enter steps and seeks, **Cut all** as one `transcript_cut` entry. **Open question for Ada:** `get_transcript` (and so captions) maps words through every clip of a media, music-track clips included, so a talk reused as music is captioned twice; should words come from main/voice tracks only? | `check-edit-page.js` find-and-cut step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-project-list` | `project_list` rows carry `modified`; the Edit home lists newest first with "edited … ago" and folds drafts into their main's row | `test_edit_page.py`; `check-edit-page.js` projects-list step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-history-jump` | Undo/Redo tooltips name the step; a history card's title selects and goes to what it changed | `check-edit-page.js` jump and tooltip checks | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-render-cancel` | tool `render_cancel` (35 tools; render scope) and `POST .../render_cancel`: stops a queued or running render, `render.cancelled` event; the Edit page's **Stop** link | `test_s6_render.py` cancel test (queued and running, re-render after) | `render_jobs.py` docstring, EDIT-PAGE-SPEC, AGENTS.md |
+| `feat/editor-filmstrip` | Edit page clips show a filmstrip from the S4 thumbs sprite (source-time tiles; live while Alt-drag slipping) instead of one thumbnail | `check-edit-page.js` filmstrip pixels check | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-small-window` | Edit page at the desktop's 760×540 minimum: height from the real header (it was cut off at the bottom), narrower columns, scrolling top bar/tabs/toolbar so Render isn't clipped | `check-edit-page.js` small-window step (screenshot 11) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-a11y` | Edit page focus rings, keyboard-openable project rows, tab and mode-switch roles/states, labelled zoom, live render status and toasts | `check-edit-page.js` Enter-on-row and `aria-pressed` checks | `EDIT-PAGE-SPEC.md` |
+| `docs/editor-readme` | README's Edit section catches up | — | README |
+| `fix/editor-review` | fixes from an independent review of the stack: Render right after Stop is a new job (per-job cancel; a stopped job can't write the status); deleting a crossfade with its clip under ripple; Shift is free-drag only (Ctrl-click selects); show-render path check in a pure `desktop/paths.js` (refuses `..`, drives, links out); held-key nudges are relative when they run (never overwrite a newer edit); `roll_edit` docstring says anchored items ride the next clip | `test_s6_render.py` stop-then-render, `test_desktop_paths.py` (Node), `check-edit-page.js` crossfade+clip delete | EDIT-PAGE-SPEC |
+| `feat/agents-transcript-window` | `get_transcript` `from_s`/`to_s` window and `format: "text"` (lines of `[start_s] words`, about a fifth the size); REST query params too | `tests/test_transcript_window.py` | `media_jobs.get_transcript` docstring, AGENTS.md |
+| `feat/editor-chapters` | markers as video chapters: `timeline_outline.chapters` and the marker pane's **Copy all as chapters** | `test_outline.py` chapters test; `check-edit-page.js` chapters check | `outline.py` docstring, EDIT-PAGE-SPEC |
+| `feat/editor-save-frame` | Edit page **Save frame**: the playhead's engine frame as a JPEG (up to 1080 px wide) | `check-edit-page.js` download probed 1080×1920 mjpeg | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-from-clips` | Edit page Media tab **From your clips**: the desk's finished runs, one click imports a clip (`import_media`) | `check-edit-page.js` seeds a library run and imports its clip | `EDIT-PAGE-SPEC.md` |
+| `feat/history-explain` | read tool `history_explain {op_id}` (36 tools): one entry as outline lines removed/added and the length change; history cards' **What changed** | `tests/test_history_explain.py`; `check-edit-page.js` What changed check | `outline.explain` docstring, AGENTS.md, EDIT-PAGE-SPEC |
+| `feat/editor-export-otio` | Edit page **Export OTIO** (`export_otio`); Show in folder also takes the `.otio`. **Open question for Ada:** more transition kinds (dip to black, wipe) need the schema's `kind` rule (`timeline.py`: only `xfade`), OTIO mapping and the render; not started | `test_desktop_paths.py`; `check-edit-page.js` OTIO step | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-still-prefetch` | fix: still-frame playback (browsers without H.264) showed no frames while playing; now a single-flight pump, smaller frames while playing: 0 → 12-13 frames in 2 s | `check-edit-page.js` counts stills (≥ 6 in 2 s) | `EDIT-PAGE-SPEC.md` |
+| `feat/editor-history-incremental` | Edit page reads history incrementally (from the last head; full on open or stream reset) instead of from v0 on every reload | `check-edit-page.js` checks the `since_version` of history reads | `EDIT-PAGE-SPEC.md` |
+| `perf/engine-replay` | Loading a long log: a 2000-entry project took **141 s** to open (the engine blocks meanwhile), now **29.5 s**, same hash. Writes validate once, not twice (`stamp_hash_valid`); docs are copied with `timeline.clone` (not `copy.deepcopy`); the hash reads a non-copying canonical view; `Oplog.load` replays without re-validating each doc (every line's hash, version and inverse are still checked, per F1) and validates the final doc once. **For Ada:** the stored hash isn't a MAC, so a hand-made log could hold an invalid middle version with a matching hash (the final doc is still validated); and snapshot-based open (deferred in S3 §open) is what would make long logs fast. `scripts/check-edit-scale.js N` times the page: 1000 clips open in 0.8 s, a split in 0.2 s | `tests/test_replay_speed.py` (view = normalize bytes over 150 seeds, tampered middle line refused, final doc validated); full suite | `oplog.load` / `timeline._normal_view` docstrings |
+| `perf/item-duration` | `timeline.item_duration` in integers (same truncation as `int(Fraction)`): the 2000-entry open goes 29.5 s → **21.7 s** | `test_replay_speed.py` equivalence over 20 000 cases | — |
+| `perf/open-outside-lock` | `Engine.open` replays a project's log under that project's own opening lock, not the engine lock: a long project loading no longer blocks opening any other (the projects list opened them one by one behind it); two opens of one project still share one `Project` | `tests/test_open_concurrency.py` (fails on the old code) | `Engine.open` docstring |
+| `feat/editor-arrow-select` | Edit page ↑/↓ walk the selection along a track (keyboard-only editing: walk, nudge, slip, split, delete) | `check-edit-page.js` arrow-select check | `EDIT-PAGE-SPEC.md` |
+
+**What only people can do now:**
+1. Re-run the failed `sources` job on PR #42 (run 36996418254), then have the **verifier gate `1f854ea`** and merge pinned to it. That ends Phase 0; the Phase 0 release needs Pablo's yes.
+2. **Ada's rulings** listed in each spec's "Decisions" (S4 D1/D7, S5 D2, S6 D4/D8, S7 D6, S8 D1–D3, S3 §13.9 Q1).
+3. Then each later branch becomes a PR in order (merge `main` in first, never rebase), with its own verifier gate.
+
+**Not built:** the ACP client and composer (Hermes chat over ACP), running the eval set against real models (the harness is ready), Phase 3 (keyframes, masks), and the Electron half of card latency (the engine half is measured).
+
+---
+
 This file is for any engineer or AI who picks up the editor work with no prior context. Read all of it before you touch code. Last updated 2026-10-01 at 11:30 PM ET.
 
 ## 1. What this is
@@ -21,6 +87,16 @@ See [PLAN-MERGED.md §3 and §5](docs/plans/PLAN-MERGED.md).
 | 1 MVP editor and sidebar | S4 media services, S5 frame cache, S6 render v1, S7 transcript cut, S8 engine mode gate. Also the ACP client, the approval bridge, and the Edit page and sidebar | Not started |
 | 2 Agent quality | A 20-task eval set, draft branches and presets | Not started |
 | 3 Pro and reach | Keyframes, transitions, speed and masks | Not specified yet |
+
+## Edit page, still open (from PR #44, 2026-10-07), status after the 2026-10-08 consolidation
+
+PR #44 built a second, smaller hand timeline (`editor.py`, `/api/editor`, `ui/editor.js`) beside the stacked engine Edit page. The consolidation keeps one Edit page, `#/edit` = `ui/edit.js` on the engine, and folds #44 in:
+
+- Agent sidebar: on the engine Edit page (Hermes sidebar, Propose cards).
+- Desktop canvas and adjustable canvas: **done**. `set_canvas` op from #44 is public; the Edit page Item tab (nothing selected) has Phone 1080×1920, Desktop 1920×1080, Square 1080×1080 or a typed width and height. One entry, so Undo puts the old canvas back.
+- Transcript tab: on the engine Edit page.
+- Render the canvas to a file: S6 render from the Edit page.
+- `editor.py` and its `/api/editor` routes stay in the tree (tests pass) but the desk no longer loads `ui/editor.js`. Remove them in a later cleanup if nobody needs the separate store.
 
 Phase 0 ends when S3 merges. Every phase exit is a release, and each release needs the owner's yes (see section 4).
 
