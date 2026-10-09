@@ -43,6 +43,11 @@
       .tl-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:8px 0;font-size:13px}
       .tl-row span{color:var(--dim)} .tl-row b{font-weight:500;font-family:var(--mono);font-size:12px}
       .tl-keys{margin-top:14px;color:var(--dim);font:500 11px var(--mono);line-height:1.7}
+      .tl-words{padding:10px 16px;font-size:14px;line-height:1.9;color:var(--ink)}
+      .tl-words b{font-weight:500;color:var(--dim);font:500 12px var(--mono);margin-right:8px}
+      .tl-word{cursor:pointer;border-radius:3px;padding:1px 2px}
+      .tl-word:hover{background:rgba(255,200,61,.14)}
+      .tl-word.on{background:var(--amber);color:var(--amber-ink)}
       .tl-sheet{min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
@@ -65,6 +70,7 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
+  let tab = "clips", words = [];
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
 
   async function api(body) {
@@ -170,6 +176,9 @@
         </div>
         <div class="tl-sheet">
           <div class="tl-tools">
+            <button type="button" data-tab="clips" class="${tab === "clips" ? "on" : ""}">Clips</button>
+            <button type="button" data-tab="words" class="${tab === "words" ? "on" : ""}">Transcript</button>
+            <span style="flex:1"></span>
             <button type="button" data-act="lift">Lift</button>
             <button type="button" data-act="ripple" class="${ripple ? "on" : ""}">Ripple ${ripple ? "on" : "off"}</button>
             <button type="button" data-act="snap" class="${snapOn ? "on" : ""}">Snap ${snapOn ? "on" : "off"}</button>
@@ -178,13 +187,14 @@
             <button type="button" data-act="fit">Fit</button>
           </div>
           <div class="tl-scroll">
+            ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : `
             <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
               </div></div>`).join("")}
-            </div>
+            </div>`}
           </div>
         </div>
       </div>`;
@@ -196,6 +206,13 @@
       bindFilm(keep);
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+    root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
+    root.querySelectorAll("[data-word]").forEach((b) => b.addEventListener("click", () => {
+      stop();
+      play = Number(b.dataset.word) || 0;
+      head();
+      paint();
+    }));
     root.querySelectorAll("[data-canvas]").forEach((b) => b.addEventListener("click", () => {
       const map = { phone: [1080, 1920], desktop: [1920, 1080], square: [1080, 1080] };
       const pair = map[b.dataset.canvas];
@@ -475,9 +492,20 @@
     node.querySelectorAll("[data-film]").forEach((b) => b.addEventListener("click", () => { location.hash = "#/edit/" + encodeURIComponent(b.dataset.film); }));
   }
 
+  async function loadWords() {
+    try {
+      const res = await fetch("/api/editor/" + encodeURIComponent(pid) + "/transcript");
+      const data = await res.json().catch(() => ({}));
+      words = data.words || [];
+    } catch (e) {
+      words = [];
+    }
+  }
+
   async function open(node, id) {
     root = node;
     pid = id || "";
+    words = [];
     document.body.classList.add("editing");
     if (!pid) { await films(node); return; }
     node.innerHTML = `<p class="tl-status">Opening the film…</p>`;
@@ -488,6 +516,7 @@
       const first = find(sel);
       play = first ? first.at + Math.min(1, first.dur / 2) : 0;
       msg = data.project.summary || "";
+      await loadWords();
       paint();
       requestAnimationFrame(() => { if (root && doc) { fit(); paint(); } });
     } catch (e) {

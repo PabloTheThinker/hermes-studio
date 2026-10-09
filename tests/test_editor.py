@@ -258,3 +258,62 @@ def test_render_rejects_a_bad_canvas(home):
     plan["width"] = 0  # a canvas the op log would never have written, caught here anyway
     with pytest.raises(R.RenderError):
         R._build_graph(plan, None)
+
+
+def test_transcript_is_empty_before_any_words(home):
+    assert E.transcript("cut2") == [] if (E._dir("cut2") / "base.json").exists() else True
+    folder = E._dir("cut2")
+    folder.mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline("cut2")
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    assert E.transcript("cut2") == []
+
+
+def test_transcript_keeps_only_words_inside_the_cut(home):
+    folder = E._dir("cut3")
+    folder.mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline("cut3")
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    run = folder / "run"
+    (run / "work").mkdir(parents=True, exist_ok=True)
+    (run / "work" / "transcript.json").write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"text": "before", "start": 0.0, "end": 1.0},
+                    {"text": "inside", "start": 1.5, "end": 2.0},
+                    {"text": "after", "start": 9.0, "end": 10.0},
+                ]
+            }
+        )
+    )
+    E._copy_transcript(run, folder / "transcript.json", [{"start": 0.0, "end": 3.0}])
+    got = E.transcript("cut3")
+    assert [w["text"] for w in got] == ["before", "inside"]
+
+
+def test_transcript_stacks_words_across_clips(home):
+    folder = E._dir("cut4")
+    folder.mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline("cut4")
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    run = folder / "run"
+    (run / "work").mkdir(parents=True, exist_ok=True)
+    (run / "work" / "transcript.json").write_text(
+        json.dumps({"words": [{"text": "one", "start": 0.5, "end": 1.0}, {"text": "two", "start": 4.0, "end": 5.0}]})
+    )
+    E._copy_transcript(run, folder / "transcript.json", [{"start": 0.0, "end": 2.0}, {"start": 4.0, "end": 6.0}])
+    got = E.transcript("cut4")
+    # clip 1 keeps source 0-2s ("one" at 0.5); clip 2 is source 4-6s ("two" at 4.0 -> 0.0 in clip)
+    assert [w["text"] for w in got] == ["one", "two"]
+    assert got[0]["start"] == pytest.approx(0.5, abs=0.01)
+    assert got[1]["start"] == pytest.approx(2.0, abs=0.01)
+    assert got[1]["end"] == pytest.approx(3.0, abs=0.01)
+
+
+def test_transcript_refuses_a_project_that_is_not_there(home):
+    with pytest.raises(E.EditorError):
+        E.transcript("nope")

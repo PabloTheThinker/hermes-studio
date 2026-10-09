@@ -499,6 +499,73 @@ def project_media(pid: str, name: str) -> Path:
     return path
 
 
+def _copy_transcript(run: Path, dest: Path, placed: list[dict]) -> None:
+    """Carry the run's own words into the project, timed to the cut.
+
+    Each clip was cut from a window of the source, so a word only belongs on the
+    timeline if the source said it inside that window. Assuming every clip starts at
+    source zero would give every clip the same opening words.
+    """
+    src = run / "work" / "transcript.json"
+    if not src.is_file():
+        return
+    try:
+        data = json.loads(src.read_text())
+    except (OSError, ValueError):
+        return
+    words = [w for w in (data.get("words") or []) if isinstance(w, dict) and "start" in w and "end" in w]
+    if not words:
+        return
+    at = 0.0
+    out: list[dict] = []
+    for clip in placed:
+        start, end = float(clip["start"]), float(clip["end"])
+        for w in words:
+            s, e = float(w["start"]), float(w["end"])
+            if e <= start or s >= end:
+                continue
+            out.append(
+                {
+                    "text": str(w.get("text") or "").strip(),
+                    "start": round(at + max(0.0, s - start), 3),
+                    "end": round(at + min(end - start, e - start), 3),
+                }
+            )
+        at += end - start
+    out = [w for w in out if w["text"] and w["end"] > w["start"]]
+    if not out:
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps({"source": str(src), "words": out}, separators=(",", ":")))
+
+
+def transcript(pid: str) -> list[dict]:
+    """Words on the timeline, in order. Empty when the cut has no words to show."""
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    path = folder / "transcript.json"
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    words = []
+    for w in data.get("words") or []:
+        if not isinstance(w, dict):
+            continue
+        try:
+            s, e = float(w["start"]), float(w["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        text = " ".join(str(w.get("text") or "").split())
+        if text and e > s:
+            words.append({"start": round(s, 3), "end": round(e, 3), "text": text})
+    words.sort(key=lambda w: (w["start"], w["end"]))
+    return words
+
+
 def import_run(job_id: str) -> dict:
     """Copy a library run's clips into a project and open that cut. Does not read outside the library."""
     if not T.ID_RE.fullmatch(job_id or ""):
@@ -521,8 +588,9 @@ def import_run(job_id: str) -> dict:
     if not clips:
         raise EditorError("that run has no picture")
     titles = {str(c.get("file") or ""): str(c.get("title") or "") for c in (job.clips or [])}
+    by_file = {str(c.get("file") or ""): c for c in (job.clips or [])}
     (folder / "media").mkdir(parents=True, exist_ok=True)
-    placed = []
+    placed: list[dict] = []
     for i, src in enumerate(clips, 1):
         name = f"c{i:02d}.mp4"
         dest = folder / "media" / name
@@ -536,5 +604,18 @@ def import_run(job_id: str) -> dict:
         )
         if proc.returncode != 0:
             raise EditorError("could not read the film")
-        placed.append((name, float(proc.stdout.strip() or "0"), titles.get(src.name) or src.stem))
-    return write_import(job_id, job.title or job_id, placed)
+        seconds = float(proc.stdout.strip() or "0")
+        # The run knows where in the source this clip came from; that window is what
+        # makes the transcript land under the right picture.
+        meta = by_file.get(src.name) or {}
+        try:
+            start, end = float(meta.get("start") or 0.0), float(meta.get("end") or 0.0)
+        except (TypeError, ValueError):
+            start, end = 0.0, 0.0
+        if end <= start:
+            start, end = 0.0, seconds
+        placed.append({"name": name, "seconds": seconds, "title": titles.get(src.name) or src.stem, "start": start, "end": end})
+    out = write_import(job_id, job.title or job_id, [(c["name"], c["seconds"], c["title"]) for c in placed])
+    _copy_transcript(run, folder / "transcript.json", placed)
+    out["words"] = len(transcript(job_id))
+    return out

@@ -703,6 +703,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "transcript":
+            try:
+                words = editor.transcript(parts[2])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "words": words})
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "render":
             from hermes_studio import editor as _e
 
