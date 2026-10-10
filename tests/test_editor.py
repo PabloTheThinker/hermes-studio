@@ -1464,3 +1464,90 @@ def test_desk_group_ops(desk):
     assert st == 200 and "a1" not in [i["id"] for t in res["project"]["tracks"] for i in t["items"]]
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "move_items", "ids": [], "by": 1})
     assert st == 400 and "non-empty" in res["error"]
+
+
+# ---------------------------------------------------------------- slip
+
+
+def _raw(pid, iid):
+    return next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == iid)
+
+
+def test_slip_moves_the_source_window_not_the_clip(home):
+    """_mixer_cut: a1 plays media 0-2s at 0-2s on A1. Slipping +1 s plays media 1-3 s in the
+    same place: the clip's at and length don't change, one undo step brings it back."""
+    pid = _mixer_cut("slip")
+    s = T.TICK_RATE
+    before = _spans(pid)
+    E.slip(pid, "a1", 1.0)
+    it = _raw(pid, "a1")
+    assert it["src"] == [1 * s, 3 * s]
+    assert _spans(pid) == before  # nothing moved on the timeline, a1 included
+    assert _log_versions(pid) == 1
+    E.undo(pid)
+    assert _raw(pid, "a1")["src"] == [0, 2 * s]
+
+
+def test_slip_clamps_to_the_media_and_refuses_a_slip_that_cannot_move(home):
+    pid = _mixer_cut("slip2")
+    s = T.TICK_RATE
+    E.slip(pid, "a1", 99.0)  # far past the end: stops with the window at the media's end
+    assert _raw(pid, "a1")["src"] == [2 * s, 4 * s]
+    with pytest.raises(E.EditorError, match="end of its media"):
+        E.slip(pid, "a1", 1.0)  # already at the end
+    E.slip(pid, "a1", -99.0)  # and back to the start
+    assert _raw(pid, "a1")["src"] == [0, 2 * s]
+    with pytest.raises(E.EditorError, match="end of its media"):
+        E.slip(pid, "a1", -0.5)
+
+
+def test_slip_scales_by_the_clip_speed(home):
+    """At 2x a clip's 1 s of timeline holds 2 s of media, so a 0.5 s slip moves the source
+    window by 1 s. The clip still stays put."""
+    pid = _mixer_cut("slip3")
+    s = T.TICK_RATE
+    E.apply(pid, [{"op": "set_props", "id": "c1", "props": {"speed": [2, 1]}}], "2x")
+    src0 = _raw(pid, "c1")["src"]
+    # c1 now plays 4 s of media in 2 s; trim it to 2 s of media so it has room to slip
+    E.apply(pid, [{"op": "trim_clip", "id": "c1", "src_out": src0[0] + 2 * s, "ripple": True}], "trim")
+    at0 = _raw(pid, "c1")["at"]
+    E.slip(pid, "c1", 0.5)
+    it = _raw(pid, "c1")
+    assert it["src"] == [1 * s, 3 * s] and it["at"] == at0
+
+
+def test_slip_refuses_text_and_unknown_items(home):
+    pid = _mixer_cut("slip4")
+    with pytest.raises(E.EditorError):
+        E.slip(pid, "nope", 1.0)
+
+
+def test_desk_slip(desk):
+    pid = _mixer_cut("dslip")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "slip", "item": "a1", "by": 0.5})
+    assert st == 200
+    row = next(i for t in res["project"]["tracks"] for i in t["items"] if i["id"] == "a1")
+    assert row["at"] == 0 and abs(row["src_in"] - 0.5) < 1e-9 and abs(row["src_out"] - 2.5) < 1e-9
+    assert "Slip a1" in res["project"]["summary"]
+
+
+def test_nudges_snap_to_whole_frames_so_a_nudge_and_its_opposite_cancel(home):
+    """The page sends seconds rounded to 3 decimals; 1/30 s as 0.033333 is not a whole frame of
+    ticks. The engine snaps relative moves to the frame grid, so +1 frame then -1 frame lands
+    exactly where it started (it used to drift a hair and collide with the neighbour)."""
+    pid = _mixer_cut("nudge")
+    s = T.TICK_RATE
+    frame = s // 30
+    E.move_items(pid, ["m2"], 0.033333)
+    assert _raw(pid, "m2")["at"] == 2 * s + frame
+    E.move_items(pid, ["m2"], -0.033333)
+    assert _raw(pid, "m2")["at"] == 2 * s
+    with pytest.raises(E.EditorError, match="less than a frame"):
+        E.move_items(pid, ["m2"], 0.001)
+
+
+def test_slip_snaps_to_whole_frames(home):
+    pid = _mixer_cut("slipf")
+    s = T.TICK_RATE
+    E.slip(pid, "a1", 0.033333)
+    assert _raw(pid, "a1")["src"] == [s // 30, 2 * s + s // 30]

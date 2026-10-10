@@ -11,6 +11,7 @@ import os
 import secrets
 import shutil
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 from hermes_studio import oplog as O
@@ -382,6 +383,32 @@ def set_edge(pid: str, item_id: str, edge: str, at_seconds: float, *, ripple: bo
     raise EditorError("edge must be start or end")
 
 
+def slip(pid: str, item_id: str, by_seconds: float) -> dict:
+    """Slip a clip: slide its source window under it, as Resolve's and Final Cut's slip does.
+
+    The clip keeps its place and its length on the timeline; only which part of the media
+    plays changes. ``by_seconds`` is timeline time (positive shows later media), scaled by the
+    clip's speed into source time and clamped to the media, so a slip past either end stops
+    at the end instead of failing. One trim_clip op with ripple (which moves nothing when the
+    length is unchanged), so it is one undo step and the validator checks the result.
+    """
+    doc, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can be slipped")
+    i0, o0 = it["src"]
+    sp = Fraction(*(it.get("props", {}).get("speed") or [1, 1]))
+    d = int(Fraction(_frames(doc, by_seconds)) * sp)  # whole timeline frames, in source ticks
+    mdur = (doc.get("media", {}).get(it["media"]) or {}).get("dur")
+    lo = -i0
+    hi = (mdur - o0) if isinstance(mdur, int) else d
+    d = max(lo, min(hi, d))
+    if d == 0:
+        raise EditorError("the clip is already at the end of its media")
+    shown = float(T.ticks_to_seconds(d) / sp)  # back to timeline seconds for the history line
+    return apply(pid, [{"op": "trim_clip", "id": item_id, "src_in": i0 + d, "src_out": o0 + d, "ripple": True}],
+                 f"Slip {item_id} {shown:+.2f}s")
+
+
 def move(pid: str, item_id: str, at_seconds: float) -> dict:
     at = max(0, T.seconds_to_ticks(at_seconds))
     return apply(pid, [{"op": "move_clip", "id": item_id, "at": at}], f"Move {item_id}")
@@ -676,11 +703,26 @@ def _known_ids(pid: str, ids: list, *, what: str = "item") -> list[str]:
     return out
 
 
+def _frames(doc: dict, seconds: float) -> int:
+    """``seconds`` as ticks, rounded to the nearest whole frame of the project's rate.
+
+    The page works in seconds rounded to 3 decimals, so frame maths done there drifts
+    (20.033 - 1/30 lands a hair before 20 and collides with the clip that ends there).
+    Relative edits (a nudge, a group move, a slip) snap here, in exact ticks, instead.
+    """
+    num, den = (doc.get("fps") or [30, 1])
+    frame = Fraction(T.TICK_RATE * den, num)  # ticks per frame; whole at the supported rates
+    return int(round(Fraction(seconds) * T.TICK_RATE / frame) * frame)
+
+
 def move_items(pid: str, ids: list[str], by_seconds: float) -> dict:
     """Move several items together by one offset (a group drag): one undo step for the group."""
     out = _known_ids(pid, ids)
     n = len(out)
-    return apply(pid, [{"op": "move_items", "ids": out, "by": T.seconds_to_ticks(by_seconds)}],
+    by = _frames(_log(_dir(pid)).doc, by_seconds)
+    if by == 0:
+        raise EditorError("that move is less than a frame")
+    return apply(pid, [{"op": "move_items", "ids": out, "by": by}],
                  f"Move {n} item{'s' if n > 1 else ''} {by_seconds:+.2f}s")
 
 
