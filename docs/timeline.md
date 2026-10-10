@@ -123,7 +123,11 @@ item whose own id is malformed or duplicated anywhere in the doc leaves `id` off
    transition sorts at the start of its overlap); markers sorted by `(at, id)`. Item and marker list order is not meaningful; track
    order is (it is fixed by role and checked).
 3. Drop `version` and `hash`. Everything else, including `schema_version`, is hashed (any other
-   `schema_version` value fails validation first).
+   `schema_version` value fails validation first). In clip `props`, the four keys hs.timeline/1
+   shipped with (`volume`, `speed`, `crop`, `look`) are always hashed with defaults filled in;
+   any prop added since (`transform`, `keyframes`, and anything later) is hashed **only when it
+   is set** (not `null`). Adding an optional prop must never change the hash of a document that
+   doesn't use it, or every op log written before it stops replaying. A golden-hash test pins this.
 4. `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, UTF-8. The doc has no
    floats, so no number formatting choices remain. Strings are hashed as given (they must already
    be NFC).

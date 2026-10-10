@@ -819,3 +819,32 @@ def test_three_copies_of_an_id_give_two_duplicate_id_errors():
     dup = [p for p in V(d) if p["rule"] == "duplicate_id"]
     assert [p["path"] for p in dup] == ["/tracks/3/items/1", "/tracks/4/items/2"]
     assert all("id" not in p and "/tracks/2/items/1" in p["message"] for p in dup)
+
+
+def _golden() -> dict:
+    d = T.new_timeline("golden", size=(1920, 1080))
+    d["media"] = {"m1": {"path": "media/a.mp4", "dur": 10 * S, "fps": [30, 1]}}
+    v1 = next(t for t in d["tracks"] if t["id"] == "V1")
+    v1["items"] = [
+        {"id": "c1", "type": "clip", "media": "m1", "src": [0, 4 * S], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "c2", "type": "clip", "media": "m1", "src": [5 * S, 8 * S], "at": 4 * S, "fade_in": 0, "fade_out": 0,
+         "props": {"look": "warm"}},
+    ]
+    return d
+
+
+def test_hash_of_a_v1_doc_never_moves():
+    """Pinned to the hash the pre-transform code (19fd6c2) gave this doc. Adding an optional prop
+    once re-hashed every saved doc, so every op log written before it refused to replay."""
+    assert T.stamp_hash(_golden())[1] == "sha256:011e4fbf751c5d57ed64a1d3608113ba7d1f372df8b474de0154b81f05fa1ef2"
+
+
+def test_an_unset_new_prop_does_not_change_the_hash_but_a_set_one_does():
+    d = _golden()
+    h = T.stamp_hash(d)[1]
+    unset = copy.deepcopy(d)
+    unset["tracks"][1]["items"][0]["props"] = {"transform": None, "keyframes": None}
+    assert T.stamp_hash(unset)[1] == h
+    tf = copy.deepcopy(d)
+    tf["tracks"][1]["items"][0]["props"] = {"transform": {"x": [0, 1], "y": [0, 1], "scale": [3, 2], "rotate": [0, 1]}}
+    assert T.stamp_hash(tf)[1] != h

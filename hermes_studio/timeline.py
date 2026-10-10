@@ -63,6 +63,9 @@ CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
 DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None}
+# The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
+# added since is hashed only when set, so a new optional prop never changes an old doc's hash.
+HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
 VOLUME_MAX = Fraction(4)
 SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
 # Transform ranges: position is a fraction of the canvas (so it can move a frame's width),
@@ -706,6 +709,14 @@ def normalize(doc: dict) -> dict:
 
 def _canonical_bytes(doc: dict) -> bytes:
     body = {k: v for k, v in normalize(doc).items() if k not in NOT_HASHED}
+    # Props added after hs.timeline/1 was frozen only count toward the hash when they are set.
+    # Otherwise adding an optional prop (transform, keyframes, ...) re-hashes every saved doc and
+    # every op log written before it stops replaying -- which is exactly what happened when
+    # transform landed.
+    for tr in body["tracks"]:
+        for it in tr["items"]:
+            if it["type"] == "clip":
+                it["props"] = {k: v for k, v in it["props"].items() if k in HASHED_V1_PROPS or v is not None}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
