@@ -352,10 +352,19 @@
     stop();
     const kf = e.target.closest("[data-kfidx]");
     if (kf) {
-      // A keyframe diamond: select it (no drag -- editing its values is the inspector's job).
-      sel = kf.closest("[data-id]").dataset.id;
+      // A keyframe diamond: select it and start a drag that moves its time along the clip.
+      // The scale/value is edited in the inspector; dragging scrubs *when* it happens.
+      const clipEl = kf.closest("[data-id]");
+      sel = clipEl.dataset.id;
       selKf = Number(kf.dataset.kfidx);
-      paint();
+      const item = find(sel);
+      const kfAt = item && item.keyframes && item.keyframes[selKf] ? item.keyframes[selKf].at : 0;
+      drag = { kind: "kf", id: sel, kfidx: selKf, at0: kfAt, x0: e.clientX, moved: false };
+      // Highlight the selected diamond in place -- a full paint() here would rebuild the
+      // DOM and detach the pointer listeners mid-drag, so the move/up would never land.
+      root.querySelectorAll(".tl-kf.on").forEach((n) => n.classList.remove("on"));
+      kf.classList.add("on");
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety; the scroll listener still sees the moves */ }
       return;
     }
     const edge = e.target.closest("[data-edge]");
@@ -383,6 +392,24 @@
       head();
       return;
     }
+    if (drag.kind === "kf") {
+      // Move the selected keyframe's time along the clip, clamped between its neighbours so
+      // the track stays strictly increasing (dragging onto a neighbour would be refused by
+      // the op, so prevent it here). Live-position the diamond; commit on release.
+      const it = find(drag.id);
+      if (!it || !it.keyframes) return;
+      const kfs = it.keyframes;
+      const i = drag.kfidx;
+      const lo = i > 0 ? kfs[i - 1].at : 0;
+      const hi = i < kfs.length - 1 ? kfs[i + 1].at : (it.dur || 0);
+      const eps = 0.05;
+      const t = snap(Math.max(lo + eps, Math.min(hi - eps, drag.at0 + (e.clientX - drag.x0) / pps)));
+      const el = root.querySelector(`[data-id="${drag.id}"] .tl-kf.on`);
+      if (el) el.style.left = t * pps + "px";
+      drag.atNow = t;
+      drag.moved = Math.abs(e.clientX - drag.x0) > 3;
+      return;
+    }
     const it = find(drag.id);
     const el = root.querySelector(`[data-id="${drag.id}"]`);
     if (!it || !el) return;
@@ -407,6 +434,16 @@
     const d = drag;
     drag = null;
     if (!d || d.kind === "seek" || d.atNow == null) return;
+    if (d.kind === "kf") {
+      if (!d.moved) { paint(); return; }
+      // Re-send the keyframe track with the dragged key's time updated; the op re-validates
+      // increasing-time order, so a drag that would collide with a neighbour is refused.
+      const it = find(d.id);
+      if (!it || !it.keyframes) { paint(); return; }
+      const kfs = it.keyframes.map((k, i) => (i === d.kfidx ? { ...k, at: d.atNow } : { ...k }));
+      await commit({ op: "keyframes", id: d.id, keyframes: kfs });
+      return;
+    }
     if (d.kind === "move" && !d.moved) { paint(); return; }
     const body = d.kind === "trim"
       ? { op: "edge", item: d.id, edge: d.edge, at: d.atNow, ripple }
