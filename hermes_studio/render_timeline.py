@@ -144,6 +144,22 @@ def _look_chain(look: str | None) -> str:
     return _LOOKS.get(look, "")
 
 
+def _volume(it: dict) -> float:
+    """The clip's playback volume as a float. props.volume is a reduced [num, den] pair
+    (0 to 4 per the schema); a missing or invalid value means full volume (1.0)."""
+    raw = (it.get("props") or {}).get("volume")
+    try:
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            num, den = float(raw[0]), float(raw[1])
+            if den != 0 and num >= 0:
+                return min(num / den, 4.0)
+        if isinstance(raw, (int, float)) and raw >= 0:
+            return min(float(raw), 4.0)
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return 1.0
+
+
 def _ass_escape_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -248,6 +264,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                     "at": it["at"],
                     "fade_in": it.get("fade_in") or 0,
                     "fade_out": it.get("fade_out") or 0,
+                    "volume": _volume(it),
                 }
             )
             end_tick = max(end_tick, it["at"] + (o1 - i0))
@@ -478,7 +495,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
 
     # Sound: each item is placed at its own time, then padded to the full length so
     # amix sees streams of equal size and a gap stays a gap.
-    a_ready: list[str] = []
+    a_ready: list[tuple[str, str, float]] = []  # (label, role, clip volume)
     for n, row in enumerate(plan["audio"]):
         idx = row["idx"]
         i0, o1 = row["src"]
@@ -491,28 +508,41 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             fade += f",afade=t=in:st=0:d={_t2s(fi, rate):.3f}"
         if fo:
             fade += f",afade=t=out:st={max(0.0, dur - _t2s(fo, rate)):.3f}:d={_t2s(fo, rate):.3f}"
+        # The clip's own volume is an absolute gain applied per stream, so it survives the
+        # mix's role-weight normalisation (folding it into the weight would cancel out for a
+        # single-track mix, and a relative share is the wrong model for a level anyway).
+        vol = float(row.get("volume") or 1.0)
+        vol_filter = f",volume={vol:.4f}" if abs(vol - 1.0) > 1e-6 else ""
         lab = f"au{n}"
         k = cut_a.get(idx, 0)
         cut_a[idx] = k + 1
         asrc = f"sa{idx}_{k}" if a_uses.get(idx, 0) > 1 else f"{idx}:a"
         fc.append(
             f"[{asrc}]atrim=start={s_in:.3f}:end={s_in + dur:.3f},asetpts=PTS-STARTPTS"
-            f"{fade},aresample=48000,adelay=delays={delay_ms}:all=1,"
+            f"{fade}{vol_filter},aresample=48000,adelay=delays={delay_ms}:all=1,"
             f"apad=whole_dur={total:.3f}[{lab}]"
         )
-        a_ready.append((lab, row["role"]))
+        a_ready.append((lab, row["role"], 1.0))
 
     if not a_ready:
         fc.append(f"anullsrc=r=48000:cl=stereo:d={total:.3f}[outa]")
     else:
-        weights = [MIX.get(role, 1.0) for _lab, role in a_ready]
+        # Role weight sets the balance between voice and music; a clip's own volume was
+        # already applied as an absolute gain per stream above.
+        weights = [MIX.get(role, 1.0) for _lab, role, _vol in a_ready]
         scale = 1.0 / max(1e-6, sum(weights))
         wstr = " ".join(f"{wgt * scale:.4f}" for wgt in weights)
+        # loudnorm is a broadcast auto-leveler that pulls the whole mix to -14 LUFS; it would
+        # erase any level the user set by hand. So only auto-level when every clip is at its
+        # default volume -- otherwise the authored mix is respected, with a limiter to keep
+        # peaks safe.
+        hand_set = any(abs(float(r.get("volume") or 1.0) - 1.0) > 1e-6 for r in plan["audio"])
+        tail = "alimiter=limit=0.95,aresample=48000" if hand_set else "alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000"
         fc.append(
-            "".join(f"[{lab}]" for lab, _role in a_ready)
+            "".join(f"[{lab}]" for lab, _role, _vol in a_ready)
             + f"amix=inputs={len(a_ready)}:duration=first:normalize=0:weights='{wstr}',"
-            "alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,"
-            f"atrim=duration={total:.3f},asetpts=PTS-STARTPTS[outa]"
+            + tail
+            + f",atrim=duration={total:.3f},asetpts=PTS-STARTPTS[outa]"
         )
 
     vout = "outv"

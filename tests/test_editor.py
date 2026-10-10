@@ -637,3 +637,49 @@ def test_render_fades_video_to_and_from_black(home):
     assert luma(2.0) > 220          # full white in the middle
     assert luma(0.1) < 80           # near black at the start (fading in)
     assert luma(3.9) < 80           # near black at the end (fading out)
+
+
+def test_render_honors_audio_volume(home):
+    """props.volume sets a clip's audio level. Because loudnorm auto-levels to a target,
+    it must stand aside once any volume is hand-set, or every render lands at the same level."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    def make(vol_pair, pid):
+        folder = E._dir(pid)
+        (folder / "media").mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:d=2:r=30",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+             str(folder / "media" / "v.mp4")],
+            check=True, capture_output=True,
+        )
+        s = T.TICK_RATE
+        d = T.new_timeline(pid)
+        by = {t["id"]: t for t in d["tracks"]}
+        d["media"] = {"m1": {"path": "media/v.mp4", "dur": 2 * s, "fps": [30, 1]}}
+        by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 2 * s], "at": 0, "fade_in": 0, "fade_out": 0}]
+        props = {} if vol_pair is None else {"volume": vol_pair}
+        by["A2"]["items"] = [{"id": "a1", "type": "clip", "media": "m1", "src": [0, 2 * s], "at": 0, "fade_in": 0, "fade_out": 0, "props": props}]
+        d, _ = T.stamp_hash(d)
+        (folder / "base.json").write_text(json.dumps(d))
+        from hermes_studio import oplog as _O
+
+        log = _O.Oplog(d, path=folder / "oplog.jsonl")
+        E._save_current(folder, log.doc)
+
+    def mean_db(out):
+        r = subprocess.run(["ffmpeg", "-i", out["path"], "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True)
+        for line in r.stderr.split("\n"):
+            if "mean_volume" in line:
+                return float(line.split(":")[1].strip().replace(" dB", ""))
+        raise AssertionError("no volume reported")
+
+    make([1, 1], "vfull")
+    make([1, 2], "vhalf")
+    full, half = mean_db(R.render_project("vfull")), mean_db(R.render_project("vhalf"))
+    # A halved volume must actually come out quieter (roughly -6 dB), which only holds if
+    # loudnorm stood aside for the hand-set clip.
+    assert half < full - 3.0
