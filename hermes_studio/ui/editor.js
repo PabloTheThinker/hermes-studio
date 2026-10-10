@@ -72,6 +72,19 @@
       .tl-mk.out{border-left:0;margin-left:-7px}
       .tl-rngv{position:absolute;top:0;bottom:0;background:rgba(255,200,61,.05);border-left:1px dashed rgba(255,200,61,.55);border-right:1px dashed rgba(255,200,61,.55);pointer-events:none;z-index:1}
       .tl-rngpill{background:rgba(255,200,61,.16);color:var(--amber)}
+      --mk-cyan:#4cc9f0;--mk-green:#57d9a3;--mk-yellow:#ffc83d;--mk-orange:#ff9f45;--mk-red:#e5484d;--mk-pink:#f4a4c0;--mk-purple:#b78cff
+      .tl-mlayer{position:absolute;left:var(--lab,164px);top:22px;bottom:0;right:0;pointer-events:none;z-index:6}
+      .tl-mk{position:absolute;top:0;bottom:0;width:0;--mc:var(--blue,#4cc9f0)}
+      .tl-mk b{position:absolute;top:-21px;left:-7px;width:14px;height:14px;line-height:13px;text-align:center;border-radius:7px;background:var(--mc);color:#000;font:600 9px var(--mono);pointer-events:auto;cursor:pointer;z-index:1}
+      .tl-mk:hover:after{opacity:1}
+      .tl-mk:after{content:"";position:absolute;top:15px;bottom:0;left:0;width:7px;background:var(--mc);opacity:.35;pointer-events:auto;cursor:pointer}
+      .tl-mk:hover b,.tl-mk.at b{outline:2px solid rgba(255,255,255,.6);outline-offset:-1px}
+      .tl-mk em{position:absolute;top:1px;left:-3px;width:7px;height:7px;background:var(--mc);transform:rotate(45deg);opacity:0;transition:opacity .12s}
+      .tl-mk:hover em{opacity:1}
+      .tl-mk.at b{box-shadow:0 0 0 2px rgba(255,255,255,.55)}
+      .tl-mkstrip{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+      .tl-mksw{width:11px;height:11px;border-radius:3px;border:1px solid rgba(255,255,255,.25);padding:0;cursor:pointer}
+      .tl-mksw.on{outline:2px solid var(--ink);outline-offset:1px}
       .tl-stack{position:relative}
       .tl-trk{display:grid;grid-template-columns:var(--lab,164px) 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
       .tl-rz{position:absolute;left:0;bottom:-3px;width:var(--lab,164px);height:6px;cursor:ns-resize;z-index:4}
@@ -133,6 +146,9 @@
   // In/Out marks (I / O), kept per project in the browser: marking a range isn't an edit, so it
   // stays out of the op log, like Resolve's timeline marks. stopAt ends a "/" range play.
   let inOut = { in: null, out: null }, stopAt = null;
+  // The marker being renamed in the inspector (Shift+M), or null.
+  let mkSel = null, mkName = "";
+  let lastMk = { id: "", t: 0 };
   function loadMarks(id) {
     try {
       const m = JSON.parse(localStorage.getItem("tl-marks:" + id) || "{}");
@@ -198,6 +214,12 @@
   const DB_FLOOR = -48; // below this a fader reads as off (gain 0)
   function toDb(g) { return g > 0 ? 20 * Math.log10(g) : -Infinity; }
   function fromDb(db) { return db <= DB_FLOOR ? 0 : Math.min(4, Math.pow(10, db / 20)); }
+  function mkSection(mk) {
+    // The marker under the playhead (Resolve's marker list, inline): rename it, colour it,
+    // delete it. Empty when there's none.
+    if (!mk) return "";
+    return `<div class="tl-row" style="background:rgba(76,201,240,.07);border-radius:4px;padding:6px"><span class="tl-mkstrip"><input data-mkname type="text" maxlength="200" value="${esc(mk.label)}" placeholder="Marker name" style="width:120px" title="Marker name"> <button type="button" data-act="mk-apply" title="Rename">Save</button> <button type="button" data-act="mk-del" title="Delete marker">Del</button> <span class="tl-mksw${(mk.color || "blue") === "blue" ? " on" : ""}" data-act="mk-color" data-color="blue" title="Blue (default)" style="background:var(--mk-cyan)"></span>${["cyan", "green", "yellow", "orange", "red", "pink", "purple"].map((c) => `<span class="tl-mksw${mk.color === c ? " on" : ""}" data-act="mk-color" data-color="${c}" title="${c}" style="background:var(--mk-${c})"></span>`).join("")}</span><b style="margin-left:auto">${esc(tc(mk.at))}</b></div>`;
+  }
   function fmtDb(g) {
     const db = toDb(g == null ? 1 : g);
     if (!Number.isFinite(db)) return "−∞";
@@ -324,6 +346,37 @@
     const nx = clips[idx + 1];
     return Math.abs(nx.at - (it.at + it.dur)) < 0.05 ? nx : null;
   }
+  function mkEdit() { return mkSel; }
+  function mkHere() {
+    // The marker at the playhead (within half a frame, so audio-clock drift doesn't miss it),
+    // else the selected one, else null: what the inspector edits.
+    const mks = doc.markers || [];
+    const tol = 0.5 / fpsOf();
+    return mks.find((m) => Math.abs(m.at - play) < tol) || (mkSel ? mks.find((m) => m.id === mkSel) : null) || null;
+  }
+  function editPoints() {
+    // Every point you can jump to: clip edges, In/Out, markers. Shared by arrow-key jumping and
+    // by trimming, so they always agree.
+    const out = [];
+    for (const tr of doc.tracks) for (const it of tr.items) { out.push(it.at); if (it.dur) out.push(it.at + it.dur); }
+    if (inOut.in != null) out.push(inOut.in);
+    if (inOut.out != null) out.push(inOut.out);
+    for (const m of doc.markers || []) out.push(m.at);
+    return [...new Set(out.map((x) => Math.round(x * 1e6) / 1e6))]
+      .filter((x) => x >= 0 && x <= doc.duration + 1e-6)
+      .sort((a, b) => a - b);
+  }
+  function nearestEdit(t, fwd) {
+    const pts = editPoints();
+    const i = pts.findIndex((x) => x > t + 1e-6);
+    if (fwd) return i < 0 ? null : pts[i];
+    // Backward. At the end (nothing is > t) step off the last point; otherwise, if the
+    // playhead sits exactly on a point, step to the one before it; else back to the nearest
+    // point below t (pts[i-1]).
+    if (i < 0) return pts.length > 1 ? pts[pts.length - 2] : null;
+    const here = i > 0 && Math.abs(pts[i - 1] - t) < 1e-6;
+    return here && i > 1 ? pts[i - 2] : pts[i - 1];
+  }
   function marks() {
     const out = [0, doc.duration];
     for (const tr of doc.tracks) for (const it of tr.items) out.push(it.at, it.at + it.dur);
@@ -369,6 +422,7 @@
       const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
       ticks.push(major ? `<i style="left:${t * pps}px">${esc(lab(t))}</i>` : `<b style="left:${t * pps}px"></b>`);
     }
+    const mk = (d.markers || []).slice().sort((a, b) => a.at - b.at);
     const it = find(sel);
     const rg = rangeOf();
     const nextNeighbor = it ? nextClip(it) : null;
@@ -412,6 +466,7 @@
               <input data-ch type="number" min="1" max="16384" value="${ch}" aria-label="Canvas height">
               <button type="button" data-act="canvas">Set</button>
             </div>
+            ${mkSection(mkHere())}
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
@@ -445,6 +500,7 @@
             <div class="tl-ruler" style="width:${width - LAB}px">${rg ? `<span class="tl-rng" style="left:${rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></span>` : ""}${ticks.join("")}${inOut.in != null && rg ? `<span class="tl-mk in" style="left:${rg[0] * pps}px" title="In ${esc(tc(rg[0]))}"></span>` : ""}${inOut.out != null && rg ? `<span class="tl-mk out" style="left:${rg[1] * pps}px" title="Out ${esc(tc(rg[1]))}"></span>` : ""}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
+              <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
@@ -461,7 +517,7 @@
       if (img) img.hidden = true;
       bindFilm(keep);
     }
-    root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+    root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
     // Volume is a live slider: update the readout as it drags, and commit on release.
     const vol = root.querySelector("[data-vol]");
     if (vol) {
@@ -628,6 +684,32 @@
       return;
     }
     stop();
+    const mkEl = e.target.closest("[data-mk]");
+    if (mkEl) {
+      // A click goes to the marker; a second click within 400 ms opens its name in the
+      // inspector. Detected here, not with a dblclick listener: pointer capture retargets
+      // click/dblclick to the scroll box (same reason as the resize handle).
+      // A marker only owns its own badge (b) and line (:after); everywhere else the layer is
+      // pointer-transparent, so a click on the lane behind it still seeks.
+      e.stopPropagation();
+      const id = mkEl.dataset.mk;
+      const m = (doc.markers || []).find((x) => x.id === id);
+      const now = performance.now();
+      const again = lastMk.id === id && now - lastMk.t < 400;
+      lastMk = again ? { id: "", t: 0 } : { id, t: now };
+      sel = null;
+      mkSel = id; // a click always selects the marker; the rename box follows
+      if (m) { play = m.at; head(); }
+      // Selecting a marker changes what the inspector shows (its rename box), so repaint it.
+      // head() only moves the playhead; the inspector rows come from paint().
+      paint();
+      // A second click within 400 ms opens the name box (as Resolve's double-click renames).
+      if (again) {
+        const inp = root.querySelector("[data-mkname]");
+        if (inp) { inp.focus(); inp.select(); }
+      }
+      return;
+    }
     const gkEl = e.target.closest("[data-gk]");
     const glEl = gkEl ? null : e.target.closest("[data-gline]");
     if (gkEl || glEl) {
@@ -1141,7 +1223,7 @@
     raf = requestAnimationFrame(loop);
   }
 
-  async function act(name) {
+  async function act(name, el) {
     if (name === "play") {
       if (playing) { stop(); paint(); return; }
       transport(1);
@@ -1300,6 +1382,20 @@
       return;
     }
     stop();
+    if (name === "mk-color") {
+      // The clicked element IS the swatch (it carries data-color).
+      if (!mkSel || !el || !el.dataset.color) return;
+      await commit({ op: "marker_set", id: mkSel, color: el.dataset.color });
+      return;
+    }
+    if (name === "mk-del") { if (mkSel) await commit({ op: "marker_del", id: mkSel }); return; }
+    if (name === "mk-apply") {
+      const row = el && el.closest(".tl-row");
+      const box = row && row.querySelector("[data-mkname]");
+      if (!mkSel || !box) return;
+      await commit({ op: "marker_set", id: mkSel, label: box.value });
+      return;
+    }
     if (name === "undo" || name === "redo" || name === "reset") { await commit({ op: name === "reset" ? "reset" : name }); return; }
     const target = name === "split" ? under() : find(sel);
     if (!target) { msg = name === "split" ? "Move the playhead inside a clip." : "Select a clip first."; paint(); return; }
@@ -1343,6 +1439,40 @@
       play = rg[0];
       transport(1);
       stopAt = rg[1];
+      return;
+    }
+    // Markers (Resolve: M drops one, Shift+M renames the last) and jumping.
+    const mks = (doc.markers || []).slice().sort((a, b) => a.at - b.at);
+    if (k === "m") {
+      e.preventDefault();
+      if (e.shiftKey) {
+        const near = mks.filter((m) => Math.abs(m.at - play) < 0.001)[0];
+        if (!near) { msg = "No marker at the playhead to name."; paint(); return; }
+        mkEdit = near.id; mkName = near.label; sel = null; paint();
+        const inp = root.querySelector("[data-mkname]");
+        if (inp) { inp.focus(); inp.select(); }
+        return;
+      }
+      // M at a marker deletes it (Resolve), otherwise drops one named "Marker N".
+      const here = mks.findIndex((m) => Math.abs(m.at - play) < 1 / fpsOf() / 2);
+      if (here >= 0) { commit({ op: "marker_del", id: mks[here].id }); return; }
+      const n = mks.filter((m) => /^Marker \d+$/.test(m.label)).length + 1;
+      commit({ op: "marker", at: Math.round(play * 1e6) / 1e6, label: `Marker ${n}` });
+      return;
+    }
+    if (k === "arrowup" || k === "arrowdown") {
+      // Shift+Up/Down: the previous or next marker. Plain: the previous or next edit point
+      // (a clip edge, an In/Out mark or a marker), which is Resolve's Up/Down.
+      if (e.altKey) return;
+      e.preventDefault();
+      const pts = editPoints();
+      const fwd = k === "arrowdown";
+      const near = (t) => pts.filter((x) => (fwd ? x > t + 1e-6 : x < t - 1e-6)).sort((a, b) => (fwd ? a - b : b - a))[0];
+      const to = e.shiftKey ? near(play) : nearestEdit(play, fwd);
+      if (to == null) return;
+      play = Math.max(0, Math.min(doc.duration, to));
+      if (playing) { stop(); }
+      head();
       return;
     }
     if (k === "j" || k === "l") {
@@ -1438,7 +1568,7 @@
   window.HSEdit = {
     open, leave,
     // Read-only view of the preview mixer, for checks and support.
-    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, marks: { ...inOut }, stopAt, levels: mix.levels(), waiting: mix.waiting() } : null),
+    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, marks: { ...inOut }, stopAt, mkSel, levels: mix.levels(), waiting: mix.waiting() } : null),
     // The live audio context, so a check can suspend it to prove the stalled-clock fallback.
     mixContext: () => (mix ? mix.context : null),
   };
