@@ -196,6 +196,7 @@ def view(doc: dict) -> dict:
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
                 row["file"] = Path(str(media.get("path") or "")).name
+                row["media"] = it.get("media") or None
             items.append(row)
         tracks.append({"id": tr["id"], "role": tr["role"], "items": items})
     return {
@@ -754,6 +755,64 @@ def list_films() -> list[dict]:
         if not clips:
             continue
         out.append({"id": job.id, "title": job.title or job.id, "clips": len(clips)})
+    return out
+
+
+WAVE_RATE = 50  # peaks per second of source audio
+_WAVE_HZ = 8000  # decode rate; 160 samples per peak is plenty for a drawn envelope
+
+
+def waveform(pid: str, media_id: str) -> dict:
+    """The audio envelope of one media file: WAVE_RATE peaks per source second.
+
+    Each peak is the loudest sample in its slot on a linear 0..1000 scale (full scale =
+    1000), so a quiet file draws quiet -- the page maps it to dB for display. Peaks are
+    cached next to the project, keyed on the file's size and mtime. A file with no audio
+    stream returns no peaks and ``silent: True`` rather than an error.
+    """
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    doc = _log(folder).doc
+    media = doc.get("media", {}).get(media_id)
+    if not isinstance(media, dict):
+        raise EditorError("no such media")
+    path = resolve_media(folder, str(media.get("path") or ""))
+    if not path.is_file():
+        return {"media": media_id, "rate": WAVE_RATE, "peaks": [], "silent": True}
+    st = path.stat()
+    key = f"{st.st_size}:{int(st.st_mtime)}"
+    cache = folder / "waves" / f"{media_id}.json"
+    if cache.is_file():
+        try:
+            hit = json.loads(cache.read_text())
+            if hit.get("key") == key:
+                return {k: hit[k] for k in ("media", "rate", "peaks", "silent")}
+        except (OSError, ValueError, KeyError):
+            pass
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1", "-ar", str(_WAVE_HZ), "-f", "s16le", "-"],
+        capture_output=True,
+        timeout=180,
+    )
+    import array
+    import sys
+
+    pcm = array.array("h")
+    if proc.returncode == 0:
+        pcm.frombytes(proc.stdout[: len(proc.stdout) // 2 * 2])
+        if sys.byteorder == "big":
+            pcm.byteswap()
+    step = _WAVE_HZ // WAVE_RATE
+    peaks = [
+        min(1000, max(max(s), -min(s)) * 1000 // 32768)
+        for s in (pcm[i : i + step] for i in range(0, len(pcm), step))
+    ]
+    out = {"media": media_id, "rate": WAVE_RATE, "peaks": peaks, "silent": not peaks or max(peaks) == 0}
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cache.with_name("." + cache.name + ".tmp")
+    tmp.write_text(json.dumps({**out, "key": key}))
+    tmp.replace(cache)
     return out
 
 

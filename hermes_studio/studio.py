@@ -714,6 +714,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
             return _json(self, 200, {"ok": True, "history": rows})
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "wave":
+            try:
+                wave = editor.waveform(parts[2], parts[4])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, **wave})
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "transcript":
             try:
                 words = editor.transcript(parts[2])

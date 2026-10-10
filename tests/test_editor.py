@@ -897,3 +897,33 @@ def test_set_keyframes_round_trips_and_validates(home):
     back = E.undo(pid)
     aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
     assert aa["keyframes"] is None
+
+
+def test_waveform_reads_the_real_sound_and_caches_it(home):
+    pid = _project(home, "wave")
+    w = E.waveform(pid, "m1")
+    assert w["rate"] == E.WAVE_RATE and w["silent"] is False
+    assert abs(len(w["peaks"]) - 6 * E.WAVE_RATE) <= 3  # 6s source, 50 peaks a second
+    mid = w["peaks"][25:-25]
+    # ffmpeg's sine source plays at 1/8 full scale: a steady tone draws a steady ~125/1000.
+    assert min(mid) > 80 and max(mid) < 200
+    cache = E._dir(pid) / "waves" / "m1.json"
+    assert cache.is_file()
+    assert E.waveform(pid, "m1") == w  # second read comes from the cache, same peaks
+
+
+def test_waveform_of_a_missing_file_is_silent_and_a_bad_id_refused(home):
+    pid = _project(home, "wave2")
+    (E._dir(pid) / "media" / "talk.mp4").unlink()
+    assert E.waveform(pid, "m1") == {"media": "m1", "rate": E.WAVE_RATE, "peaks": [], "silent": True}
+    with pytest.raises(E.EditorError):
+        E.waveform(pid, "nope")
+    with pytest.raises(E.EditorError):
+        E.waveform("not-here", "m1")
+
+
+def test_view_tells_the_page_which_media_a_clip_plays(home):
+    pid = _project(home, "wave3")
+    v = E.view(E._log(E._dir(pid)).doc)
+    a1 = next(t for t in v["tracks"] if t["id"] == "A1")["items"][0]
+    assert a1["media"] == "m1"

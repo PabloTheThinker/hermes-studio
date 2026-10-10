@@ -71,6 +71,12 @@
       .tl-lane{position:relative;height:36px;background:rgba(242,239,232,.04);border-radius:6px;margin-right:16px}
       .tl-clip{position:absolute;top:4px;height:28px;border-radius:5px;border:1px solid var(--line-2);background:#26313d;color:var(--mute);font:500 11px var(--mono);padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:grab;text-align:left}
       .tl-clip.text{background:#3a2f22}
+      .tl-clip{isolation:isolate}
+      .tl-clip.aud{font-size:10px;line-height:11px;padding-top:1px;background:#1f2a30}
+      .tl-wave{position:absolute;left:0;right:0;top:12px;bottom:1px;width:100%;height:calc(100% - 13px);z-index:-1;pointer-events:none}
+      .tl-wave path{fill:rgba(242,239,232,.30)}
+      .tl-clip.on .tl-wave path{fill:rgba(242,239,232,.5)}
+      .tl-wave .hot rect{fill:#e5484d}
       .tl-clip.on{outline:2px solid var(--amber);color:var(--ink);z-index:2}
       .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent}
       .tl-h.a{left:0} .tl-h.b{right:0}
@@ -90,6 +96,7 @@
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
   let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
+  let waves = {}; // media id -> {rate, peaks} once fetched, "wait" while in flight
   try {
     const saved = Number(localStorage.getItem("tl-stage-pct"));
     if (saved >= 24 && saved <= 86) stagePct = saved;
@@ -110,6 +117,47 @@
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
     return data;
+  }
+
+  // Audio waveform for one clip, drawn the way Resolve and Final Cut do: peaks on a dB scale
+  // (so quiet speech still shows), shaped by the clip's volume and fades, red where it clips.
+  function wave(tr, c) {
+    if (c.type !== "clip" || !c.media || (tr.role !== "voice" && tr.role !== "music")) return "";
+    const w = waves[c.media];
+    if (!w) {
+      waves[c.media] = "wait";
+      const want = pid;
+      fetch("/api/editor/" + encodeURIComponent(pid) + "/wave/" + encodeURIComponent(c.media))
+        .then((r) => r.json())
+        .then((d) => { if (want !== pid) return; waves[c.media] = d.ok ? { rate: d.rate, peaks: d.peaks } : { rate: 50, peaks: [] }; if (!drag) paint(); })
+        .catch(() => { waves[c.media] = { rate: 50, peaks: [] }; });
+      return "";
+    }
+    if (w === "wait" || !w.peaks.length) return "";
+    const a = Math.max(0, Math.floor((c.src_in || 0) * w.rate));
+    const b = Math.min(w.peaks.length, Math.ceil((c.src_out || 0) * w.rate));
+    if (b <= a) return "";
+    const px = Math.max(1, c.dur * pps);
+    const cols = Math.max(1, Math.min(b - a, Math.round(px)));
+    const vol = c.volume == null ? 1 : c.volume;
+    const fi = c.fade_in || 0, fo = c.fade_out || 0;
+    const top = [], hot = [];
+    for (let j = 0; j < cols; j++) {
+      const s = a + Math.floor((j * (b - a)) / cols), e = Math.max(s + 1, a + Math.floor(((j + 1) * (b - a)) / cols));
+      let p = 0;
+      for (let k = s; k < e; k++) if (w.peaks[k] > p) p = w.peaks[k];
+      const t = ((j + 0.5) / cols) * c.dur;
+      const g = Math.min(1, fi > 0 ? t / fi : 1, fo > 0 ? (c.dur - t) / fo : 1);
+      const amp = (p / 1000) * vol * Math.max(0, g);
+      const db = 20 * Math.log10(Math.max(amp, 1e-6));
+      top.push(Math.max(0, Math.min(1, (db + 48) / 48)));
+      if (amp >= 0.98) hot.push(j);
+    }
+    let d = "M0 50";
+    top.forEach((h, j) => { d += `L${j} ${(50 - h * 46).toFixed(1)}L${j + 1} ${(50 - h * 46).toFixed(1)}`; });
+    for (let j = cols - 1; j >= 0; j--) d += `L${j + 1} ${(50 + top[j] * 46).toFixed(1)}L${j} ${(50 + top[j] * 46).toFixed(1)}`;
+    const red = hot.map((j) => `<rect x="${Math.max(0, j - 0.5)}" y="0" width="2" height="100"/>`).join("");
+    return `<svg class="tl-wave" viewBox="0 0 ${cols} 100" preserveAspectRatio="none" aria-hidden="true"><path d="${d}Z"/>${red ? `<g class="hot">${red}</g>` : ""}</svg>`;
   }
 
   function fmt(n) {
@@ -246,7 +294,7 @@
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
             </div>`}
@@ -840,6 +888,7 @@
     pid = id || "";
     words = [];
     hist = [];
+    waves = {};
     document.body.classList.add("editing");
     if (!pid) { await films(node); return; }
     node.innerHTML = `<p class="tl-status">Opening the film…</p>`;
