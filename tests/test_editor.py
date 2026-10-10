@@ -1623,3 +1623,64 @@ def test_desk_roll(desk):
     assert st == 200 and f"Roll {a}|{b}" in res["project"]["summary"]
     rows = {i["id"]: i for t in res["project"]["tracks"] for i in t["items"]}
     assert abs(rows[a]["dur"] - 1.5) < 1e-9 and abs(rows[b]["at"] - 1.5) < 1e-9 and abs(rows[b]["dur"] - 2.5) < 1e-9
+
+
+# ---------------------------------------------------------------- slide
+
+
+def _three(pid):
+    """V1's c1 (media 0-4 s) split at 1 s and 3 s: p0 0-1, p1 1-3, p2 3-4, hard cuts."""
+    E.split(pid, "c1", 1.0)
+    first = [i["id"] for i in E.view(E._log(E._dir(pid)).doc)["tracks"][1]["items"]]
+    E.split(pid, first[1], 3.0)
+    return [i["id"] for i in sorted(E.view(E._log(E._dir(pid)).doc)["tracks"][1]["items"], key=lambda i: i["at"])]
+
+
+def test_slide_moves_the_clip_and_its_neighbours_absorb_it(home):
+    pid = _mixer_cut("slide")
+    s = T.TICK_RATE
+    p0, p1, p2 = _three(pid)
+    before = _spans(pid)
+    v0 = _log_versions(pid)
+    E.slide(pid, p1, 0.5)
+    r0, r1, r2 = _raw(pid, p0), _raw(pid, p1), _raw(pid, p2)
+    assert r1["src"] == [1 * s, 3 * s] and r1["at"] == s + s // 2          # its own media, later
+    assert r0["src"] == [0, s + s // 2] and r0["at"] == 0                   # the one before grows
+    assert r2["src"] == [3 * s + s // 2, 4 * s] and r2["at"] == 3 * s + s // 2  # the one after shrinks
+    after = _spans(pid)
+    assert after[p2][1] == before[p2][1]  # the total length is unchanged
+    assert _log_versions(pid) == v0 + 1
+    E.undo(pid)
+    assert _spans(pid) == before
+
+
+def test_slide_clamps_to_a_frame_on_each_side(home):
+    pid = _mixer_cut("slide2")
+    s = T.TICK_RATE
+    f = s // 30
+    p0, p1, p2 = _three(pid)
+    E.slide(pid, p1, 99.0)
+    assert _raw(pid, p2)["src"] == [4 * s - f, 4 * s] and _raw(pid, p1)["at"] == 2 * s - f
+    with pytest.raises(E.EditorError, match="can't slide that way"):
+        E.slide(pid, p1, 0.5)
+    E.slide(pid, p1, -99.0)
+    assert _raw(pid, p0)["src"] == [0, f] and _raw(pid, p1)["at"] == f
+
+
+def test_slide_needs_a_clip_on_each_side(home):
+    pid = _mixer_cut("slide3")
+    p0, p1, p2 = _three(pid)
+    with pytest.raises(E.EditorError, match="start of"):
+        E.slide(pid, p0, 0.5)
+    with pytest.raises(E.EditorError, match="end of"):
+        E.slide(pid, p2, -0.5)
+
+
+def test_desk_slide(desk):
+    pid = _mixer_cut("dslide")
+    p0, p1, p2 = _three(pid)
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "slide", "item": p1, "by": -0.5})
+    assert st == 200 and f"Slide {p1}" in res["project"]["summary"]
+    rows = {i["id"]: i for t in res["project"]["tracks"] for i in t["items"]}
+    assert abs(rows[p0]["dur"] - 0.5) < 1e-9 and abs(rows[p1]["at"] - 0.5) < 1e-9
+    assert abs(rows[p1]["src_in"] - 1.0) < 1e-9 and abs(rows[p2]["at"] - 2.5) < 1e-9 and abs(rows[p2]["dur"] - 1.5) < 1e-9

@@ -438,6 +438,60 @@ def roll(pid: str, item_id: str, by_seconds: float) -> dict:
     ], f"Roll {a['id']}|{b['id']} {shown:+.2f}s")
 
 
+def _neighbour_before(doc: dict, b: dict) -> tuple[dict, int]:
+    """The clip that cuts to B on its own track, and the crossfade between them (0 = hard cut)."""
+    tr = next(t for t in doc["tracks"] if any(i.get("id") == b["id"] for i in t["items"]))
+    xf = {tuple(x["between"]): x["dur"] for x in tr["items"] if x.get("type") == "transition"}
+    for a in (i for i in tr["items"] if i.get("type") == "clip" and "at" in i and i["id"] != b["id"]):
+        x = xf.get((a["id"], b["id"]), 0)
+        if a["at"] + T.item_duration(a) - x == b["at"]:
+            return a, x
+    raise EditorError(f"no clip touches the start of {b['id']}: slide needs a clip on each side")
+
+
+def slide(pid: str, item_id: str, by_seconds: float) -> dict:
+    """Slide a clip between its neighbours (Final Cut's and Resolve's slide): it keeps its own
+    media and length and moves along the timeline; the clip before it grows (or shrinks) to
+    meet it and the clip after it shrinks (or grows) by the same amount. Total length and
+    everything outside the three clips stay put.
+
+    Frame-exact and clamped: each neighbour keeps a frame beyond any crossfade, the one before
+    can't run past its media, the one after can't reach before its media starts. Three ops in
+    one apply: one undo step, validated only as a finished whole.
+    """
+    doc, b = _item(pid, item_id)
+    if b["type"] != "clip":
+        raise EditorError("only a clip can be slid")
+    a, xa = _neighbour_before(doc, b)
+    try:
+        c, xc = _neighbour_after(doc, b)
+    except EditorError:
+        raise EditorError(f"no clip touches the end of {item_id}: slide needs a clip on each side") from None
+    num, den = doc.get("fps") or [30, 1]
+    frame = Fraction(T.TICK_RATE * den, num)
+    sa = Fraction(*(a.get("props", {}).get("speed") or [1, 1]))
+    sc = Fraction(*(c.get("props", {}).get("speed") or [1, 1]))
+    oa, ic = a["src"][1], c["src"][0]
+    mdur = (doc.get("media", {}).get(a["media"]) or {}).get("dur")
+    hi = min(Fraction(T.item_duration(c) - xc) - frame,
+             Fraction(mdur - oa) / sa if isinstance(mdur, int) else Fraction(T.item_duration(c)))
+    lo = max(-(Fraction(T.item_duration(a) - xa) - frame), -Fraction(ic) / sc)
+    want = round(Fraction(_frames(doc, by_seconds)) / frame)
+    n = max(math.ceil(lo / frame), min(math.floor(hi / frame), want))
+    if n == 0:
+        raise EditorError(f"{item_id} can't slide that way")
+    d = n * frame
+    da, dc = d * sa, d * sc
+    if da.denominator != 1 or dc.denominator != 1 or d.denominator != 1:
+        raise EditorError("that slide isn't frame-exact at these clip speeds")
+    shown = float(T.ticks_to_seconds(int(d)))
+    return apply(pid, [
+        {"op": "trim_clip", "id": c["id"], "src_in": ic + int(dc), "ripple": False},  # C starts later
+        {"op": "move_clip", "id": b["id"], "at": b["at"] + int(d)},
+        {"op": "trim_clip", "id": a["id"], "src_out": oa + int(da), "ripple": False},  # A meets B
+    ], f"Slide {item_id} {shown:+.2f}s")
+
+
 def slip(pid: str, item_id: str, by_seconds: float) -> dict:
     """Slip a clip: slide its source window under it, as Resolve's and Final Cut's slip does.
 
