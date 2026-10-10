@@ -37,6 +37,21 @@ def _cid() -> str:
     return "e" + secrets.token_hex(8)
 
 
+def _pair_to_float(v: object) -> float:
+    """A schema ratio stored as a reduced [num, den] pair, back to a float. A bare number or
+    anything unrecognised falls back to 1.0 (full level / real time)."""
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        try:
+            num, den = float(v[0]), float(v[1])
+            if den != 0:
+                return num / den
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return float(v)
+    return 1.0
+
+
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / "timeline.json.tmp"
@@ -125,6 +140,11 @@ def view(doc: dict) -> dict:
                 row["src_in"] = round(it["src"][0] / rate, 3)
                 row["src_out"] = round(it["src"][1] / rate, 3)
                 row["speed"] = round(speed, 4)
+                props = it.get("props") or {}
+                row["look"] = props.get("look") or None
+                row["volume"] = _pair_to_float(props.get("volume"))
+                row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
+                row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
@@ -335,6 +355,37 @@ def set_speed(pid: str, item_id: str, speed: float) -> dict:
         ops.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
     ops.append({"op": "set_props", "id": item_id, "props": {"speed": pair}})
     return apply(pid, ops, f"Speed {s:g}×")
+
+
+def set_look(pid: str, item_id: str, look: str | None) -> dict:
+    """Apply a named colour grade to a clip, or clear it (None). The render maps the name to
+    an eq/colorbalance chain; an unknown name is refused here rather than silently ignored."""
+    from hermes_studio.render_timeline import _LOOKS
+
+    name = (look or "").strip().lower() or None
+    if name is not None and name not in _LOOKS:
+        raise EditorError(f"unknown look {look!r}; choose from {', '.join(sorted(_LOOKS))}")
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"look": name}}], f"Look {name or 'none'}")
+
+
+def set_volume(pid: str, item_id: str, volume: float) -> dict:
+    """Set an audio clip's level (0 to 4). Stored as a reduced [num, den] pair, like speed."""
+    from fractions import Fraction
+
+    v = float(volume)
+    if not (0.0 <= v <= 4.0):
+        raise EditorError("volume must be between 0 and 4")
+    fr = Fraction(v).limit_denominator(1000)
+    pair = [fr.numerator, fr.denominator]
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"volume": pair}}], f"Volume {v:g}×")
+
+
+def set_fade(pid: str, item_id: str, *, fade_in: float = 0.0, fade_out: float = 0.0) -> dict:
+    """Fade a clip's picture and sound to/from black over the given seconds. The op log
+    validates the pair against the clip's length, so an over-long fade is refused there."""
+    fi = max(0, T.seconds_to_ticks(fade_in))
+    fo = max(0, T.seconds_to_ticks(fade_out))
+    return apply(pid, [{"op": "set_fade", "id": item_id, "fade_in": fi, "fade_out": fo}], f"Fade {fade_in:g}s/{fade_out:g}s")
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:

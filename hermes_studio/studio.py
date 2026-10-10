@@ -774,6 +774,15 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
             elif op == "speed":
                 project = editor.set_speed(pid, str(body.get("id") or ""), float(body.get("speed") or 1))
+            elif op == "look":
+                project = editor.set_look(pid, str(body.get("id") or ""), body.get("look"))
+            elif op == "volume":
+                project = editor.set_volume(pid, str(body.get("id") or ""), float(body.get("volume") or 1))
+            elif op == "fade":
+                project = editor.set_fade(
+                    pid, str(body.get("id") or ""),
+                    fade_in=float(body.get("fade_in") or 0), fade_out=float(body.get("fade_out") or 0),
+                )
             elif op == "transition":
                 project = editor.set_transition(
                     pid, str(body.get("a") or ""), str(body.get("b") or ""), float(body.get("seconds") or 0)

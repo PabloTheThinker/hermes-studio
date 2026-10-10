@@ -210,6 +210,9 @@
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Look</span><span style="display:flex;gap:4px;align-items:center"><select data-look style="flex:1"><option value="" ${it.look ? "" : "selected"}>None</option>${["warm","cool","punch","mono","film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select><button type="button" data-act="apply-look">Set</button></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -250,6 +253,17 @@
       bindFilm(keep);
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+    // Volume is a live slider: update the readout as it drags, and commit on release.
+    const vol = root.querySelector("[data-vol]");
+    if (vol) {
+      const readout = vol.parentElement.querySelector("b");
+      vol.addEventListener("input", () => { if (readout) readout.textContent = parseFloat(vol.value).toFixed(2) + "×"; });
+      vol.addEventListener("change", async () => {
+        const s2 = find(sel);
+        if (!s2) return;
+        await commit({ op: "volume", id: s2.id, volume: parseFloat(vol.value) });
+      });
+    }
     root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
     root.querySelectorAll("[data-xf]").forEach((b) => b.addEventListener("click", async () => {
       const pair = String(b.dataset.between || "").split(",");
@@ -572,6 +586,21 @@
       const pick = root.querySelector("[data-speed]");
       if (!sel2 || !pick) return;
       await commit({ op: "speed", id: sel2.id, speed: parseFloat(pick.value) });
+      return;
+    }
+    if (name === "apply-look") {
+      const s2 = find(sel);
+      const pick = root.querySelector("[data-look]");
+      if (!s2 || !pick) return;
+      await commit({ op: "look", id: s2.id, look: pick.value || null });
+      return;
+    }
+    if (name === "apply-fade") {
+      const s2 = find(sel);
+      const fi = root.querySelector("[data-fadein]");
+      const fo = root.querySelector("[data-fadeout]");
+      if (!s2 || !fi || !fo) return;
+      await commit({ op: "fade", id: s2.id, fade_in: parseFloat(fi.value) || 0, fade_out: parseFloat(fo.value) || 0 });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }

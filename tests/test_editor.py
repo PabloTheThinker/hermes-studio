@@ -683,3 +683,37 @@ def test_render_honors_audio_volume(home):
     # A halved volume must actually come out quieter (roughly -6 dB), which only holds if
     # loudnorm stood aside for the hand-set clip.
     assert half < full - 3.0
+
+
+def test_look_and_volume_round_trip_and_validate(home):
+    pid = _two_clips(home, "lookvol")
+    # A named look applies and shows back in the view; an unknown one is refused.
+    v = E.set_look(pid, "aa", "film")
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["look"] == "film"
+    with pytest.raises(E.EditorError):
+        E.set_look(pid, "aa", "vaporwave")
+    # Clearing it works.
+    v = E.set_look(pid, "aa", None)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["look"] is None
+    # Volume 0.5 stores and reads back as ~0.5; out of range is refused; undo restores.
+    v = E.set_volume(pid, "aa", 0.5)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["volume"] == pytest.approx(0.5, abs=0.01)
+    with pytest.raises(E.EditorError):
+        E.set_volume(pid, "aa", 9.0)
+    back = E.undo(pid)
+    aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["volume"] == pytest.approx(1.0, abs=0.01)
+
+
+def test_set_fade_round_trips(home):
+    pid = _two_clips(home, "fadectl")
+    v = E.set_fade(pid, "aa", fade_in=1.0, fade_out=0.5)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["fade_in"] == pytest.approx(1.0, abs=0.02)
+    assert aa["fade_out"] == pytest.approx(0.5, abs=0.02)
+    back = E.undo(pid)
+    aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["fade_in"] == 0 and aa["fade_out"] == 0
