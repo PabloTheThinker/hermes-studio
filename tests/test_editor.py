@@ -407,3 +407,59 @@ def test_transition_rejects_too_long_or_wrong_order(home):
         E.set_transition(pid, "bb", "aa", 1.0)   # wrong order
     with pytest.raises(E.EditorError):
         E.set_transition(pid, "aa", "aa", 1.0)   # same clip twice
+
+
+def test_render_applies_a_dissolve_not_a_hard_cut(home):
+    """A cross-dissolve must actually blend: the mid-seam frame mixes both clips."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    folder = E._dir("xd")
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    for col, name, freq in (("red", "ra", 440), ("blue", "bl", 660)):
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={col}:s=320x180:d=4:r=30",
+             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=4",
+             "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+             str(folder / "media" / f"{name}.mp4")],
+            check=True, capture_output=True,
+        )
+    s = T.TICK_RATE
+    d = T.new_timeline("xd")
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/ra.mp4", "dur": 4 * s, "fps": [30, 1]},
+                  "m2": {"path": "media/bl.mp4", "dur": 4 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [
+        {"id": "aa", "type": "clip", "media": "m1", "src": [0, 4 * s], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "bb", "type": "clip", "media": "m2", "src": [0, 4 * s], "at": 4 * s, "fade_in": 0, "fade_out": 0},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    from hermes_studio import oplog as _O
+
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    E.set_transition("xd", "aa", "bb", 1.0)
+
+    out = R.render_project("xd")
+    # 4 + 4 - 1 (the overlap) = 7s
+    assert out["duration"] == pytest.approx(7.0, abs=0.1)
+
+    def avg_rgb(at: float):
+        jpg = folder / f"_probe_{at}.jpg"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", out["path"],
+                        "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+        from PIL import Image
+
+        im = Image.open(jpg).convert("RGB").resize((8, 8))
+        px = list(im.getdata())
+        n = len(px)
+        return tuple(sum(p[c] for p in px) // n for c in range(3))
+
+    early, mid, late = avg_rgb(1.0), avg_rgb(3.5), avg_rgb(5.0)
+    # early is red-dominant, late is blue-dominant
+    assert early[0] > early[2]
+    assert late[2] > late[0]
+    # mid-blend carries BOTH red and blue: that is the dissolve, not a hard cut
+    assert mid[0] > 40 and mid[2] > 40

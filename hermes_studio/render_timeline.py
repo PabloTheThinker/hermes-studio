@@ -144,9 +144,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             idx = len(inputs)
             seen[rel] = idx
             sw, sh = _probe_size(path)
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh)})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id")})
         else:
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id")})
 
     audio: list[dict] = []
     for role in ("voice", "music"):
@@ -183,6 +183,34 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         captions.append({"at": it["at"], "dur": it.get("dur") or 0, "text": text, "style": str(it.get("style") or "pop")})
         end_tick = max(end_tick, it["at"] + (it.get("dur") or 0))
 
+    # Transitions: a cross-dissolve is an overlap of exactly 'dur' between two consecutive
+    # main-track clips. The render replaces the concat at that seam with an xfade, keyed by
+    # the two clip ids and the offset (in output seconds) where the blend begins.
+    transitions = []
+    for tr in doc["tracks"]:
+        if tr.get("role") != "main":
+            continue
+        by_id = {i["id"]: i for i in tr["items"] if i.get("type") == "clip" and "at" in i}
+        for it in tr["items"]:
+            if it.get("type") != "transition":
+                continue
+            a_id, b_id = it.get("between", [None, None])
+            a, b = by_id.get(a_id), by_id.get(b_id)
+            if not a or not b:
+                continue
+            dur = it.get("dur", 0)
+            if dur <= 0:
+                continue
+            a_end = a["at"] + (a["src"][1] - a["src"][0])
+            transitions.append(
+                {
+                    "a": a_id,
+                    "b": b_id,
+                    "dur": dur,
+                    "offset": a_end - dur,  # the blend starts where a would have ended, minus the overlap
+                }
+            )
+
     if end_tick <= 0:
         raise RenderError("nothing to render")
 
@@ -194,6 +222,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         "inputs": inputs,
         "audio": audio,
         "captions": captions,
+        "transitions": transitions,
         "end_tick": end_tick,
         "silent": not any(True for _ in audio),
     }
@@ -239,6 +268,48 @@ def _build_ass(plan: dict, cache: Path) -> Path | None:
 # --------------------------------------------------------------------------- graph
 
 
+def _assemble_video(segs: list, seg_ids: list, seg_durs: list, transitions: list, rate: int) -> list:
+    """Join the picture segments into ``[outv]`` as filter-graph lines.
+
+    Adjacent clips with a cross-dissolve between them blend with ``xfade``; everything
+    else is a plain ``concat``. A gap never carries a transition.
+
+    ``xfade`` overlaps the tail of the running stream with the head of the next segment:
+    the output is ``len(acc) + len(next) - duration`` long, and the blend begins at
+    ``offset`` seconds into that output. Because each xfade shortens the running stream,
+    the offsets must be accumulated as we fold left -- emitting one flat ``concat`` cannot
+    express a seam that overlaps. ``seg_durs`` is each segment's own length in seconds, so
+    the running length before a seam is the sum of the segments joined so far.
+    """
+    if not segs:
+        raise RenderError("nothing on the main track")
+    if len(segs) == 1:
+        return [f"{segs[0]}copy[outv]"]
+
+    xf = {(t["a"], t["b"]): _t2s(t["dur"], rate) for t in transitions}
+
+    fc: list[str] = []
+    acc = segs[0]
+    running = seg_durs[0]          # length of the joined stream so far, in seconds
+    for i in range(1, len(segs)):
+        a_id, b_id = seg_ids[i - 1], seg_ids[i]
+        dur = xf.get((a_id, b_id))
+        last = i == len(segs) - 1
+        out = "outv" if last else f"x{i}"
+        if dur:
+            # The dissolve sits where the first clip would have ended: that is `running`
+            # seconds into the output, and it runs for `dur`, so the seam is pulled back
+            # by the overlap. ffmpeg needs the offset as a plain number.
+            offset = max(0.0, running - dur)
+            fc.append(f"{acc}{segs[i]}xfade=transition=fade:duration={dur:.3f}:offset={offset:.3f}[{out}]")
+            running = running + seg_durs[i] - dur
+        else:
+            fc.append(f"{acc}{segs[i]}concat=n=2:v=1:a=0[{out}]")
+            running = running + seg_durs[i]
+        acc = f"[{out}]"
+    return fc
+
+
 def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     """The filter graph, and the label to map as the output video."""
     w, h = plan["width"], plan["height"]
@@ -267,6 +338,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
 
     cut_v: dict[int, int] = {}
     cut_a: dict[int, int] = {}
+    seg_ids: list = []          # the clip id behind each segment, in order (None for a gap)
+    seg_durs: list = []         # each segment's own length in seconds
     for n, inp in enumerate(plan["inputs"]):
         kind = inp["role"]
         if kind == "clip":
@@ -278,6 +351,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             s_in = _t2s(i0, rate)
             dur = _t2s(o1 - i0, rate)
             v_in.append(f"[v{n}]")
+            seg_ids.append(inp.get("id"))
+            seg_durs.append(dur)
             sw, sh = inp["size"] or (w, h)
             dw, dh, x, y = _contain(sw, sh, w, h)
             chain = f"scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,fps={fps:.3f},format=yuv420p"
@@ -285,12 +360,11 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")
+            seg_ids.append(None)
+            seg_durs.append(dur)
             fc.append(f"[{inp['idx']}:v]trim=start=0:end={dur:.3f},setpts=PTS-STARTPTS,fps={fps:.3f},format=yuv420p[v{n}]")
 
-    if len(v_in) == 1:
-        fc.append(f"{v_in[0]}copy[outv]")
-    else:
-        fc.append("".join(v_in) + f"concat=n={len(v_in)}:v=1:a=0[outv]")
+    fc.extend(_assemble_video(v_in, seg_ids, seg_durs, plan["transitions"], rate))
 
     # Sound: each item is placed at its own time, then padded to the full length so
     # amix sees streams of equal size and a gap stays a gap.
