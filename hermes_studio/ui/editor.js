@@ -78,6 +78,7 @@
       .tl-xf{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;border-radius:99px;background:var(--amber);color:var(--amber-ink);font:700 9px var(--sans);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;border:0;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
       .tl-xf:hover{filter:brightness(1.12)}
       .tl-xf i{font-style:normal;font-size:10px}
+      .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
       .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:4;pointer-events:none}
       .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%)}
     `;
@@ -242,7 +243,7 @@
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k) => `<i class="tl-kf" style="left:${k.at * pps}px" title="Keyframe at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}×"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
             </div>`}
