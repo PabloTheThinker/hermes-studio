@@ -8,7 +8,12 @@
     const s = document.createElement("style");
     s.id = "tl-css";
     s.textContent = `
-      .tl{display:grid;grid-template-rows:52px minmax(0,1fr) 292px;height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
+      .tl{display:grid;grid-template-rows:52px minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
+      .tl-grip{cursor:row-resize;background:var(--line);position:relative;touch-action:none}
+      .tl-grip::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:2px;border-radius:2px;background:var(--line-2)}
+      .tl-grip:hover,.tl-grip.on{background:var(--amber)}
+      .tl-grip:hover::after,.tl-grip.on::after{background:var(--amber-ink)}
+      .tl-collapsed{grid-template-rows:52px minmax(0,1fr) 5px 40px!important}
       .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);min-width:0}
       .tl-top b{font-weight:800;letter-spacing:.04em;text-transform:uppercase;font-variation-settings:"wdth" 125}
       .tl-clock{font:500 13px var(--mono);color:var(--amber);white-space:nowrap}
@@ -22,7 +27,7 @@
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
-      .tl-frame{height:auto;width:auto;max-height:86%;max-width:94%;aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden}
+      .tl-frame{height:auto;width:auto;max-height:96%;max-width:96%;aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden;box-sizing:border-box}
       .tl-vid,.tl-pic{object-fit:contain}
       .tl-can{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
       .tl-can2{display:flex;gap:6px;align-items:center;margin:0 0 8px}
@@ -61,7 +66,7 @@
       .tl-ruler{height:22px;margin-left:92px;position:relative;font:500 10px var(--mono);color:var(--dim)}
       .tl-ruler i{position:absolute;top:4px;font-style:normal}
       .tl-stack{position:relative}
-      .tl-trk{display:grid;grid-template-columns:92px 1fr;align-items:center;height:48px}
+      .tl-trk{display:grid;grid-template-columns:92px 1fr;align-items:center;height:var(--trk,48px)}
       .tl-lab{position:sticky;left:0;z-index:3;background:var(--bg);font:500 11px var(--mono);color:var(--dim);padding-left:16px}
       .tl-lane{position:relative;height:36px;background:rgba(242,239,232,.04);border-radius:6px;margin-right:16px}
       .tl-clip{position:absolute;top:4px;height:28px;border-radius:5px;border:1px solid var(--line-2);background:#26313d;color:var(--mute);font:500 11px var(--mono);padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:grab;text-align:left}
@@ -77,8 +82,17 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
-  let tab = "clips", words = [], hist = [];
+  let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
+  try {
+    const saved = Number(localStorage.getItem("tl-stage-pct"));
+    if (saved >= 24 && saved <= 86) stagePct = saved;
+  } catch (err) { /* private mode: keep the default */ }
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
+  let rz = 0;
+  window.addEventListener("resize", () => {
+    clearTimeout(rz);
+    rz = setTimeout(() => { if (root && doc) { sizeFrame(); fitTracks(); } }, 120);
+  });
 
   async function api(body) {
     const res = await fetch("/api/editor/" + encodeURIComponent(pid || "demo"), {
@@ -142,7 +156,7 @@
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
     root.innerHTML = `
-      <div class="tl">
+      <div class="tl ${folded ? "tl-collapsed" : ""}">
         <div class="tl-top">
           <b>Edit</b>
           <span class="tl-pill">v${esc(d.version)}</span>
@@ -181,11 +195,13 @@
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
         </div>
+        <div class="tl-grip" data-act="grip" title="Drag to resize the timeline"></div>
         <div class="tl-sheet">
           <div class="tl-tools">
             <button type="button" data-tab="clips" class="${tab === "clips" ? "on" : ""}">Clips</button>
             <button type="button" data-tab="words" class="${tab === "words" ? "on" : ""}">Transcript</button>
             <button type="button" data-tab="act" class="${tab === "act" ? "on" : ""}">Activity</button>
+            <button type="button" data-act="fold">${folded ? "Show" : "Hide"}</button>
             <span style="flex:1"></span>
             <button type="button" data-act="lift">Lift</button>
             <button type="button" data-act="ripple" class="${ripple ? "on" : ""}">Ripple ${ripple ? "on" : "off"}</button>
@@ -215,6 +231,13 @@
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
     root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
+    const grip = root.querySelector(".tl-grip");
+    if (grip) {
+      grip.addEventListener("pointerdown", gripDown);
+      grip.addEventListener("pointermove", gripMove);
+      grip.addEventListener("pointerup", gripUp);
+      grip.addEventListener("pointercancel", gripUp);
+    }
     root.querySelectorAll("[data-word]").forEach((b) => b.addEventListener("click", () => {
       stop();
       play = Number(b.dataset.word) || 0;
@@ -229,16 +252,9 @@
     const pic = root.querySelector(".tl-pic");
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
     showFrame();
-    const stage = root.querySelector(".tl-view");
-    const frame = root.querySelector(".tl-frame");
-    if (stage && frame) {
-      const box = stage.getBoundingClientRect();
-      const ratio = cw / ch;
-      let fh = box.height * 0.86, fw = fh * ratio;
-      if (fw > box.width * 0.94) { fw = box.width * 0.94; fh = fw / ratio; }
-      frame.style.width = Math.max(120, fw) + "px";
-      frame.style.height = Math.max(80, fh) + "px";
-    }
+    applySplit();
+    sizeFrame();
+    fitTracks();
     const sc = root.querySelector(".tl-scroll");
     sc.addEventListener("pointerdown", down);
     sc.addEventListener("pointermove", movePtr);
@@ -355,6 +371,86 @@
     paint();
   }
 
+  function gripDown(e) {
+    const shell = root && root.querySelector(".tl");
+    if (!shell) return;
+    drag = { y: e.clientY, h: shell.getBoundingClientRect().height, from: stagePct };
+    const g = e.currentTarget;
+    if (g && g.classList) g.classList.add("on");
+    if (g && g.setPointerCapture) { try { g.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ } }
+  }
+  function gripMove(e) {
+    if (!drag || !root) return;
+    const dy = e.clientY - drag.y;
+    // The shell has a 52px top bar and a 5px grip as fixed rows, so a percentage of the
+    // whole shell is not a percentage of the splittable area. Work in the space that is
+    // actually being divided, or the drag and the resulting layout disagree.
+    const shell = root.querySelector(".tl");
+    if (!shell) return;
+    const rows = getComputedStyle(shell).gridTemplateRows.split(" ").map(parseFloat);
+    const splittable = rows.reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0) - (Number.isFinite(rows[0]) ? rows[0] : 52) - (Number.isFinite(rows[2]) ? rows[2] : 5);
+    const usable = splittable > 40 ? splittable : drag.h - 57;
+    const pct = drag.from + (dy / usable) * 100;
+    stagePct = Math.max(24, Math.min(86, Math.round(pct)));
+    applySplit();
+    sizeFrame();
+  }
+  function gripUp() {
+    if (!drag) return;
+    drag = null;
+    const g = root && root.querySelector(".tl-grip");
+    if (g && g.classList) g.classList.remove("on");
+    // Remember the split so the layout the person chose survives a reload.
+    try { localStorage.setItem("tl-stage-pct", String(stagePct)); } catch (err) { /* private mode */ }
+  }
+  function applySplit() {
+    const shell = root && root.querySelector(".tl");
+    if (!shell) return;
+    if (folded) return;
+    shell.style.setProperty("--stage", (stagePct / Math.max(1, 100 - stagePct)).toFixed(3) + "fr");
+    shell.style.setProperty("--sheet", "1fr");
+    // The rows have just been re-divided, so the scroll box only knows its new height
+    // after a layout pass. Measure on the next frame or the rows are sized for the
+    // previous split and the bottom tracks hide behind a scrollbar.
+    requestAnimationFrame(fitTracks);
+  }
+
+  function fitTracks() {
+    /* Every track the cut has must be reachable without hunting for a scrollbar. When
+       the panel is short, shrink the rows rather than hide the bottom tracks. */
+    const sc = root && root.querySelector(".tl-scroll");
+    const shell = root && root.querySelector(".tl");
+    if (!sc || !shell || !doc) return;
+    const n = Math.max(1, doc.tracks.length);
+    const h = sc.clientHeight;
+    // A box with no height yet (just re-divided, or mid-teardown) would compute a
+    // nonsense row size and hide tracks. Keep the last sane value instead.
+    if (h < 40) {
+      const had = Number(shell.style.getPropertyValue("--trk").replace("px", ""));
+      if (Number.isFinite(had) && had >= 18) return;
+      shell.style.setProperty("--trk", "22px");
+      return;
+    }
+    const want = Math.floor((h - 22) / n); // the ruler
+    // 18px is the smallest row that still reads as a track; below that the panel is too
+    // short to show every track, and the fold button is the honest answer.
+    shell.style.setProperty("--trk", Math.max(18, Math.min(48, want)) + "px");
+  }
+
+  function sizeFrame() {
+    const stage = root && root.querySelector(".tl-view");
+    const frame = root && root.querySelector(".tl-frame");
+    if (!stage || !frame || !doc) return;
+    const box = stage.getBoundingClientRect();
+    const size = doc.size || [1080, 1920];
+    const cw = Number(size[0]) || 1080, ch = Number(size[1]) || 1920;
+    const ratio = cw / ch;
+    let fh = box.height * 0.9, fw = fh * ratio;
+    if (fw > box.width * 0.94) { fw = box.width * 0.94; fh = fw / ratio; }
+    frame.style.width = Math.max(120, fw) + "px";
+    frame.style.height = Math.max(80, fh) + "px";
+  }
+
   function stop() {
     playing = false;
     lastT = 0;
@@ -430,6 +526,12 @@
       if (!startFilm()) raf = requestAnimationFrame(loop);
       return;
     }
+    if (name === "fold") {
+      folded = !folded;
+      paint();
+      return;
+    }
+    if (name === "grip") return;
     if (name === "ripple") { ripple = !ripple; paint(); return; }
     if (name === "snap") { snapOn = !snapOn; paint(); return; }
     if (name === "zoom-in" || name === "zoom-out") { pps = Math.max(8, Math.min(220, pps * (name === "zoom-in" ? 1.25 : 0.8))); paint(); return; }
