@@ -68,6 +68,25 @@ def view(doc: dict) -> dict:
         items = []
         for it in tr["items"]:
             if it["type"] == "transition":
+                # A transition is not a clip: it is the overlap between two of them. The page
+                # draws it as a badge at the seam, so it needs its own position and the clips
+                # it sits between, but it contributes no length of its own.
+                a_id, b_id = it["between"]
+                span_a = next((i for i in tr["items"] if i.get("id") == a_id), None)
+                if span_a is None:
+                    continue
+                at = span_a.get("at", 0) + (span_a["src"][1] - span_a["src"][0])
+                items.append(
+                    {
+                        "id": it["id"],
+                        "type": "transition",
+                        "kind": it.get("kind", "xfade"),
+                        "at": round(at / rate, 3),
+                        "dur": round(it.get("dur", 0) / rate, 3),
+                        "between": [a_id, b_id],
+                        "label": "Dissolve",
+                    }
+                )
                 continue
             at = it.get("at", 0) / rate
             dur = ((it["src"][1] - it["src"][0]) if it["type"] == "clip" else it.get("dur", 0)) / rate
@@ -258,6 +277,13 @@ def set_edge(pid: str, item_id: str, edge: str, at_seconds: float, *, ripple: bo
 def move(pid: str, item_id: str, at_seconds: float) -> dict:
     at = max(0, T.seconds_to_ticks(at_seconds))
     return apply(pid, [{"op": "move_clip", "id": item_id, "at": at}], f"Move {item_id}")
+
+
+def set_transition(pid: str, a_id: str, b_id: str, seconds: float = 0.0) -> dict:
+    """Cross-dissolve (or remove it) between two consecutive clips. dur 0 = a hard cut."""
+    dur = max(0, T.seconds_to_ticks(seconds))
+    return apply(pid, [{"op": "set_transition", "between": [a_id, b_id], "dur": dur}],
+                 f"Dissolve {seconds:g}s" if dur else "Hard cut")
 
 
 def set_canvas(pid: str, width: int, height: int) -> dict:

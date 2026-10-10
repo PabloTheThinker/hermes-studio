@@ -345,3 +345,65 @@ def test_an_imported_cut_has_a_real_history(home, monkeypatch):
     back = E.undo("imp1")
     assert back["version"] == 2
     assert len(E._log(folder).history_list()) == 2
+
+
+def _two_clips(home, pid="tc"):
+    """A project with two adjacent clips on the main track, for transition tests."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    folder.mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/talk.mp4", "dur": 60 * T.TICK_RATE, "fps": [30, 1]}}
+    by["V1"]["items"] = [
+        {"id": "aa", "type": "clip", "media": "m1", "src": [0, 8 * T.TICK_RATE], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "bb", "type": "clip", "media": "m1", "src": [0, 8 * T.TICK_RATE], "at": 8 * T.TICK_RATE, "fade_in": 0, "fade_out": 0},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    return pid
+
+
+def _main(v):
+    return [t for t in v["tracks"] if t["role"] == "main"][0]["items"]
+
+
+def test_transition_overlaps_clips_and_undo_restores(home):
+    pid = _two_clips(home)
+    v = E.set_transition(pid, "aa", "bb", 1.0)
+    rows = _main(v)
+    bb = next(i for i in rows if i["id"] == "bb")
+    # a 1s dissolve pulls bb back to 7s so the two overlap by exactly 1s
+    assert bb["at"] == pytest.approx(7.0, abs=0.02)
+    assert any(i["type"] == "transition" for i in rows)
+    tr = next(i for i in rows if i["type"] == "transition")
+    assert tr["between"] == ["aa", "bb"] and tr["dur"] == pytest.approx(1.0, abs=0.02)
+    back = E.undo(pid)
+    bb = next(i for i in _main(back) if i["id"] == "bb")
+    assert bb["at"] == pytest.approx(8.0, abs=0.02)
+    assert not any(i["type"] == "transition" for i in _main(back))
+
+
+def test_transition_zero_is_a_hard_cut(home):
+    pid = _two_clips(home)
+    E.set_transition(pid, "aa", "bb", 1.0)
+    v = E.set_transition(pid, "aa", "bb", 0.0)
+    rows = _main(v)
+    bb = next(i for i in rows if i["id"] == "bb")
+    assert bb["at"] == pytest.approx(8.0, abs=0.02)
+    assert not any(i["type"] == "transition" for i in rows)
+
+
+def test_transition_rejects_too_long_or_wrong_order(home):
+    pid = _two_clips(home)
+    with pytest.raises(E.EditorError):
+        E.set_transition(pid, "aa", "bb", 99.0)  # longer than the clips
+    with pytest.raises(E.EditorError):
+        E.set_transition(pid, "bb", "aa", 1.0)   # wrong order
+    with pytest.raises(E.EditorError):
+        E.set_transition(pid, "aa", "aa", 1.0)   # same clip twice

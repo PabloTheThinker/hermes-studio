@@ -707,6 +707,65 @@ def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
     return _set(ctx, it["id"], {"anchor": copy.deepcopy(a["anchor"])}, ["at"])
 
 
+def op_set_transition(ctx: _Ctx, a: dict) -> list[dict]:
+    """Put a cross-dissolve between two consecutive clips (kind is always 'xfade').
+
+    The schema models a transition as an overlap: the two clips must overlap by exactly
+    ``dur``. So to create one we move the second clip earlier by ``dur`` and insert the
+    item; the inverse deletes the item and moves the clip back. Passing ``dur`` 0 (the
+    default) removes any transition, giving a hard cut.
+    """
+    a_id, b_id = a["between"]
+    if a_id == b_id:
+        raise _OpError("bad_arg", "between must be two different clips", "between")
+    tr_a, _, it_a = _find(ctx.doc, a_id)
+    tr_b, _, it_b = _find(ctx.doc, b_id)
+    if tr_a["id"] != tr_b["id"]:
+        raise _OpError("bad_arg", "both clips must be on the same track", "between")
+    if it_a["type"] != "clip" or it_b["type"] != "clip":
+        raise _OpError("bad_arg", "a transition sits between two clips", "between")
+    if "at" not in it_a or "at" not in it_b:
+        raise _OpError("bad_arg", "both clips need an 'at' (not anchored)", "between")
+    start_a, dur_a = it_a["at"], _dur(it_a)
+    start_b = it_b["at"]
+    if start_b < start_a:
+        raise _OpError("bad_arg", "between must be in timeline order (a before b)", "between")
+    dur = _need_ticks(a, "dur")
+    if dur < 0:
+        raise _OpError("bad_arg", "dur must be 0 or more", "dur")
+    # The overlap can never eat past either clip, and a frame is the smallest unit.
+    limit = min(dur_a, _dur(it_b))
+    if dur > limit:
+        raise _OpError("out_of_range", "dur cannot be longer than the shorter clip", "dur")
+    if dur > 0 and start_b - (start_a + dur_a) > 0:
+        raise _OpError("bad_arg", "the clips must be adjacent to cross-dissolve", "between")
+
+    existing = next(
+        (it for it in tr_a["items"]
+         if it.get("type") == "transition" and it.get("between") == [a_id, b_id]),
+        None,
+    )
+    inverse: list[dict] = []
+    if existing:
+        # Removing or resizing an existing transition: undo puts it and the clip back.
+        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": existing["dur"]})
+        tr_a["items"].remove(existing)
+    else:
+        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
+
+    if dur == 0:
+        # A hard cut: restore b to where it was before this op moved it.
+        it_b["at"] = it_b["at"] + (existing["dur"] if existing else 0)
+        return inverse
+
+    tid = _new_id(ctx, a, "t")
+    it_b["at"] = start_a + dur_a - dur
+    tr_a["items"].append(
+        {"id": tid, "type": "transition", "kind": "xfade", "between": [a_id, b_id], "dur": dur}
+    )
+    return inverse
+
+
 # name -> (handler, required args, optional args)
 PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "insert_clip": (
@@ -722,6 +781,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
     "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
+    "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur"})),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
     "add_text": (
         op_add_text,
