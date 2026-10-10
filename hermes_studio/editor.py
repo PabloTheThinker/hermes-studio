@@ -7,6 +7,7 @@ The desk and tests call open / apply / undo / redo. Nothing else writes the time
 from __future__ import annotations
 
 import json
+import math
 import os
 import secrets
 import shutil
@@ -381,6 +382,60 @@ def set_edge(pid: str, item_id: str, edge: str, at_seconds: float, *, ripple: bo
             return trim(pid, item_id, src_out=i0 + new_dur, ripple=ripple)
         return trim(pid, item_id, dur=new_dur, ripple=ripple)
     raise EditorError("edge must be start or end")
+
+
+def _neighbour_after(doc: dict, a: dict) -> tuple[dict, int]:
+    """The clip that A cuts to on its own track, and the crossfade between them (0 = a hard
+    cut). Raises when nothing touches A's end: a roll needs an edit point, not a gap."""
+    tr = next(t for t in doc["tracks"] if any(i.get("id") == a["id"] for i in t["items"]))
+    a_end = a["at"] + T.item_duration(a)
+    xf = {tuple(x["between"]): x["dur"] for x in tr["items"] if x.get("type") == "transition"}
+    for b in sorted((i for i in tr["items"] if i.get("type") == "clip" and "at" in i and i["id"] != a["id"]), key=lambda i: i["at"]):
+        x = xf.get((a["id"], b["id"]), 0)
+        if b["at"] == a_end - x:
+            return b, x
+    raise EditorError(f"no clip touches the end of {a['id']}: roll moves an edit point between two clips")
+
+
+def roll(pid: str, item_id: str, by_seconds: float) -> dict:
+    """Roll the edit point at the end of ``item_id``: the outgoing clip gets longer by exactly
+    what the incoming one loses (Final Cut's and Resolve's roll). Nothing else on the timeline
+    moves and the total length is unchanged.
+
+    ``by_seconds`` is timeline time (positive moves the cut later), snapped to whole frames and
+    clamped so both clips keep at least a frame (plus any crossfade between them) and neither
+    runs past its media. Two trim_clip ops in one apply: one undo step, and the validator only
+    sees the finished result, so the clips never overlap mid-edit.
+    """
+    doc, a = _item(pid, item_id)
+    if a["type"] != "clip":
+        raise EditorError("only a clip's edit point can be rolled")
+    b, x = _neighbour_after(doc, a)
+    num, den = doc.get("fps") or [30, 1]
+    frame = Fraction(T.TICK_RATE * den, num)
+    sa = Fraction(*(a.get("props", {}).get("speed") or [1, 1]))
+    sb = Fraction(*(b.get("props", {}).get("speed") or [1, 1]))
+    ia, oa = a["src"]
+    ib, ob = b["src"]
+    media = doc.get("media", {})
+    mdur = (media.get(a["media"]) or {}).get("dur")
+    # Limits in timeline ticks: A grows into its unused media, B grows into the media before it,
+    # and each keeps a frame beyond the crossfade that sits on the cut.
+    hi = min(T.item_duration(b) - x - frame, Fraction(mdur - oa) / sa if isinstance(mdur, int) else T.item_duration(b))
+    lo = max(-(T.item_duration(a) - x - frame), -Fraction(ib) / sb)
+    want = round(Fraction(_frames(doc, by_seconds)) / frame)
+    n = max(math.ceil(lo / frame), min(math.floor(hi / frame), want))
+    if n == 0:
+        raise EditorError(f"the edit point after {item_id} can't move that way")
+    d = n * frame
+    da, db = d * sa, d * sb
+    if da.denominator != 1 or db.denominator != 1:
+        raise EditorError("that roll isn't frame-exact at these clip speeds")
+    shown = float(T.ticks_to_seconds(int(d)))
+    return apply(pid, [
+        {"op": "trim_clip", "id": b["id"], "src_in": ib + int(db), "ripple": False},
+        {"op": "trim_clip", "id": a["id"], "src_out": oa + int(da), "ripple": False},
+    ], f"Roll {a['id']}|{b['id']} {shown:+.2f}s")
 
 
 def slip(pid: str, item_id: str, by_seconds: float) -> dict:

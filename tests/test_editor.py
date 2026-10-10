@@ -1551,3 +1551,75 @@ def test_slip_snaps_to_whole_frames(home):
     s = T.TICK_RATE
     E.slip(pid, "a1", 0.033333)
     assert _raw(pid, "a1")["src"] == [s // 30, 2 * s + s // 30]
+
+
+# ---------------------------------------------------------------- roll
+
+
+def _split_c1(pid):
+    """Split V1's c1 (media 0-4 s at 0-4 s) at 2 s: two clips meeting at a hard cut."""
+    E.split(pid, "c1", 2.0)
+    return [i["id"] for i in E.view(E._log(E._dir(pid)).doc)["tracks"][1]["items"]]
+
+
+def test_roll_moves_the_cut_and_nothing_else(home):
+    pid = _mixer_cut("roll")
+    s = T.TICK_RATE
+    a, b = _split_c1(pid)
+    before = _spans(pid)
+    v0 = _log_versions(pid)
+    E.roll(pid, a, 0.5)
+    ra, rb = _raw(pid, a), _raw(pid, b)
+    assert ra["src"] == [0, 2 * s + s // 2] and ra["at"] == 0
+    assert rb["src"] == [2 * s + s // 2, 4 * s] and rb["at"] == 2 * s + s // 2
+    after = _spans(pid)
+    assert after[b][1] == before[b][1]  # the incoming clip still ends where it did
+    assert {k: v for k, v in after.items() if k not in (a, b)} == {k: v for k, v in before.items() if k not in (a, b)}
+    assert _log_versions(pid) == v0 + 1  # two trims, one step
+    E.undo(pid)
+    assert _spans(pid) == before
+
+
+def test_roll_clamps_so_both_clips_keep_a_frame(home):
+    pid = _mixer_cut("roll2")
+    s = T.TICK_RATE
+    f = s // 30
+    a, b = _split_c1(pid)
+    E.roll(pid, a, 99.0)
+    assert _raw(pid, a)["src"] == [0, 4 * s - f] and _raw(pid, b)["src"] == [4 * s - f, 4 * s]
+    with pytest.raises(E.EditorError, match="can't move that way"):
+        E.roll(pid, a, 1.0)
+    E.roll(pid, a, -99.0)
+    assert _raw(pid, a)["src"] == [0, f] and _raw(pid, b)["at"] == f
+
+
+def test_roll_keeps_a_crossfade_on_the_cut(home):
+    pid = _mixer_cut("roll3")
+    s = T.TICK_RATE
+    a, b = _split_c1(pid)
+    half = s // 2
+    E.apply(pid, [{"op": "move_items", "ids": [b], "by": -half},
+                  {"op": "add_transition", "between": [a, b], "dur": half}], "dissolve")
+    end_b = _raw(pid, b)["at"] + T.item_duration(_raw(pid, b))
+    E.roll(pid, a, 0.3)  # 9 frames at 30 fps (0.25 s would be 7.5 and round to 8)
+    ra, rb = _raw(pid, a), _raw(pid, b)
+    assert ra["src"][1] == s * 23 // 10 and rb["src"][0] == s * 23 // 10
+    assert rb["at"] == ra["at"] + T.item_duration(ra) - half  # overlap is still the dissolve
+    assert rb["at"] + T.item_duration(rb) == end_b
+
+
+def test_roll_needs_a_touching_neighbour(home):
+    pid = _mixer_cut("roll4")
+    with pytest.raises(E.EditorError, match="no clip touches"):
+        E.roll(pid, "a1", 0.5)  # a1 is alone on A1
+    with pytest.raises(E.EditorError):
+        E.roll(pid, "nope", 0.5)
+
+
+def test_desk_roll(desk):
+    pid = _mixer_cut("droll")
+    a, b = _split_c1(pid)
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "roll", "item": a, "by": -0.5})
+    assert st == 200 and f"Roll {a}|{b}" in res["project"]["summary"]
+    rows = {i["id"]: i for t in res["project"]["tracks"] for i in t["items"]}
+    assert abs(rows[a]["dur"] - 1.5) < 1e-9 and abs(rows[b]["at"] - 1.5) < 1e-9 and abs(rows[b]["dur"] - 2.5) < 1e-9
