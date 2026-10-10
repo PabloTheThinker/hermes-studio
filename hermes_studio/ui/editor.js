@@ -117,6 +117,12 @@
       .tl-bhit{fill:none;stroke:transparent;stroke-width:10;pointer-events:stroke;cursor:ns-resize}
       .tl-gk{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--amber);border:1px solid rgba(0,0,0,.65);pointer-events:auto;cursor:move;z-index:3}
       .tl-clip.on{outline:2px solid var(--amber);color:var(--ink);z-index:2}
+      /* A clip that is in the group but not the anchor: a thinner ring, so the last-clicked
+         clip (the one the inspector edits) still reads as the primary. */
+      .tl-clip.sel{outline:2px dashed rgba(222,171,66,.7);z-index:2}
+      .tl-clip.sel.on{outline:2px solid var(--amber)}
+      /* The marquee rectangle, drawn over the lanes while a drag selects. */
+      .tl-marq{position:absolute;border:1px solid var(--amber);background:rgba(222,171,66,.12);pointer-events:none;z-index:6;border-radius:2px}
       .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent;z-index:4}
       .tl-h.a{left:0} .tl-h.b{right:0}
       .tl-clip.on .tl-h{background:var(--amber)}
@@ -134,6 +140,11 @@
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
+  // Multi-clip selection, Resolve / Final Cut style. selSet holds every selected clip id;
+  // sel stays the "last one" so the inspector keeps pointing at something concrete. An
+  // anchored item (a text bound to a clip) never joins the group -- it has no timeline of
+  // its own to move on -- but a marquee over the timeline still shows the clips it covers.
+  let selSet = new Set();
   let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
   let waves = {}; // media id -> {rate, peaks} once fetched, "wait" while in flight
   // The preview mixer (mix.js): when every audible clip's sound is decoded, playback runs on
@@ -334,6 +345,20 @@
     }
     return null;
   }
+  // ---- multi-clip selection -------------------------------------------------------
+  // A movable item is one that carries its own `at` (a clip or a piece of one). An anchored
+  // item (text bound to a clip) has no `at` of its own, so it never joins a group move or
+  // delete -- move_items/delete_items would refuse it anyway.
+  function movable(id) { const it = find(id); return !!it && it.at != null && it.type !== "transition"; }
+  function selIds() { return [...selSet].filter(movable); }
+  function setSelSet(ids) {
+    selSet = new Set((ids || []).filter(movable));
+    if (!selSet.has(sel)) sel = selSet.size ? [...selSet].pop() : "";
+    selKf = -1;
+  }
+  function clearSelSet() { selSet = new Set(); }
+  // Resolve a live drag offset into a signed seconds delta for the group.
+  function groupDelta(d, e) { return snap(d.at0 + (e.clientX - d.x0) / pps) - d.at0; }
   function nextClip(it) {
     // The clip that starts where this one ends, on the same track -- the seam a dissolve
     // would live on. Returns null when there is no such neighbour (end of track, or a gap).
@@ -502,10 +527,11 @@
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
-              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
+              <div class="tl-marq" hidden></div>
             </div>`}
           </div>
         </div>
@@ -766,13 +792,35 @@
     } else if (clip && clip.dataset.at) {
       sel = clip.dataset.id;
       selKf = -1;
-      drag = { kind: "move", id: sel, at0: Number(clip.dataset.at), x0: e.clientX, moved: false };
+      // Shift+click grows or shrinks the group (Resolve / Final Cut); a plain click starts
+      // fresh. The whole group then drags together below in movePtr.
+      if (e.shiftKey) {
+        if (selSet.has(sel)) selSet.delete(sel); else selSet.add(sel);
+        if (!selSet.size) selSet.add(sel);  // never leave the group empty on a click
+      } else if (!selSet.has(sel)) {
+        selSet = new Set([sel]);
+      }
+      paintSel();
+      drag = { kind: "move", id: sel, at0: Number(clip.dataset.at), x0: e.clientX, moved: false, group: [...selSet] };
     } else if (e.target.closest("[data-lane]")) {
-      play = snap(Math.max(0, Math.min(doc.duration, xToTime(e))));
-      drag = { kind: "seek" };
-      head();
+      // A drag on empty lane is a marquee selection; a plain click seeks. Only starts a
+      // marquee once it moves, so a click never leaves a phantom box behind.
+      const box = e.currentTarget.closest(".tl-stack").getBoundingClientRect();
+      drag = { kind: "marq", x0: e.clientX, y0: e.clientY, bx: box.left, by: box.top, bw: box.width, bh: box.height,
+        at0: snap(Math.max(0, Math.min(doc.duration, xToTime(e)))), group: e.shiftKey ? [...selSet] : null, moved: false };
+      if (!e.shiftKey) { play = snap(Math.max(0, Math.min(doc.duration, xToTime(e)))); head(); }
     } else return;
     e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  // Repaint just the selection rings without rebuilding the DOM (a drag is in flight and a
+  // full paint() would detach the pointer listeners mid-gesture).
+  function paintSel() {
+    if (!root) return;
+    root.querySelectorAll(".tl-clip").forEach((n) => {
+      const on = selSet.has(n.dataset.id);
+      n.classList.toggle("sel", on);
+    });
   }
 
   function movePtr(e) {
@@ -830,6 +878,32 @@
       head();
       return;
     }
+    if (drag.kind === "marq") {
+      // Once it actually moves, draw the box and select every clip it covers. A tiny nudge
+      // (a sloppy click) is treated as no marquee, so seeking still wins.
+      if (Math.abs(e.clientX - drag.x0) < 4 && Math.abs(e.clientY - drag.y0) < 4) return;
+      drag.moved = true;
+      const mq = root.querySelector(".tl-marq");
+      const x1 = Math.min(drag.x0, e.clientX), x2 = Math.max(drag.x0, e.clientX);
+      const y1 = Math.min(drag.y0, e.clientY), y2 = Math.max(drag.y0, e.clientY);
+      if (mq) {
+        mq.hidden = false;
+        mq.style.left = (x1 - drag.bx) + "px";
+        mq.style.top = (y1 - drag.by) + "px";
+        mq.style.width = (x2 - x1) + "px";
+        mq.style.height = (y2 - y1) + "px";
+      }
+      // Select clips whose box intersects the marquee, in stack coordinates. Shift adds to
+      // the prior group; a plain marquee replaces it.
+      const hits = new Set(drag.group || []);
+      root.querySelectorAll(".tl-clip[data-id]").forEach((n) => {
+        const r = n.getBoundingClientRect();
+        if (r.right >= x1 && r.left <= x2 && r.bottom >= y1 && r.top <= y2 && movable(n.dataset.id)) hits.add(n.dataset.id);
+      });
+      setSelSet([...hits]);
+      paintSel();
+      return;
+    }
     if (drag.kind === "kf") {
       // Move the selected keyframe's time along the clip, clamped between its neighbours so
       // the track stays strictly increasing (dragging onto a neighbour would be refused by
@@ -862,9 +936,18 @@
       drag.atNow = t;
     } else {
       const t = snap(Math.max(0, drag.at0 + (e.clientX - drag.x0) / pps));
-      el.style.left = t * pps + "px";
       drag.atNow = t;
       drag.moved = Math.abs(e.clientX - drag.x0) > 3;
+      // Live-position every clip in the group; the primary one is `el`, the rest are its
+      // band-mates. A full paint() here would detach the pointer listeners mid-drag.
+      const delta = t - drag.at0;
+      for (const gid of (drag.group || [drag.id])) {
+        if (gid === drag.id) continue;
+        const ge = root.querySelector(`[data-id="${gid}"]`);
+        const git = find(gid);
+        if (ge && git) ge.style.left = Math.max(0, git.at + delta) * pps + "px";
+      }
+      if (el) el.style.left = t * pps + "px";
     }
   }
 
@@ -890,6 +973,12 @@
       paint();
       return;
     }
+    if (d && d.kind === "marq") {
+      const mq = root.querySelector(".tl-marq");
+      if (mq) mq.hidden = true;
+      if (!d.moved) return;  // a click already seeked in down(); leave selection alone
+      return;
+    }
     if (!d || d.kind === "seek" || d.atNow == null) return;
     if (d.kind === "kf") {
       if (!d.moved) { paint(); return; }
@@ -904,7 +993,9 @@
     if (d.kind === "move" && !d.moved) { paint(); return; }
     const body = d.kind === "trim"
       ? { op: "edge", item: d.id, edge: d.edge, at: d.atNow, ripple }
-      : { op: "move", item: d.id, at: d.atNow };
+      : d.kind === "move" && d.group && d.group.length > 1
+        ? { op: "move_items", ids: d.group, by: d.atNow - d.at0 }
+        : { op: "move", item: d.id, at: d.atNow };
     await commit(body);
   }
 
@@ -919,11 +1010,19 @@
   }
 
   async function commit(body) {
+    const deleting = body && (body.op === "delete_items" || (body.op === "lift" && body.ripple !== undefined));
     try {
       const data = await api(body);
       doc = data.project;
       afterEdit(body);
       msg = data.project.summary || "Saved.";
+      // A group edit drops clips that no longer exist from the group, then keeps the
+      // inspector pointed at something real. A plain delete clears the group outright.
+      if (deleting) clearSelSet();
+      else if (selSet.size) {
+        for (const id of [...selSet]) if (!find(id)) selSet.delete(id);
+        if (!selSet.has(sel) && selSet.size) sel = [...selSet].pop();
+      }
       if (sel && !find(sel)) {
         let best = null, gap = 0.25;
         for (const tr of doc.tracks) for (const i of tr.items) {
@@ -1401,6 +1500,9 @@
     if (!target) { msg = name === "split" ? "Move the playhead inside a clip." : "Select a clip first."; paint(); return; }
     sel = target.id;
     if (name === "split") await commit({ op: "split", item: target.id, at: play });
+    // A group delete: one step for the whole selection (Delete/Backspace, or the Lift
+    // button). A single selection keeps the plain lift, so history reads the same as before.
+    else if (name === "lift" && selIds().length > 1) await commit({ op: "delete_items", ids: selIds(), ripple });
     else if (name === "lift") await commit({ op: "lift", item: target.id, ripple });
   }
 
