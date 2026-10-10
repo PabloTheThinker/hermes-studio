@@ -463,3 +463,45 @@ def test_render_applies_a_dissolve_not_a_hard_cut(home):
     assert late[2] > late[0]
     # mid-blend carries BOTH red and blue: that is the dissolve, not a hard cut
     assert mid[0] > 40 and mid[2] > 40
+
+
+def test_render_honors_clip_speed(home):
+    """props.speed must change how long a clip occupies on the timeline."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    s = T.TICK_RATE
+
+    def build(speed_pair, pid):
+        folder = E._dir(pid)
+        _make_source(folder / "media" / "talk.mp4")
+        d = T.new_timeline(pid)
+        by = {t["id"]: t for t in d["tracks"]}
+        d["media"] = {"m1": {"path": "media/talk.mp4", "dur": 6 * s, "fps": [30, 1]}}
+        props = {} if speed_pair is None else {"speed": speed_pair}
+        by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 6 * s], "at": 0, "fade_in": 0, "fade_out": 0, "props": props}]
+        d, _ = T.stamp_hash(d)
+        (folder / "base.json").write_text(json.dumps(d))
+        from hermes_studio import oplog as _O
+
+        log = _O.Oplog(d, path=folder / "oplog.jsonl")
+        E._save_current(folder, log.doc)
+        return folder
+
+    def file_dur(out):
+        p = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
+             "-show_entries", "stream=nb_read_frames,duration", "-of", "default=nw=1", out["path"]],
+            capture_output=True, text=True,
+        )
+        vals = dict(l.split("=", 1) for l in p.stdout.strip().split("\n") if "=" in l)
+        return float(vals["duration"])
+
+    # A 6s source at 1x, 2x, 4x should occupy 6, 3, 1.5 seconds on the timeline.
+    for pair, expect in ((None, 6.0), ([2, 1], 3.0), ([4, 1], 1.5)):
+        pid = f"sp{expect:.1f}".replace(".", "_")
+        build(pair, pid)
+        out = R.render_project(pid)
+        assert out["duration"] == pytest.approx(expect, abs=0.05)
+        assert file_dur(out) == pytest.approx(expect, abs=0.15)

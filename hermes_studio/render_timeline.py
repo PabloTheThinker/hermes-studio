@@ -77,6 +77,23 @@ def _t2s(ticks: int, rate: int) -> float:
     return ticks / rate
 
 
+def _speed(it: dict) -> float:
+    """The clip's playback speed as a float. props.speed is a reduced [num, den] pair; a
+    missing or invalid value means real time (1.0)."""
+    props = it.get("props") or {}
+    raw = props.get("speed")
+    try:
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            num, den = float(raw[0]), float(raw[1])
+            if den != 0 and num > 0:
+                return num / den
+        if isinstance(raw, (int, float)) and raw > 0:
+            return float(raw)
+    except (TypeError, ValueError, ZeroDivisionError):
+        pass
+    return 1.0
+
+
 def _ass_escape_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -129,6 +146,12 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         i0, o1 = it["src"]
         if i0 >= o1:
             raise RenderError("a clip has no length")
+        speed = _speed(it)
+        # The source window is read at `speed`; a clip played faster than 1x covers fewer
+        # ticks on the timeline than the source range it spans, and slower covers more.
+        tl_dur = int(round((o1 - i0) / speed))
+        if tl_dur <= 0:
+            raise RenderError("a clip has no length")
         rel = str(media.get(it.get("media") or "", {}).get("path") or "")
         if not rel:
             raise RenderError("a clip has no picture")
@@ -137,16 +160,16 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             raise RenderError(f"picture file is missing: {path.name}")
         if cursor < it["at"]:
             inputs.append({"role": "gap", "at": cursor, "end": it["at"]})
-        cursor = it["at"] + (o1 - i0)
+        cursor = it["at"] + tl_dur
         end_tick = max(end_tick, cursor)
         idx = seen.get(rel)
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
             sw, sh = _probe_size(path)
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id")})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id"), "speed": speed})
         else:
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id")})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed})
 
     audio: list[dict] = []
     for role in ("voice", "music"):
@@ -349,14 +372,24 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             src = f"s{idx}_{k}" if v_uses.get(idx, 0) > 1 else f"{idx}:v"
             i0, o1 = inp["src"]
             s_in = _t2s(i0, rate)
-            dur = _t2s(o1 - i0, rate)
+            src_dur = _t2s(o1 - i0, rate)
+            speed = float(inp.get("speed") or 1.0)
+            # The source window is always `src_dur` long; rescaling its timestamps by
+            # 1/speed plays it faster (shorter output) or slower (longer). PTS-STARTPTS
+            # still re-bases each segment to zero so concat/xfade see clean, aligned
+            # streams; fps= then re-timestamps to the canvas rate.
+            dur = src_dur / speed
             v_in.append(f"[v{n}]")
             seg_ids.append(inp.get("id"))
             seg_durs.append(dur)
             sw, sh = inp["size"] or (w, h)
             dw, dh, x, y = _contain(sw, sh, w, h)
-            chain = f"scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,fps={fps:.3f},format=yuv420p"
-            fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + dur:.3f},setpts=PTS-STARTPTS,{chain}[v{n}]")
+            # Re-base the trimmed segment to zero, then rescale by 1/speed so it plays
+            # faster (shorter output) or slower (longer). fps= re-timestamps to the canvas
+            # rate. At speed 1 the expression is a no-op, which keeps the normal path exact.
+            pts = f"(PTS-STARTPTS)/{speed:.6f}" if abs(speed - 1.0) > 1e-9 else "PTS-STARTPTS"
+            chain = f"scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,setpts={pts},fps={fps:.3f},format=yuv420p"
+            fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")
