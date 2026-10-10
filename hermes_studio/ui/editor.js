@@ -609,6 +609,7 @@
     }));
     const pic = root.querySelector(".tl-pic");
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
+    showGrade(); // the DOM was just rebuilt: put the clip's grade back on the picture
     showFrame();
     applySplit();
     sizeFrame();
@@ -657,7 +658,52 @@
     if (clock) clock.textContent = tc(play) + " / " + tc(doc.duration);
     if (big) big.textContent = fmt(play);
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
+    showGrade();
     showFrame();
+  }
+
+  // ---- the clip's grade, live in the preview ------------------------------------------
+  // The server sends each graded clip's grade as a preview pack (grade.py): one 257-point
+  // table per channel and the saturation matrix. Here they become an SVG filter on the
+  // picture -- feComponentTransfer (the lift/gamma/gain curve, linearly interpolated, within
+  // a code value of the exact curve) then feColorMatrix (saturation about Rec.709 luma).
+  // color-interpolation-filters="sRGB" so it works on the encoded values, as ffmpeg does;
+  // SVG's default (linearRGB) would grade a different picture than the render.
+  let gradeKey = "";
+  function showGrade() {
+    if (!root || !doc) return;
+    const it = mainClip(play);
+    const gp = it && it.grade_preview;
+    const key = gp ? it.id + ":" + JSON.stringify(it.grade) : "";
+    if (key === gradeKey && root.querySelector(".tl-gradesvg")) return; // paint() rebuilds the DOM
+    gradeKey = key;
+    let svg = root.querySelector(".tl-gradesvg");
+    if (!svg) {
+      svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "tl-gradesvg");
+      svg.setAttribute("width", "0");
+      svg.setAttribute("height", "0");
+      svg.setAttribute("aria-hidden", "true");
+      svg.style.position = "absolute";
+      const frame = root.querySelector(".tl-frame");
+      if (!frame) return;
+      frame.appendChild(svg);
+    }
+    const els = [root.querySelector(".tl-pic"), root.querySelector(".tl-vid")].filter(Boolean);
+    if (!gp) {
+      svg.innerHTML = "";
+      els.forEach((n) => { n.style.filter = ""; n.style.background = ""; });
+      return;
+    }
+    const f = (vals) => vals.map((v) => +v.toFixed(5)).join(" ");
+    const m = gp.matrix;
+    const mat = [0, 1, 2].map((r) => `${m[r][0]} ${m[r][1]} ${m[r][2]} 0 0`).join(" ") + " 0 0 0 1 0";
+    svg.innerHTML = `<filter id="hs-grade" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feComponentTransfer><feFuncR type="table" tableValues="${f(gp.tables[0])}"/><feFuncG type="table" tableValues="${f(gp.tables[1])}"/><feFuncB type="table" tableValues="${f(gp.tables[2])}"/></feComponentTransfer>
+      <feColorMatrix type="matrix" values="${mat}"/></filter>`;
+    // The element's own backdrop would be graded too (a lift would grey the letterbox), so it
+    // goes transparent and the frame's identical #050505 shows through, as in the render.
+    els.forEach((n) => { n.style.filter = "url(#hs-grade)"; n.style.background = "transparent"; });
   }
 
   let shown = -1;
