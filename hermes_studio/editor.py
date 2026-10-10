@@ -846,8 +846,17 @@ def waveform(pid: str, media_id: str) -> dict:
     return out
 
 
+# What the desk will serve from a project's media folder, and as what. Sound files are here
+# because music tracks hold them and the preview mixer has to fetch them.
+MEDIA_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime", ".webm": "video/webm",
+    ".mkv": "video/x-matroska", ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wav": "audio/wav", ".ogg": "audio/ogg", ".opus": "audio/ogg", ".flac": "audio/flac",
+}
+
+
 def project_media(pid: str, name: str) -> Path:
-    if Path(name).name != name or Path(name).suffix.lower() not in {".mp4", ".webm", ".mov", ".mkv"}:
+    if Path(name).name != name or Path(name).suffix.lower() not in MEDIA_TYPES:
         raise EditorError("bad media name")
     path = resolve_media(_dir(pid), f"media/{name}")
     if not path.is_file():

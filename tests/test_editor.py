@@ -1114,3 +1114,29 @@ def test_splitting_a_clip_never_changes_how_loud_the_render_is(home):
     E.split(pid, two[1], 1.4)
     after = _window_db(R.render_project(pid)["path"], 0.2, 1.8)
     assert abs(after - whole) < 0.5, (whole, after)
+
+
+def test_desk_serves_sound_files_for_the_preview_mixer(desk):
+    """Music tracks hold .mp3/.wav; the media route used to accept only video and label every
+    file video/mp4 or video/webm, so the preview mixer could never fetch a music file."""
+    import http.client
+    import subprocess
+
+    pid = _mixer_cut("snd")
+    wav = E._dir(pid) / "media" / "bed.wav"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=1", str(wav)],
+                   check=True, capture_output=True)
+    c = http.client.HTTPConnection("127.0.0.1", desk, timeout=20)
+    c.request("GET", f"/api/editor/{pid}/media/bed.wav", headers={"Host": f"127.0.0.1:{desk}"})
+    r = c.getresponse()
+    body = r.read()
+    assert r.status == 200 and r.getheader("Content-Type", "").startswith("audio/wav") and body[:4] == b"RIFF"
+    c.request("GET", f"/api/editor/{pid}/media/v.mp4", headers={"Host": f"127.0.0.1:{desk}"})
+    r = c.getresponse()
+    r.read()
+    assert r.status == 200 and r.getheader("Content-Type", "").startswith("video/mp4")
+    for bad in ("x.exe", "../base.json", "..%2Fbase.json"):
+        c.request("GET", f"/api/editor/{pid}/media/{bad}", headers={"Host": f"127.0.0.1:{desk}"})
+        r = c.getresponse()
+        r.read()
+        assert r.status == 404, bad

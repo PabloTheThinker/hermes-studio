@@ -321,6 +321,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
         if path.split("?")[0] == "/editor.js":
             return self._file(UI_DIR / "editor.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/mix.js":
+            return self._file(UI_DIR / "mix.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):
@@ -699,8 +701,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 media = editor.project_media(parts[2], parts[4])
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
-            kind = "video/mp4" if media.suffix.lower() == ".mp4" else "video/webm"
-            return self._file(media, kind)
+            return self._file(media, editor.MEDIA_TYPES[media.suffix.lower()])
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
             qs = parse_qs(urlparse(self.path).query)
             try:

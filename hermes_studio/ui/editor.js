@@ -68,7 +68,7 @@
       .tl-stack{position:relative}
       .tl-trk{display:grid;grid-template-columns:var(--lab,164px) 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
       .tl-rz{position:absolute;left:0;bottom:-3px;width:var(--lab,164px);height:6px;cursor:ns-resize;z-index:4}
-      .tl-lab{display:flex;align-items:center;gap:6px;padding-right:8px;height:100%;box-sizing:border-box}
+      .tl-lab{display:flex;align-items:center;gap:6px;padding-right:9px;height:100%;box-sizing:border-box}
       .tl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tl-mix{display:flex;gap:3px;flex:none}
       .tl-mix button{height:18px;min-width:18px;padding:0 4px;border-radius:3px;border:1px solid var(--line-2);background:transparent;color:var(--dim);font:700 9px var(--mono);cursor:pointer;line-height:16px}
@@ -76,6 +76,9 @@
       .tl-mix .tl-s.on{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
       .tl-mix .tl-g{min-width:40px;cursor:ns-resize;font-weight:500}
       .tl-trk.quiet .tl-lane{opacity:.4}
+      .tl-vu{position:absolute;right:2px;top:5px;bottom:5px;width:3px;border-radius:2px;background:rgba(242,239,232,.08);overflow:hidden}
+      .tl-vu b{position:absolute;inset:0;background:linear-gradient(to top,#3fb950 0%,#3fb950 80%,#d29922 80%,#d29922 95%,#e5484d 95%);clip-path:inset(100% 0 0 0)}
+      .tl-vu.hot{box-shadow:0 0 0 1px #e5484d}
       .tl-pill.solo{background:var(--amber);color:var(--amber-ink)}
       .tl-rz:hover,.tl-rz.on{background:linear-gradient(transparent 2px,var(--amber) 2px,var(--amber) 4px,transparent 4px)}
       .tl-lab{position:sticky;left:0;z-index:3;background:var(--bg);font:500 11px var(--mono);color:var(--dim);padding-left:12px}
@@ -108,6 +111,10 @@
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
   let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
   let waves = {}; // media id -> {rate, peaks} once fetched, "wait" while in flight
+  // The preview mixer (mix.js): when every audible clip's sound is decoded, playback runs on
+  // the audio clock and the picture follows it. Until then the old <video>-led path plays.
+  const mix = window.HSMix ? window.HSMix.create() : null;
+  let mixing = false;
   try {
     const saved = Number(localStorage.getItem("tl-stage-pct"));
     if (saved >= 24 && saved <= 86) stagePct = saved;
@@ -332,7 +339,7 @@
             <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
-              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
+              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
@@ -464,6 +471,7 @@
 
   function down(e) {
     if (e.button !== 0) return;
+    if (mix) mix.unlock(); // any click is a gesture: wake the sound output before Play is pressed
     const ms = e.target.closest("[data-mute],[data-solo]");
     if (ms) {
       // Toggle on press (pointer capture would retarget a click). One undoable step.
@@ -643,10 +651,21 @@
     await commit(body);
   }
 
+  // After an edit lands: fetch any new sound, and if the mix is playing keep it in step. A
+  // mixer move (mute/solo/gain) glides live; anything else re-schedules from where we are.
+  function afterEdit(body) {
+    if (!mix || !doc) return;
+    mix.load(doc, pid);
+    if (!mixing) return;
+    if (body && body.op === "track") mix.mixer(doc);
+    else { const p = mix.now(); mix.start(doc, p == null ? play : p); }
+  }
+
   async function commit(body) {
     try {
       const data = await api(body);
       doc = data.project;
+      afterEdit(body);
       msg = data.project.summary || "Saved.";
       if (sel && !find(sel)) {
         let best = null, gap = 0.25;
@@ -755,6 +774,9 @@
     playing = false;
     lastT = 0;
     if (raf) cancelAnimationFrame(raf);
+    if (mix) mix.stop();
+    mixing = false;
+    meters(true);
     const v = root && root.querySelector(".tl-vid");
     if (v) v.pause();
   }
@@ -785,7 +807,7 @@
   }
   function bindFilm(v) {
     v.ontimeupdate = () => {
-      if (!playing || !doc) return;
+      if (!playing || !doc || mixing) return;
       previewMix(v);
       const piece = pieceAt(v.dataset.file, v.currentTime);
       if (piece) {
@@ -823,12 +845,73 @@
     bindFilm(v);
     return true;
   }
+  // Mix mode: the picture follows the audio clock. Re-seek only past 150 ms of drift (a
+  // <video> seek costs a frame or two, so chasing every millisecond would stutter).
+  function syncPicture() {
+    const v = root && root.querySelector(".tl-vid");
+    if (!v) return;
+    const img = root.querySelector(".tl-pic");
+    const it = mainClip(play);
+    if (!it || !it.file) {
+      if (!v.paused) v.pause();
+      v.hidden = true;
+      if (img) img.hidden = true;
+      return;
+    }
+    v.hidden = false;
+    v.muted = true; // the sound comes from the mix
+    if (img) img.hidden = true;
+    const sp = it.speed || 1;
+    const want = () => { const c = mainClip(play) || it; return (c.src_in || 0) + Math.max(0, play - c.at) * (c.speed || 1); };
+    if (v.dataset.file !== it.file) {
+      v.dataset.file = it.file;
+      v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
+      v.addEventListener("loadedmetadata", () => { v.currentTime = want(); }, { once: true });
+    } else if (v.readyState >= 1 && Math.abs(v.currentTime - want()) > 0.15) {
+      v.currentTime = want();
+    }
+    if (v.playbackRate !== sp) v.playbackRate = sp;
+    if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
+  }
+
+  // Post-fader track meters (Resolve style): green to -12, amber to -3, red above.
+  const hotUntil = {};
+  function meters(reset) {
+    if (!root) return;
+    const lv = reset || !mix ? {} : mix.levels();
+    const now = performance.now();
+    root.querySelectorAll("[data-vu]").forEach((el) => {
+      const db = lv[el.dataset.vu];
+      const f = Number.isFinite(db) ? Math.max(0, Math.min(1, (db + 60) / 60)) : 0;
+      el.firstElementChild.style.clipPath = `inset(${((1 - f) * 100).toFixed(1)}% 0 0 0)`;
+      if (Number.isFinite(db) && db > -0.5) hotUntil[el.dataset.vu] = now + 1500;
+      el.classList.toggle("hot", !reset && (hotUntil[el.dataset.vu] || 0) > now);
+    });
+  }
+
   function loop(t) {
     if (!playing) return;
-    if (lastT) play += (t - lastT) / 1000;
+    if (mixing) {
+      const w = mix.waiting();
+      if (w > 2000) {
+        // No sound output answered. Don't freeze: fall back to the picture's own sound.
+        mix.stop();
+        mixing = false;
+        msg = "The sound output didn't start; playing the picture's own sound.";
+        paint();
+        if (!startFilm()) { lastT = 0; raf = requestAnimationFrame(loop); }
+        return;
+      }
+      const st = root.querySelector(".tl-status");
+      if (w > 250 && st) st.textContent = "Waking the sound output…";
+      else if (st && st.textContent === "Waking the sound output…") st.textContent = msg || "";
+      const p = mix.now();
+      if (p != null) play = p;
+    } else if (lastT) play += (t - lastT) / 1000;
     lastT = t;
     if (play >= doc.duration) { play = doc.duration; stop(); paint(); return; }
     head();
+    if (mixing) { syncPicture(); meters(false); }
     const sc = root.querySelector(".tl-scroll");
     const x = LAB + play * pps;
     if (sc && (x < sc.scrollLeft + LAB || x > sc.scrollLeft + sc.clientWidth - 24)) sc.scrollLeft = Math.max(0, x - sc.clientWidth * 0.4);
@@ -840,6 +923,17 @@
       if (playing) { stop(); paint(); return; }
       if (play >= doc.duration) play = 0;
       playing = true;
+      // unlock() has to run here, inside the click: browsers only start audio from a gesture.
+      if (mix && mix.unlock() && mix.ready(doc)) {
+        mixing = true;
+        mix.start(doc, play);
+        paint();
+        syncPicture(); // first video.play() also inside the gesture
+        lastT = 0;
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      if (mix) msg = "Sound is still loading; playing the picture's own sound for now.";
       paint();
       if (!startFilm()) raf = requestAnimationFrame(loop);
       return;
@@ -987,6 +1081,7 @@
       sel = target.id;
       await commit({ op: "split", item: target.id, at: play });
       playing = true;
+      if (mixing) return; // afterEdit re-scheduled the mix; the loop keeps the picture in step
       const v = root.querySelector(".tl-vid");
       if (v && !v.paused) bindFilm(v);
       else startFilm();
@@ -1064,6 +1159,7 @@
       const first = find(sel);
       play = first ? first.at + Math.min(1, first.dur / 2) : 0;
       msg = data.project.summary || "";
+      if (mix) mix.load(doc, pid);
       await loadWords();
       await loadHist();
       paint();
@@ -1079,5 +1175,11 @@
     root = null;
   }
   document.addEventListener("keydown", onKey);
-  window.HSEdit = { open, leave };
+  window.HSEdit = {
+    open, leave,
+    // Read-only view of the preview mixer, for checks and support.
+    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, levels: mix.levels(), waiting: mix.waiting() } : null),
+    // The live audio context, so a check can suspend it to prove the stalled-clock fallback.
+    mixContext: () => (mix ? mix.context : null),
+  };
 })();
