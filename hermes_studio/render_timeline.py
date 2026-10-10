@@ -82,7 +82,7 @@ def _ass_escape_path(path: Path) -> str:
 
 
 def _canvas(doc: dict) -> tuple[int, int]:
-    size = list(doc.get("size") or [1080, 1920])
+    size = list(doc.get("size") or [1920, 1080])
     try:
         w, h = int(size[0]), int(size[1])
     except (IndexError, TypeError, ValueError) as exc:

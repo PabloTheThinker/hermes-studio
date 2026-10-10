@@ -27,7 +27,7 @@
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
-      .tl-frame{height:auto;width:auto;max-height:96%;max-width:96%;aspect-ratio:9/16;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden;box-sizing:border-box}
+      .tl-frame{height:auto;width:auto;max-height:96%;max-width:96%;aspect-ratio:16/9;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden;box-sizing:border-box}
       .tl-vid,.tl-pic{object-fit:contain}
       .tl-can{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
       .tl-can2{display:flex;gap:6px;align-items:center;margin:0 0 8px}
@@ -144,8 +144,8 @@
     const keep = live && !live.paused ? live : null;
     if (keep) keep.remove();
     const d = doc, w = Math.max(d.duration, 1);
-    const size = d.size || [1080, 1920];
-    const cw = Number(size[0]) || 1080, ch = Number(size[1]) || 1920;
+    const size = d.size || [1920, 1080];
+    const cw = Number(size[0]) || 1920, ch = Number(size[1]) || 1080;
     const preset = cw === 1920 && ch === 1080 ? "desktop" : cw === 1080 && ch === 1920 ? "phone" : cw === ch ? "square" : "";
     const width = LAB + w * pps + 16;
     const ticks = [];
@@ -442,8 +442,8 @@
     const frame = root && root.querySelector(".tl-frame");
     if (!stage || !frame || !doc) return;
     const box = stage.getBoundingClientRect();
-    const size = doc.size || [1080, 1920];
-    const cw = Number(size[0]) || 1080, ch = Number(size[1]) || 1920;
+    const size = doc.size || [1920, 1080];
+    const cw = Number(size[0]) || 1920, ch = Number(size[1]) || 1080;
     const ratio = cw / ch;
     let fh = box.height * 0.9, fw = fh * ratio;
     if (fw > box.width * 0.94) { fw = box.width * 0.94; fh = fw / ratio; }

@@ -691,8 +691,12 @@ def stamp_hash(doc: dict) -> tuple[dict, str]:
     return d, h
 
 
-def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1080, 1920)) -> dict:
-    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music."""
+def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1920, 1080)) -> dict:
+    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music.
+
+    The default canvas is 1920x1080 (Sir, 2026-10-10): the desk is worked on a desktop, so a
+    new cut should open widescreen and let the person choose Phone or Square when they mean it.
+    """
     return {
         "schema_version": SCHEMA_VERSION, "id": project_id, "version": 0, "tick_rate": TICK_RATE,
         "fps": list(fps), "size": list(size), "media": {},

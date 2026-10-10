@@ -98,7 +98,7 @@ def view(doc: dict) -> dict:
         "version": doc["version"],
         "hash": doc["hash"],
         "duration": round(end, 3) or 1,
-        "size": list(doc.get("size") or [1080, 1920]),
+        "size": list(doc.get("size") or [1920, 1080]),
         "tracks": tracks,
     }
 

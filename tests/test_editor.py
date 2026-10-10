@@ -91,12 +91,14 @@ def test_import_lays_clips_end_to_end(home):
     assert view["summary"].startswith("Opened")
 
 
-def test_canvas_desktop_undo_and_reject(home):
+def test_canvas_phone_undo_and_reject(home):
+    """Desktop is the default now, so the undo check goes the other way: set Phone, undo back to Desktop."""
     E.create("demo")
-    desk = E.set_canvas("demo", 1920, 1080)
-    assert desk["size"] == [1920, 1080]
+    assert E.open_project("demo")["size"] == [1920, 1080]
+    desk = E.set_canvas("demo", 1080, 1920)
+    assert desk["size"] == [1080, 1920]
     back = E.undo("demo")
-    assert back["size"] == [1080, 1920]
+    assert back["size"] == [1920, 1080]
     with pytest.raises(E.EditorError):
         E.set_canvas("demo", 0, 1080)
 
