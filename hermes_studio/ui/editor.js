@@ -98,8 +98,13 @@
       .tl-wave path{fill:rgba(242,239,232,.30)}
       .tl-clip.on .tl-wave path{fill:rgba(242,239,232,.5)}
       .tl-wave .hot rect{fill:#e5484d}
+      .tl-band{position:absolute;left:0;right:0;top:12px;bottom:1px;z-index:2;pointer-events:none}
+      .tl-bandsvg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none}
+      .tl-bl{fill:none;stroke:var(--amber);stroke-width:1.5;opacity:.9;pointer-events:none}
+      .tl-bhit{fill:none;stroke:transparent;stroke-width:10;pointer-events:stroke;cursor:ns-resize}
+      .tl-gk{position:absolute;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--amber);border:1px solid rgba(0,0,0,.65);pointer-events:auto;cursor:move;z-index:3}
       .tl-clip.on{outline:2px solid var(--amber);color:var(--ink);z-index:2}
-      .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent}
+      .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent;z-index:4}
       .tl-h.a{left:0} .tl-h.b{right:0}
       .tl-clip.on .tl-h{background:var(--amber)}
       .tl-xf{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;border-radius:99px;background:var(--amber);color:var(--amber-ink);font:700 9px var(--sans);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;border:0;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
@@ -201,6 +206,38 @@
   }
   let wheelT = 0, wheelGain = null;
 
+  // The clip's volume line (rubber band) over the waveform, Resolve / Final Cut style. Its height
+  // runs +12 dB at the top to silence at the bottom; it shows volume x the envelope.
+  const BAND_TOP = 12, BAND_SPAN = 60;
+  function envAt(keys, u) {
+    if (window.HSMix && window.HSMix.envAt) return window.HSMix.envAt(keys, u);
+    return keys && keys.length ? keys[0].gain : 1;
+  }
+  function lvlY(g) {
+    const db = g > 0 ? 20 * Math.log10(g) : -Infinity;
+    return ((BAND_TOP - Math.max(-48, Math.min(BAND_TOP, db))) / BAND_SPAN) * 100;
+  }
+  function yLvl(frac) {
+    const db = BAND_TOP - frac * BAND_SPAN;
+    return db <= -47.5 ? 0 : Math.min(4, Math.pow(10, db / 20));
+  }
+  function bandHtml(c, keys, vol) {
+    const W = Math.max(1, c.dur * pps);
+    const lv = (u) => vol * (keys ? envAt(keys, u) : 1);
+    const pts = [[0, lv(0)]];
+    if (keys) for (const k of keys) if (k.at > 0 && k.at < c.dur) pts.push([k.at, lv(k.at)]);
+    pts.push([c.dur, lv(c.dur)]);
+    const line = pts.map(([u, g]) => `${(u * pps).toFixed(1)},${lvlY(g).toFixed(2)}`).join(" ");
+    const dots = (keys || []).map((k, i) => (k.at >= 0 && k.at <= c.dur
+      ? `<i class="tl-gk" data-gk="${i}" style="left:${(k.at * pps).toFixed(1)}px;top:${lvlY(vol * k.gain).toFixed(2)}%" title="Volume key ${i + 1} · ${esc(fmtDb(vol * k.gain))} dB · drag to move · Alt-click removes"></i>`
+      : "")).join("");
+    return `<svg class="tl-bandsvg" viewBox="0 0 ${W.toFixed(1)} 100" preserveAspectRatio="none"><polyline class="tl-bl" points="${line}" vector-effect="non-scaling-stroke"/><polyline class="tl-bhit" data-gline="1" points="${line}" vector-effect="non-scaling-stroke"><title>Clip level · drag up or down · Alt-click adds a volume key</title></polyline></svg>${dots}`;
+  }
+  function band(tr, c) {
+    if (c.type !== "clip" || !c.media || (tr.role !== "voice" && tr.role !== "music")) return "";
+    return `<span class="tl-band" data-band="${esc(c.id)}">${bandHtml(c, c.gain_keys, c.volume == null ? 1 : c.volume)}</span>`;
+  }
+
   // Audio waveform for one clip, drawn the way Resolve and Final Cut do: peaks on a dB scale
   // (so quiet speech still shows), shaped by the clip's volume and fades, red where it clips.
   function wave(tr, c) {
@@ -230,7 +267,7 @@
       for (let k = s; k < e; k++) if (w.peaks[k] > p) p = w.peaks[k];
       const t = ((j + 0.5) / cols) * c.dur;
       const g = Math.min(1, fi > 0 ? t / fi : 1, fo > 0 ? (c.dur - t) / fo : 1);
-      const amp = (p / 1000) * vol * Math.max(0, g);
+      const amp = (p / 1000) * vol * Math.max(0, g) * (c.gain_keys ? envAt(c.gain_keys, t) : 1);
       const db = 20 * Math.log10(Math.max(amp, 1e-6));
       top.push(Math.max(0, Math.min(1, (db + 48) / 48)));
       if (amp >= 0.98) hot.push(j);
@@ -410,7 +447,7 @@
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
             </div>`}
@@ -591,6 +628,36 @@
       return;
     }
     stop();
+    const gkEl = e.target.closest("[data-gk]");
+    const glEl = gkEl ? null : e.target.closest("[data-gline]");
+    if (gkEl || glEl) {
+      // The volume line. Alt-click the line adds a key at the level already there (so adding
+      // one never changes the sound); Alt-click a key removes it; otherwise drag.
+      const clipEl = (gkEl || glEl).closest("[data-id]");
+      const it = clipEl && find(clipEl.dataset.id);
+      if (!it) return;
+      sel = it.id;
+      const box = clipEl.querySelector(".tl-band").getBoundingClientRect();
+      const keys = it.gain_keys ? it.gain_keys.map((k) => ({ ...k })) : null;
+      const vol = it.volume == null ? 1 : it.volume;
+      if (e.altKey && gkEl) {
+        const left = keys.filter((_, i) => i !== Number(gkEl.dataset.gk));
+        commit({ op: "gainkeys", id: it.id, keys: left.length ? left : null });
+        return;
+      }
+      if (e.altKey && glEl) {
+        const f = fpsOf();
+        const u = Math.max(0, Math.min(it.dur, Math.round(((e.clientX - box.left) / pps) * f) / f));
+        const add = { at: u, gain: keys ? envAt(keys, u) : 1 };
+        const next = (keys || []).filter((k) => Math.abs(k.at - u) > 1e-6).concat([add]).sort((a, b) => a.at - b.at);
+        commit({ op: "gainkeys", id: it.id, keys: next });
+        return;
+      }
+      drag = { kind: gkEl ? "gk" : "gline", id: it.id, idx: gkEl ? Number(gkEl.dataset.gk) : -1, clipEl, box,
+        keys, keys0: keys ? keys.map((k) => ({ ...k })) : null, vol, vol0: vol, x0: e.clientX, y0: e.clientY, moved: false };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+      return;
+    }
     const kf = e.target.closest("[data-kfidx]");
     if (kf) {
       // A keyframe diamond: select it and start a drag that moves its time along the clip.
@@ -628,6 +695,38 @@
 
   function movePtr(e) {
     if (!drag) return;
+    if (drag.kind === "gk" || drag.kind === "gline") {
+      const it = find(drag.id);
+      if (!it) return;
+      drag.moved = drag.moved || Math.abs(e.clientX - drag.x0) > 2 || Math.abs(e.clientY - drag.y0) > 2;
+      if (!drag.moved) return;
+      let readout;
+      if (drag.kind === "gk") {
+        // A key moves in time (on the frame grid, between its neighbours) and in level.
+        const k = drag.keys, i = drag.idx, f = fpsOf();
+        const lo = i > 0 ? k[i - 1].at + 1 / f : 0, hi = i < k.length - 1 ? k[i + 1].at - 1 / f : it.dur;
+        const u = Math.max(lo, Math.min(hi, Math.round(((e.clientX - drag.box.left) / pps) * f) / f));
+        const level = yLvl(Math.max(0, Math.min(1, (e.clientY - drag.box.top) / drag.box.height)));
+        k[i] = { at: u, gain: drag.vol > 0 ? Math.min(4, level / drag.vol) : level };
+        readout = `Volume key ${fmtDb(level)} dB at ${tc(it.at + u)}`;
+      } else {
+        // The line itself: the clip's level with no keys (Final Cut), every key together with them.
+        const dDb = -((e.clientY - drag.y0) / drag.box.height) * BAND_SPAN;
+        const m = Math.pow(10, dDb / 20);
+        if (drag.keys0) {
+          drag.keys = drag.keys0.map((k) => ({ at: k.at, gain: Math.min(4, k.gain * m) }));
+          readout = `${dDb >= 0 ? "+" : "−"}${Math.abs(dDb).toFixed(1)} dB on every volume key`;
+        } else {
+          drag.vol = Math.max(0, Math.min(4, drag.vol0 * m));
+          readout = `Clip level ${fmtDb(drag.vol)} dB`;
+        }
+      }
+      const bandEl = drag.clipEl.querySelector(".tl-band");
+      if (bandEl) bandEl.innerHTML = bandHtml(it, drag.keys, drag.vol);
+      const st = root.querySelector(".tl-status");
+      if (st) st.textContent = readout;
+      return;
+    }
     if (drag.kind === "gain") {
       // A fader: 4 px per dB, up is louder. Snaps to 0 dB within half a dB, like a detent.
       let db = drag.db0 - (e.clientY - drag.y0) / 4;
@@ -690,6 +789,12 @@
   async function up() {
     const d = drag;
     drag = null;
+    if (d && (d.kind === "gk" || d.kind === "gline")) {
+      if (!d.moved) { paint(); return; }
+      if (d.kind === "gline" && !d.keys0) await commit({ op: "volume", id: d.id, volume: Math.round(d.vol * 1000) / 1000 });
+      else await commit({ op: "gainkeys", id: d.id, keys: d.keys.map((k) => ({ at: Math.round(k.at * 1e4) / 1e4, gain: Math.round(k.gain * 1000) / 1000 })) });
+      return;
+    }
     if (d && d.kind === "gain") {
       if (d.gNow != null) await commit({ op: "track", track: d.id, gain: d.gNow });
       return;

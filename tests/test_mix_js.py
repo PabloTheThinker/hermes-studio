@@ -53,8 +53,11 @@ const speed = Number(process.argv[5] || 1);
   m.start(doc, play, speed);
   const ctx = AC.last;
   const clips = ctx.sources.map((s) => {
-    const clipGain = s.out[0], strip = clipGain.out[0];
-    return { start: s.started, rate: s.playbackRate.value, env: clipGain.gain.events, strip: strip.gain.events };
+    // source -> fade gain -> [envelope gain] -> track strip (whose output is the meter)
+    const clipGain = s.out[0];
+    let node = clipGain.out[0], envelope = null;
+    if (!(node.out[0] instanceof Analyser)) { envelope = node.gain.events; node = node.out[0]; }
+    return { start: s.started, rate: s.playbackRate.value, env: clipGain.gain.events, envelope, strip: node.gain.events };
   });
   const now0 = m.now();
   ctx.currentTime += 1.5;
@@ -77,7 +80,8 @@ def _run(tmp_path, doc: dict, play: float, speed: float = 1) -> dict:
 def _clip(cid, at, src_in, src_out, **kw):
     return {"id": cid, "type": "clip", "file": f"{cid}.mp4", "at": at, "dur": src_out - src_in,
             "src_in": src_in, "src_out": src_out, "volume": kw.get("volume"),
-            "fade_in": kw.get("fade_in", 0), "fade_out": kw.get("fade_out", 0), "media_dur": 30}
+            "fade_in": kw.get("fade_in", 0), "fade_out": kw.get("fade_out", 0), "media_dur": 30,
+            "gain_keys": kw.get("gain_keys")}
 
 
 def _doc(*, a1=None, a2=None, voice=None, music=None):
@@ -151,3 +155,19 @@ def test_a_2x_shuttle_halves_the_wall_times_but_not_the_source_offsets(tmp_path)
     r = lambda x: round(x, 4)  # noqa: E731
     assert c["env"] == [["set", 0.0, when], ["ramp", w, r(when + 0.5)], ["set", w, r(when + 1)], ["ramp", 0.0, r(when + 2)]]
     assert abs(out["now15"] - 2 * (1.5 - 0.06)) < 1e-6
+
+
+def test_the_volume_envelope_is_automated_like_the_render(tmp_path):
+    """Keys 1.0 @1s, 0.25 @1.2s on a clip played from 0.5s into it: the envelope starts at its
+    value there (1.0), ramps to 0.25 at the 1.2s key, then holds -- the render's rule."""
+    keys = [{"at": 1.0, "gain": 1.0}, {"at": 1.2, "gain": 0.25}]
+    out = _run(tmp_path, _doc(voice=[_clip("a1", 2, 0, 4, gain_keys=keys)]), 2.5)
+    (c,) = out["clips"]
+    t0 = 10.06
+    assert c["envelope"] == [["set", 1.0, t0], ["ramp", 1.0, round(t0 + 0.5, 4)], ["ramp", 0.25, round(t0 + 0.7, 4)]]
+    # Started after the last key: it simply holds the last value.
+    out = _run(tmp_path, _doc(voice=[_clip("a1", 0, 0, 4, gain_keys=keys)]), 3)
+    assert out["clips"][0]["envelope"] == [["set", 0.25, t0]]
+    # No envelope: no extra stage.
+    out = _run(tmp_path, _doc(voice=[_clip("a1", 0, 0, 4)]), 0)
+    assert out["clips"][0]["envelope"] is None

@@ -22,6 +22,16 @@
   const LEAD = 0.06; // seconds between start() and the first sample, so scheduling never lands late
 
   function isAudio(tr) { return tr.role === "voice" || tr.role === "music"; }
+  // The clip's volume envelope at clip-local second u: linear between keys, held outside them
+  // (render_timeline._interp_expr, the same rule).
+  function envAt(keys, u) {
+    if (u <= keys[0].at) return keys[0].gain;
+    for (let i = 1; i < keys.length; i++) {
+      const a = keys[i - 1], b = keys[i];
+      if (u < b.at) return b.at > a.at ? a.gain + (b.gain - a.gain) * (u - a.at) / (b.at - a.at) : a.gain;
+    }
+    return keys[keys.length - 1].gain;
+  }
   function audible(doc, tr) {
     if (!isAudio(tr) || tr.mute || !(tr.gain == null || tr.gain > 0)) return false;
     return !doc.tracks.some((t) => t.solo) || !!tr.solo;
@@ -163,10 +173,22 @@
           if (into < foStart) g.gain.setValueAtTime(env(foStart), at(foStart));
           g.gain.linearRampToValueAtTime(0, at(span));
         }
+        // The volume envelope rides on a second gain after the fades: value at the start point,
+        // then a linear ramp to each later key inside the clip; after the last key it holds.
+        let tail = g;
+        const keys = Array.isArray(c.gain_keys) && c.gain_keys.length ? c.gain_keys : null;
+        if (keys) {
+          const env = ctx.createGain();
+          env.gain.setValueAtTime(envAt(keys, into), when);
+          for (const k of keys) if (k.at > into && k.at <= span) env.gain.linearRampToValueAtTime(k.gain, at(k.at));
+          g.connect(env);
+          tail = env;
+        }
         const src = ctx.createBufferSource();
         src.buffer = buf;
         src.playbackRate.value = rate;
-        src.connect(g).connect(strip(tr.id).gain);
+        src.connect(g);
+        tail.connect(strip(tr.id).gain);
         src.start(when, c.src_in + into, dur);
         sources.push(src);
       }
@@ -211,5 +233,5 @@
       get running() { return running; }, get context() { return ctx; } };
   }
 
-  window.HSMix = { create, MIX };
+  window.HSMix = { create, MIX, envAt };
 })();
