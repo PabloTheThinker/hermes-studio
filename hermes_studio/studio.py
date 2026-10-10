@@ -794,6 +794,9 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.move(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "grade":
+                project = editor.set_grade(pid, str(body.get("id") or ""), lift=body.get("lift"),
+                                           gamma=body.get("gamma"), gain=body.get("gain"), sat=body.get("sat"))
             elif op == "slide":
                 project = editor.slide(pid, str(body.get("item") or ""), _num(body, "by", 0.0))
             elif op == "roll":

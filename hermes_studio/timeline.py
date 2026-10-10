@@ -68,7 +68,7 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
 # It multiplies props.volume, so the volume stays the clip's overall trim.
@@ -76,7 +76,9 @@ GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None}
+# Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
+GRADE_KEYS = {"lift", "gamma", "gain", "sat"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
 # added since is hashed only when set, so a new optional prop never changes an old doc's hash.
 HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
@@ -592,6 +594,21 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.bad("out_of_range", _j(ip, "props", "crop"), "crop must be a non-empty box inside the frame")
             if pr.get("look") is not None:
                 c.string(pr["look"], _j(ip, "props", "look"))
+            if pr.get("grade") is not None and c.keys(pr["grade"], _j(ip, "props", "grade"), set(), GRADE_KEYS):
+                from hermes_studio import grade as _G
+
+                gr = pr["grade"]
+                for k in ("lift", "gamma", "gain"):
+                    if k not in gr:
+                        continue
+                    if not (isinstance(gr[k], list) and len(gr[k]) == 3):
+                        c.bad("wrong_type", _j(ip, "props", "grade", k), f"{k} must be [r, g, b]")
+                        continue
+                    lo, hi = _G.RANGES[k]
+                    for n, v in enumerate(gr[k]):
+                        c.ratio(v, _j(ip, "props", "grade", k, n), lo, hi, lo_open=(k == "gamma" and lo == 0))
+                if "sat" in gr:
+                    c.ratio(gr["sat"], _j(ip, "props", "grade", "sat"), *_G.SAT)
             if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
                 tf = pr["transform"]
                 for k in ("x", "y"):

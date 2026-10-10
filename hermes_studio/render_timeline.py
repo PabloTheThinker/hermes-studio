@@ -18,6 +18,8 @@ Shape of a render:
 
 from __future__ import annotations
 
+from hermes_studio import grade as _G
+
 import shutil
 import subprocess
 from pathlib import Path
@@ -316,7 +318,8 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         transform = _transform(it)
         keyframes = _keyframes(it, rate)
         fi, fo = it.get("fade_in") or 0, it.get("fade_out") or 0
-        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes}
+        grade = _G.parse((it.get("props") or {}).get("grade"))
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -618,6 +621,11 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             dw, dh, x, y = _contain(sw, sh, w, h)
             look = _look_chain(inp.get("look"))
             look_filter = f"{look}," if look else ""
+            # The primary grade (grade.py): on the clip's own pixels, right after the scale and
+            # before transform/pad, so a lift never lifts the letterbox. Same formula the
+            # preview shows.
+            gchain = _G.ffmpeg_chain(inp.get("grade"))
+            grade_filter = f"{gchain}," if gchain else ""
             # Transform acts on the contained frame before it meets the canvas: scale
             # multiplies it, rotate turns it, and x/y pan it by a fraction of the canvas.
             # The frame is padded onto a layer at least canvas-sized (so a zoom-out leaves
@@ -667,7 +675,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
             pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
-            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{xf}{pad}{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
+            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
             fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)

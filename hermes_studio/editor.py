@@ -15,6 +15,7 @@ import subprocess
 from fractions import Fraction
 from pathlib import Path
 
+from hermes_studio import grade as _GR
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
 
@@ -191,6 +192,9 @@ def view(doc: dict) -> dict:
                 row["volume"] = _pair_to_float(props.get("volume"))
                 row["crop"] = _crop_view(props.get("crop"))
                 row["transform"] = _transform_view(props.get("transform"))
+                _g = _GR.parse(props.get("grade"))
+                row["grade"] = _GR.view(_g)
+                row["grade_preview"] = _GR.preview(_g)
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
                 gk = props.get("gain_keys")
                 row["gain_keys"] = (
@@ -716,6 +720,21 @@ def set_crop(pid: str, item_id: str, x: float, y: float, w: float, h: float) -> 
         crop = {"x": pair(x), "y": pair(y), "w": pair(w), "h": pair(h)}
         label = f"Crop {w:g}×{h:g}"
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"crop": crop}}], label)
+
+
+def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=None) -> dict:
+    """Primary colour correction on a clip: lift / gamma / gain per channel ([r, g, b]) and
+    saturation. The identity clears the grade. One set_props op: one undo step. See grade.py
+    for the formula the render and the preview share."""
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can be graded")
+    try:
+        stored = _GR.store(lift=lift, gamma=gamma, gain=gain, sat=sat)
+    except (ValueError, TypeError) as exc:
+        raise EditorError(str(exc)) from None
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": stored}}],
+                 f"Grade {item_id}" if stored else f"Grade {item_id} reset")
 
 
 def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:
