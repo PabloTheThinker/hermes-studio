@@ -230,6 +230,18 @@ def _volume(it: dict) -> float:
     return _level((it.get("props") or {}).get("volume"))
 
 
+def _gain_keys(it: dict, rate: int) -> list[dict] | None:
+    """The clip's volume envelope as [{at: clip-local seconds, gain: float}], or None."""
+    raw = (it.get("props") or {}).get("gain_keys")
+    if not isinstance(raw, list) or not raw:
+        return None
+    out = []
+    for k in raw:
+        if isinstance(k, dict) and isinstance(k.get("at"), int):
+            out.append({"at": _t2s(k["at"], rate), "gain": _level(k.get("gain"))})
+    return out or None
+
+
 def _ass_escape_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -352,6 +364,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                     "fade_in": it.get("fade_in") or 0,
                     "fade_out": it.get("fade_out") or 0,
                     "volume": _volume(it) * gain,
+                    "gain_keys": _gain_keys(it, rate),
                 }
             )
 
@@ -449,19 +462,29 @@ def _build_ass(plan: dict, cache: Path) -> Path | None:
 
 
 def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
-    """A piecewise-linear ffmpeg expression for one transform value over the keyframes.
-    Between two keyframes the value is a linear ramp; before the first and after the last it
-    holds the endpoint. Each segment is ``if(between(t,a,b), a+(b-a)*(t-a)/(b-a), <next>)``,
-    built from the last segment inward so the final else is the first keyframe's value."""
-    expr = f"{kfs[0][key]:.6f}"
-    for i in range(1, len(kfs)):
+    """A piecewise-linear ffmpeg expression for one value over keyframes (sorted by ``at``).
+
+    Before the first key it holds the first value; between two keys it ramps linearly; after
+    the last key it holds the LAST value. Built from the end: start with the last value, then
+    for each segment from the last to the first wrap ``if(lt(t, b.at), <segment>, <rest>)``,
+    and finally guard the time before the first key.
+
+    The old builder got two things wrong, and transform keyframes rendered wrong because of it:
+    after the last key it fell back to the FIRST key's value, and a segment between two equal
+    values replaced everything built so far (so keys 1, 2, 2, 1 lost the ramp from 1 to 2).
+    """
+    def v(x: float) -> str:
+        return f"{x:.6f}"
+
+    expr = v(kfs[-1][key])
+    for i in range(len(kfs) - 1, 0, -1):
         a, b = kfs[i - 1], kfs[i]
-        if abs(b[key] - a[key]) < 1e-12:
-            expr = f"{a[key]:.6f}"
+        if abs(b[key] - a[key]) < 1e-12 or b["at"] <= a["at"]:
+            seg = v(a[key])
         else:
-            ramp = f"{a[key]:.6f}+({b[key]:.6f}-{a[key]:.6f})*({tvar}-{a['at']:.6f})/({b['at']:.6f}-{a['at']:.6f})"
-            expr = f"if(between({tvar},{a['at']:.6f},{b['at']:.6f}),{ramp},{expr})"
-    return expr
+            seg = f"{v(a[key])}+({v(b[key])}-{v(a[key])})*({tvar}-{v(a['at'])})/({v(b['at'])}-{v(a['at'])})"
+        expr = f"if(lt({tvar},{v(b['at'])}),{seg},{expr})"
+    return f"if(lt({tvar},{v(kfs[0]['at'])}),{v(kfs[0][key])},{expr})" if len(kfs) > 1 else expr
 
 
 def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
@@ -675,6 +698,11 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         # single-track mix, and a relative share is the wrong model for a level anyway).
         vol = float(row.get("volume") or 1.0)
         vol_filter = f",volume={vol:.4f}" if abs(vol - 1.0) > 1e-6 else ""
+        # The clip's volume envelope (rubber band) rides on top of its volume. After asetpts the
+        # stream's t is clip-local seconds, which is what the keys are in. eval=frame re-reads
+        # the expression every audio frame (1024 samples, ~21 ms), fine for a level ramp.
+        if row.get("gain_keys"):
+            vol_filter += f",volume=eval=frame:volume='{_interp_expr(row['gain_keys'], 'gain', 't')}'"
         lab = f"au{n}"
         k = cut_a.get(idx, 0)
         cut_a[idx] = k + 1
@@ -701,7 +729,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         # erase any level the user set by hand. So only auto-level when every clip is at its
         # default volume -- otherwise the authored mix is respected, with a limiter to keep
         # peaks safe.
-        hand_set = any(abs(float(r.get("volume") or 1.0) - 1.0) > 1e-6 for r in plan["audio"])
+        hand_set = any(abs(float(r.get("volume") or 1.0) - 1.0) > 1e-6 or r.get("gain_keys") for r in plan["audio"])
         tail = "alimiter=limit=0.95,aresample=48000" if hand_set else "alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000"
         fc.append(
             "".join(f"[{lab}]" for lab, _role, _vol in a_ready)

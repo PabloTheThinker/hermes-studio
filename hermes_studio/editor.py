@@ -190,6 +190,11 @@ def view(doc: dict) -> dict:
                 row["crop"] = _crop_view(props.get("crop"))
                 row["transform"] = _transform_view(props.get("transform"))
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
+                gk = props.get("gain_keys")
+                row["gain_keys"] = (
+                    [{"at": round(k["at"] / rate, 4), "gain": round(_pair_to_float(k["gain"]), 4)} for k in gk]
+                    if isinstance(gk, list) and gk else None
+                )
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
@@ -459,6 +464,30 @@ def set_track(pid: str, track_id: str, *, mute: bool | None = None, solo: bool |
     if len(op) == 2:
         raise EditorError("nothing to set on the track")
     return apply(pid, [op], f"{track_id} " + ", ".join(words))
+
+
+def set_gain_keys(pid: str, item_id: str, keys: list | None) -> dict:
+    """A clip's volume envelope (the rubber band): [{at: seconds from the clip's start, gain}],
+    or None to clear it. The op log validates order, count and range; this only converts
+    seconds to ticks and levels to [num, den] pairs."""
+    from fractions import Fraction
+
+    if keys is None:
+        return apply(pid, [{"op": "set_props", "id": item_id, "props": {"gain_keys": None}}], "Volume keys cleared")
+    if not isinstance(keys, list) or not keys:
+        raise EditorError("gain keys must be a list of {at, gain}")
+    out = []
+    for k in keys:
+        try:
+            at, g = float(k["at"]), float(k["gain"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EditorError("each gain key needs a number 'at' and 'gain'") from exc
+        if not (0.0 <= g <= 4.0):
+            raise EditorError("a gain key's level must be between 0 and 4")
+        fr = Fraction(g).limit_denominator(1000)
+        out.append({"at": T.seconds_to_ticks(at), "gain": [fr.numerator, fr.denominator]})
+    n = len(out)
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"gain_keys": out}}], f"Volume keys ×{n}")
 
 
 def set_fade(pid: str, item_id: str, *, fade_in: float = 0.0, fade_out: float = 0.0) -> dict:

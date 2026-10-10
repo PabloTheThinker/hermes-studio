@@ -40,7 +40,8 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | doc | `markers` | list of `{id, at, label}` |
 | clip | `id, type:"clip", media, src:[in,out], fade_in, fade_out` | required; `src` in media ticks, `in < out ≤ media.dur` |
 | clip | `at` or `anchor` | exactly one; `anchor` only on music tracks |
-| clip | `props` | optional `{volume, speed, crop, look}`; defaults `[1,1]`, `[1,1]`, `null`, `null` |
+| clip | `props` | optional `{volume, speed, crop, look, transform, keyframes, gain_keys}`; defaults `[1,1]`, `[1,1]`, `null`, `null`, `null`, `null`, `null` |
+| clip | `props.gain_keys` | the volume envelope (rubber band): a sorted list (1–64) of `{at, gain}`, `at` ticks from the clip's start, `gain` `[num, den]` 0–4. Linear between keys, held before the first and after the last; it multiplies `volume`. Any envelope counts as a hand-set level, so the render's loudnorm stands aside |
 | clip | `split_from` | optional id of the item this was split from (it need not still exist) |
 | text | `id, type:"text", dur, text, style, fade_in, fade_out` + `at` or `anchor` | `split_from` optional |
 | transition | `id, type:"transition", kind:"xfade", between:[a,b], dur` | on clip tracks only |
@@ -132,7 +133,7 @@ item whose own id is malformed or duplicated anywhere in the doc leaves `id` off
 3. Drop `version` and `hash`. Everything else, including `schema_version`, is hashed (any other
    `schema_version` value fails validation first). In clip `props`, the four keys hs.timeline/1
    shipped with (`volume`, `speed`, `crop`, `look`) are always hashed with defaults filled in;
-   any prop added since (`transform`, `keyframes`, and anything later) is hashed **only when it
+   any prop added since (`transform`, `keyframes`, `gain_keys`, and anything later) is hashed **only when it
    is set** (not `null`). Adding an optional prop must never change the hash of a document that
    doesn't use it, or every op log written before it stops replaying. A golden-hash test pins this.
 4. `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, UTF-8. The doc has no

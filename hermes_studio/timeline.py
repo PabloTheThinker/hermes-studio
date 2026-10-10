@@ -63,11 +63,15 @@ CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys"}
+# A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
+# start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
+# It multiplies props.volume, so the volume stays the clip's overall trim.
+GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
 # added since is hashed only when set, so a new optional prop never changes an old doc's hash.
 HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
@@ -516,6 +520,27 @@ def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
             prev_at = kf["at"]
 
 
+def _check_gain_keys(c: _Checker, keys: Any, path: str) -> None:
+    """A volume envelope: a sorted, non-empty list of {at, gain} (same rule ids as keyframes)."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_keyframes", path, "gain_keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} gain keys")
+        return
+    prev_at = None
+    for i, k in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(k, kp, GAIN_KEY_KEYS):
+            continue
+        ok_at = c.ticks(k["at"], _j(kp, "at"), signed=True)
+        c.ratio(k["gain"], _j(kp, "gain"), Fraction(0), VOLUME_MAX)
+        if ok_at and _is_int(k["at"]):
+            if prev_at is not None and k["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "gain keys must be in strictly increasing time order")
+            prev_at = k["at"]
+
+
 def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict) -> None:
     if typ == "transition":
         if not c.keys(it, ip, TRANSITION_KEYS):
@@ -568,6 +593,8 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 c.ratio(tf["rotate"], _j(ip, "props", "transform", "rotate"), -ROTATE_MAX, ROTATE_MAX)
             if pr.get("keyframes") is not None:
                 _check_keyframes(c, pr["keyframes"], _j(ip, "props", "keyframes"))
+            if pr.get("gain_keys") is not None:
+                _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")

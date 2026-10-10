@@ -825,6 +825,9 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
             elif op == "canvas":
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "gainkeys":
+                keys = body.get("keys")
+                project = editor.set_gain_keys(pid, str(body.get("id") or ""), keys if isinstance(keys, list) else None)
             elif op == "track":
                 # gain 0 is a real value (silence), so never `or`-default it.
                 g = body.get("gain")

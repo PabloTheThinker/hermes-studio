@@ -1200,3 +1200,45 @@ def test_desk_render_takes_the_in_and_out_marks(desk):
     assert st == 200 and res["render"]["range"] == [1.0, 2.5]
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "render", "in": 3, "out": 1})
     assert st == 400 and "range" in res["error"]
+
+
+# ---------------------------------------------------------------- volume envelope (rubber band)
+
+
+def test_render_follows_a_volume_envelope(home):
+    """Hold full level to 1.0s, ramp to 0.25 (-12 dB) by 1.2s, hold. The render must drop
+    12 dB right there; without the envelope the two halves match."""
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("gk")
+    # The reference is a flat envelope (one key at 1.0): any envelope is a hand-set level, so it
+    # takes the same no-loudnorm path, and the two renders compare like for like.
+    E.set_gain_keys(pid, "a1", [{"at": 0, "gain": 1}])
+    flat = R.render_project(pid)["path"]
+    a, b = _window_db(flat, 0.2, 0.9), _window_db(flat, 1.4, 1.9)
+    assert abs(a - b) < 1.0
+    E.set_gain_keys(pid, "a1", [{"at": 0, "gain": 1}, {"at": 1.0, "gain": 1}, {"at": 1.2, "gain": 0.25}])
+    out = R.render_project(pid)["path"]
+    before, after = _window_db(out, 0.2, 0.9), _window_db(out, 1.4, 1.9)
+    assert 11.0 < before - after < 13.0, (before, after)
+    assert abs(before - a) < 1.0  # the envelope at 1.0 leaves the start untouched
+
+
+def test_gain_keys_round_trip_validate_and_undo(home):
+    pid = _mixer_cut("gk2")
+    v = E.set_gain_keys(pid, "a1", [{"at": 0.5, "gain": 1}, {"at": 1.5, "gain": 0.5}])
+    a1 = next(i for t in v["tracks"] for i in t["items"] if i["id"] == "a1")
+    assert a1["gain_keys"] == [{"at": 0.5, "gain": 1.0}, {"at": 1.5, "gain": 0.5}]
+    for bad in ([{"at": 1, "gain": 1}, {"at": 0.5, "gain": 1}],  # out of order
+                [{"at": 1, "gain": 9}],  # too loud
+                [{"at": 1}],  # no gain
+                []):
+        with pytest.raises(E.EditorError):
+            E.set_gain_keys(pid, "a1", bad)
+    E.undo(pid)
+    a1 = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "a1")
+    assert a1["gain_keys"] is None
+    E.set_gain_keys(pid, "a1", [{"at": 0, "gain": 0.5}])
+    E.set_gain_keys(pid, "a1", None)
+    a1 = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "a1")
+    assert a1["gain_keys"] is None
