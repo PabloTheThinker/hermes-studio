@@ -122,6 +122,8 @@
       .tl-clip.sel{outline:2px dashed rgba(222,171,66,.7);z-index:2}
       .tl-clip.sel.on{outline:2px solid var(--amber)}
       /* The marquee rectangle, drawn over the lanes while a drag selects. */
+      .tl-clip.slipping{cursor:ew-resize;outline:2px dotted var(--amber)}
+      .tl-clip.slipping .tl-wave{opacity:.85}
       .tl-marq{position:absolute;border:1px solid var(--amber);background:rgba(222,171,66,.12);pointer-events:none;z-index:6;border-radius:2px}
       .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent;z-index:4}
       .tl-h.a{left:0} .tl-h.b{right:0}
@@ -789,6 +791,21 @@
       const it = find(edge.dataset.id);
       sel = edge.dataset.id;
       drag = { kind: "trim", edge: edge.dataset.edge, id: sel, at: it.at, dur: it.dur };
+    } else if (clip && clip.dataset.at && e.altKey && (find(clip.dataset.id) || {}).type === "clip") {
+      // Alt/Option-drag slips (Final Cut's slip, Resolve's trim-mode drag on a clip body):
+      // the clip stays put, its source window slides under it. Limits come from the media,
+      // so the drag stops at either end instead of failing on release.
+      const it = find(clip.dataset.id);
+      sel = it.id;
+      selKf = -1;
+      selSet = new Set([sel]);
+      paintSel();
+      const sp = it.speed || 1;
+      drag = { kind: "slip", id: it.id, x0: e.clientX, el: clip, by: 0, moved: false,
+        lo: -(it.src_in || 0) / sp,
+        hi: it.media_dur != null ? (it.media_dur - it.src_out) / sp : Infinity,
+        src_in: it.src_in || 0, src_out: it.src_out || 0, sp };
+      clip.classList.add("slipping");
     } else if (clip && clip.dataset.at) {
       sel = clip.dataset.id;
       selKf = -1;
@@ -904,6 +921,20 @@
       paintSel();
       return;
     }
+    if (drag.kind === "slip") {
+      // Timeline seconds on the frame grid, clamped to the media. Only the readout and the
+      // waveform move live; the clip's box stays where it is, which is the point of a slip.
+      const f = fpsOf();
+      const raw = (e.clientX - drag.x0) / pps;
+      drag.by = Math.max(drag.lo, Math.min(drag.hi, Math.round(raw * f) / f));
+      drag.moved = drag.moved || Math.abs(e.clientX - drag.x0) > 3;
+      const w = drag.el.querySelector(".tl-wave");
+      if (w) w.style.transform = `translateX(${(-drag.by * pps).toFixed(1)}px)`;
+      const st = root.querySelector(".tl-status");
+      const a = drag.src_in + drag.by * drag.sp, b = drag.src_out + drag.by * drag.sp;
+      if (st) st.textContent = `Slip ${drag.by >= 0 ? "+" : "−"}${tc(Math.abs(drag.by))} · source ${tc(a)} – ${tc(b)}${drag.by === drag.lo || drag.by === drag.hi ? " · end of media" : ""}`;
+      return;
+    }
     if (drag.kind === "kf") {
       // Move the selected keyframe's time along the clip, clamped between its neighbours so
       // the track stays strictly increasing (dragging onto a neighbour would be refused by
@@ -973,12 +1004,21 @@
       paint();
       return;
     }
+    if (d && d.kind === "slip") {
+      d.el.classList.remove("slipping");
+      if (!d.moved || Math.abs(d.by) < 1e-9) { paint(); return; }
+      await commit({ op: "slip", item: d.id, by: Math.round(d.by * 1e6) / 1e6 });
+      return;
+    }
     if (d && d.kind === "marq") {
       const mq = root.querySelector(".tl-marq");
       if (mq) mq.hidden = true;
       if (!d.moved) return;  // a click already seeked in down(); leave selection alone
       return;
     }
+    // A plain click on a clip (no drag) changes the selection: repaint so the ring and the
+    // inspector follow. This must run before the atNow check, which a click never sets.
+    if (d && d.kind === "move" && !d.moved) { paint(); return; }
     if (!d || d.kind === "seek" || d.atNow == null) return;
     if (d.kind === "kf") {
       if (!d.moved) { paint(); return; }
@@ -1533,6 +1573,25 @@
       return;
     }
     if (code === "KeyX" && e.altKey) { e.preventDefault(); inOut = { in: null, out: null }; saveMarks(); paint(); return; }
+    if (code === "Comma" || code === "Period") {
+      // , and . nudge the selection a frame (Shift: a second), as in Resolve and Final Cut.
+      // With Alt they slip the selected clip instead. e.code, because Alt+, types "≤" on a Mac.
+      e.preventDefault();
+      const f = fpsOf();
+      const by = (code === "Period" ? 1 : -1) * (e.shiftKey ? Math.round(f) : 1) / f;
+      if (e.altKey) {
+        const it = find(sel);
+        if (!it || it.type !== "clip") { msg = "Select a clip to slip."; paint(); return; }
+        commit({ op: "slip", item: it.id, by: Math.round(by * 1e6) / 1e6 });
+        return;
+      }
+      const ids = selIds().length ? selIds() : (movable(sel) ? [sel] : []);
+      if (!ids.length) { msg = "Select a clip to nudge."; paint(); return; }
+      // Always relative, even for one clip: the engine snaps the offset to whole frames in
+      // ticks, so a nudge and its opposite land back exactly (absolute seconds here drift).
+      commit({ op: "move_items", ids, by: Math.round(by * 1e6) / 1e6 });
+      return;
+    }
     if (k === "/") {
       // Play In to Out, then stop at Out.
       e.preventDefault();
