@@ -58,11 +58,17 @@ CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform"}
 CROP_KEYS = {"x", "y", "w", "h"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None}
+TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None}
 VOLUME_MAX = Fraction(4)
 SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
+# Transform ranges: position is a fraction of the canvas (so it can move a frame's width),
+# scale is a positive multiplier, rotate is any angle in degrees.
+TRANSFORM_POS_MAX = Fraction(4)
+SCALE_MIN, SCALE_MAX = Fraction(1, 100), Fraction(100)
+ROTATE_MAX = Fraction(3600)
 NOT_HASHED = ("version", "hash")
 
 # Every rule id the validator can report (docs/timeline.md describes each).
@@ -505,6 +511,12 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.bad("out_of_range", _j(ip, "props", "crop"), "crop must be a non-empty box inside the frame")
             if pr.get("look") is not None:
                 c.string(pr["look"], _j(ip, "props", "look"))
+            if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
+                tf = pr["transform"]
+                for k in ("x", "y"):
+                    c.ratio(tf[k], _j(ip, "props", "transform", k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+                c.ratio(tf["scale"], _j(ip, "props", "transform", "scale"), SCALE_MIN, SCALE_MAX)
+                c.ratio(tf["rotate"], _j(ip, "props", "transform", "rotate"), -ROTATE_MAX, ROTATE_MAX)
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")

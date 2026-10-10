@@ -144,6 +144,36 @@ def _look_chain(look: str | None) -> str:
     return _LOOKS.get(look, "")
 
 
+def _transform(it: dict) -> dict | None:
+    """The clip's transform, or None. props.transform is {x, y, scale, rotate} -- position as a
+    fraction of the canvas, a positive scale multiplier, and rotation in degrees, each a
+    reduced [num, den] pair. The identity (0, 0, 1, 0) means no transform."""
+
+    def frac(v: Any) -> float | None:
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            try:
+                num, den = float(v[0]), float(v[1])
+                return num / den if den != 0 else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+
+    raw = (it.get("props") or {}).get("transform")
+    if not isinstance(raw, dict):
+        return None
+    vals = {k: frac(raw.get(k)) for k in ("x", "y", "scale", "rotate")}
+    if any(v is None for v in vals.values()):
+        return None
+    x, y, scale, rotate = vals["x"], vals["y"], vals["scale"], vals["rotate"]
+    if scale <= 0:
+        return None
+    if x == 0.0 and y == 0.0 and scale == 1.0 and rotate == 0.0:
+        return None
+    return {"x": x, "y": y, "scale": scale, "rotate": rotate}
+
+
 def _volume(it: dict) -> float:
     """The clip's playback volume as a float. props.volume is a reduced [num, den] pair
     (0 to 4 per the schema); a missing or invalid value means full volume (1.0)."""
@@ -231,8 +261,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         idx = seen.get(rel)
         crop = _crop(it)
         look = str((it.get("props") or {}).get("look") or "").strip() or None
+        transform = _transform(it)
         fi, fo = it.get("fade_in") or 0, it.get("fade_out") or 0
-        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo}
+        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo, "transform": transform}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -469,6 +500,32 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             dw, dh, x, y = _contain(sw, sh, w, h)
             look = _look_chain(inp.get("look"))
             look_filter = f"{look}," if look else ""
+            # Transform acts on the contained frame before it meets the canvas: scale
+            # multiplies it, rotate turns it, and x/y pan it by a fraction of the canvas.
+            # The frame is padded onto a layer at least canvas-sized (so a zoom-out leaves
+            # black), shifted by the transform offset, then a canvas-sized window is cropped
+            # from the centre -- which gives zoom-in (crop) and pan for free.
+            tf = inp.get("transform")
+            if tf:
+                tscale = tf["scale"]
+                tw = max(2, int(round(dw * tscale)) // 2 * 2)
+                th = max(2, int(round(dh * tscale)) // 2 * 2)
+                rot = f":c=black:ow={tw}:oh={th}" if abs(tf["rotate"]) > 1e-9 else ""
+                rot_filter = f",rotate={tf['rotate']:.4f}{rot}" if rot else ""
+                # The picture is scaled, padded onto a layer three canvases wide/tall, and a
+                # canvas-sized window is cropped from it. Panning moves the crop window (so
+                # x>0 reveals what was further right -- pan right), and zoom is the scaled
+                # size of the picture: bigger than the canvas crops in, smaller letterboxes.
+                # The window is clamped to the layer, so a pan past the picture's edge just
+                # meets black rather than wrapping.
+                pad_w, pad_h = w * 3, h * 3
+                px = (pad_w - tw) // 2
+                py = (pad_h - th) // 2
+                cx = max(0, min(pad_w - w, (pad_w - w) // 2 + int(round(tf["x"] * w))))
+                cy = max(0, min(pad_h - h, (pad_h - h) // 2 + int(round(tf["y"] * h))))
+                xf = f"scale={tw}:{th}:flags=bicubic{rot_filter},pad={pad_w}:{pad_h}:{px}:{py}:black,crop={w}:{h}:{cx}:{cy},"
+            else:
+                xf = ""
             # Re-base the trimmed segment to zero, then rescale by 1/speed so it plays
             # faster (shorter output) or slower (longer). fps= re-timestamps to the canvas
             # rate. At speed 1 the expression is a no-op, which keeps the normal path exact.
@@ -482,7 +539,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 vfade += f",fade=t=in:st=0:d={_t2s(fi_v, rate):.3f}"
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
-            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
+            pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
+            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{xf}{pad}{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
             fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)

@@ -732,3 +732,65 @@ def test_set_crop_round_trips_and_validates(home):
     for bad in ((0.8, 0, 0.5, 1), (0, 0, 1.5, 1), (-0.1, 0, 1, 1)):
         with pytest.raises(E.EditorError):
             E.set_crop(pid, "aa", *bad)
+
+
+def test_render_applies_transform(home):
+    """props.transform repositions, scales, and rotates the picture. Identity must be a
+    no-op (identical to no transform); zoom-out must letterbox with black; pan must move."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    folder = E._dir("tfbase")
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=s=320x180:d=3:r=30",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+         str(folder / "media" / "v.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+
+    def build(tf, pid):
+        d = T.new_timeline(pid, size=(320, 180))
+        by = {t["id"]: t for t in d["tracks"]}
+        d["media"] = {"m1": {"path": "media/v.mp4", "dur": 3 * s, "fps": [30, 1]}}
+        props = {} if tf is None else {"transform": tf}
+        by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 3 * s], "at": 0, "fade_in": 0, "fade_out": 0, "props": props}]
+        d, _ = T.stamp_hash(d)
+        f = E._dir(pid)
+        (f / "media").mkdir(parents=True, exist_ok=True)
+        import shutil as sh
+
+        sh.copy(folder / "media" / "v.mp4", f / "media" / "v.mp4")
+        (f / "base.json").write_text(json.dumps(d))
+        from hermes_studio import oplog as _O
+
+        log = _O.Oplog(d, path=f / "oplog.jsonl")
+        E._save_current(f, log.doc)
+
+    def frame(path, at=1.0):
+        from pathlib import Path
+
+        from PIL import Image
+
+        jpg = Path(str(path) + f"_t{at}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", path, "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+        im = Image.open(jpg).convert("RGB")
+        W, H = im.size
+        return {"TL": im.getpixel((int(0.1 * W), int(0.1 * H))), "C": im.getpixel((W // 2, H // 2))}
+
+    def pair(d):
+        return {k: tuple(v) for k, v in d.items()}
+
+    build(None, "tf_none")
+    build({"x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}, "tf_id")
+    none, ident = frame(R.render_project("tf_none")["path"]), frame(R.render_project("tf_id")["path"])
+    assert pair(none) == pair(ident)  # identity is a true no-op
+
+    # Zoom out to 0.5x: the corners go black (letterbox), the centre keeps picture.
+    build({"x": [0, 1], "y": [0, 1], "scale": [1, 2], "rotate": [0, 1]}, "tf_out")
+    zout = frame(R.render_project("tf_out")["path"])
+    assert zout["TL"] == (0, 0, 0)
+    assert sum(zout["C"]) > 60  # centre still has picture
