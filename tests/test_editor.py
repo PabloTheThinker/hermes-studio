@@ -794,3 +794,26 @@ def test_render_applies_transform(home):
     zout = frame(R.render_project("tf_out")["path"])
     assert zout["TL"] == (0, 0, 0)
     assert sum(zout["C"]) > 60  # centre still has picture
+
+
+def test_set_transform_round_trips_and_validates(home):
+    pid = _two_clips(home, "tftest")
+    v = E.set_transform(pid, "aa", scale=1.5, x=0.1, y=-0.2, rotate=45)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["transform"]["scale"] == pytest.approx(1.5, abs=0.01)
+    assert aa["transform"]["x"] == pytest.approx(0.1, abs=0.01)
+    assert aa["transform"]["y"] == pytest.approx(-0.2, abs=0.01)
+    assert aa["transform"]["rotate"] == pytest.approx(45, abs=0.01)
+    # identity clears it
+    v = E.set_transform(pid, "aa")
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["transform"] is None
+    # out-of-range refusals
+    for kw in ({"scale": 0}, {"scale": 500}, {"x": 10}, {"rotate": 9999}):
+        with pytest.raises(E.EditorError):
+            E.set_transform(pid, "aa", **kw)
+    # undo restores
+    E.set_transform(pid, "aa", scale=2.0)
+    back = E.undo(pid)
+    aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["transform"] is None

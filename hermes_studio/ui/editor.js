@@ -169,6 +169,7 @@
     const it = find(sel);
     const nextNeighbor = it ? nextClip(it) : null;
     const curSpeed = it && it.speed != null ? it.speed : 1;
+    const curTf = it && it.transform ? it.transform : { x: 0, y: 0, scale: 1, rotate: 0 };
     const rows = it
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
@@ -214,6 +215,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -264,6 +266,12 @@
         if (!s2) return;
         await commit({ op: "volume", id: s2.id, volume: parseFloat(vol.value) });
       });
+    }
+    // Scale slider readout updates live too.
+    const tfs = root.querySelector("[data-tfscale]");
+    if (tfs) {
+      const readout = tfs.parentElement.querySelector("b");
+      tfs.addEventListener("input", () => { if (readout) readout.textContent = parseFloat(tfs.value).toFixed(2) + "×"; });
     }
     root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
     root.querySelectorAll("[data-xf]").forEach((b) => b.addEventListener("click", async () => {
@@ -614,6 +622,21 @@
       };
       const [x, y, w, h] = presets[pick.value] || presets[""];
       await commit({ op: "crop", id: s2.id, x, y, w, h });
+      return;
+    }
+    if (name === "apply-transform" || name === "reset-transform") {
+      const s2 = find(sel);
+      if (!s2) return;
+      if (name === "reset-transform") {
+        await commit({ op: "transform", id: s2.id, x: 0, y: 0, scale: 1, rotate: 0 });
+        return;
+      }
+      const sc = root.querySelector("[data-tfscale]");
+      const px = root.querySelector("[data-tfx]");
+      const py = root.querySelector("[data-tfy]");
+      const pr = root.querySelector("[data-tfrot]");
+      if (!sc || !px || !py || !pr) return;
+      await commit({ op: "transform", id: s2.id, scale: parseFloat(sc.value) || 1, x: parseFloat(px.value) || 0, y: parseFloat(py.value) || 0, rotate: parseFloat(pr.value) || 0 });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }

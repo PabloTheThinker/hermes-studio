@@ -65,6 +65,19 @@ def _crop_view(v: object) -> dict | None:
     return out
 
 
+def _transform_view(v: object) -> dict | None:
+    """props.transform is {x, y, scale, rotate} as [num, den] pairs; the page wants plain
+    floats. None when there is no transform."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for k in ("x", "y", "scale", "rotate"):
+        if k not in v:
+            return None
+        out[k] = round(_pair_to_float(v[k]), 4)
+    return out
+
+
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / "timeline.json.tmp"
@@ -157,6 +170,7 @@ def view(doc: dict) -> dict:
                 row["look"] = props.get("look") or None
                 row["volume"] = _pair_to_float(props.get("volume"))
                 row["crop"] = _crop_view(props.get("crop"))
+                row["transform"] = _transform_view(props.get("transform"))
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
@@ -424,6 +438,32 @@ def set_crop(pid: str, item_id: str, x: float, y: float, w: float, h: float) -> 
         crop = {"x": pair(x), "y": pair(y), "w": pair(w), "h": pair(h)}
         label = f"Crop {w:g}×{h:g}"
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"crop": crop}}], label)
+
+
+def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:
+    """Position, scale, and rotate a clip's picture. Position is a fraction of the canvas,
+    scale a positive multiplier, rotate an angle in degrees. Passing the identity clears the
+    transform. Stored as [num, den] pairs, like the other props."""
+    from fractions import Fraction
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    fx, fy, fs, fr_ = float(x), float(y), float(scale), float(rotate)
+    if not (-4.0 <= fx <= 4.0 and -4.0 <= fy <= 4.0):
+        raise EditorError("position must be within ±4 of the canvas")
+    if not (0.01 <= fs <= 100.0):
+        raise EditorError("scale must be between 0.01 and 100")
+    if not (-3600.0 <= fr_ <= 3600.0):
+        raise EditorError("rotate must be within ±3600 degrees")
+    if fx == 0.0 and fy == 0.0 and fs == 1.0 and fr_ == 0.0:
+        transform = None
+        label = "Transform reset"
+    else:
+        transform = {"x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)}
+        label = f"Transform {fs:g}×" if (fs != 1.0 and fx == 0 and fy == 0 and fr_ == 0) else "Transform"
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"transform": transform}}], label)
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:
