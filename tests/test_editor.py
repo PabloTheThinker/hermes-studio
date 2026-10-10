@@ -927,3 +927,174 @@ def test_view_tells_the_page_which_media_a_clip_plays(home):
     v = E.view(E._log(E._dir(pid)).doc)
     a1 = next(t for t in v["tracks"] if t["id"] == "A1")["items"][0]
     assert a1["media"] == "m1"
+
+
+# ---------------------------------------------------------------- track mixer (mute / solo / gain)
+
+
+def _mixer_cut(pid: str, *, extra_voice: bool = False) -> str:
+    """V1 picture 0-4s. A1 voice: a 440 Hz tone over 0-2s. A2 music: the same tone over 2-4s.
+    With extra_voice, the voice clip lives on a SECOND voice track (A3) instead, which the
+    render used to drop because it only read the first track of each role."""
+    import subprocess
+
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:d=4:r=30",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+         str(folder / "media" / "v.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/v.mp4", "dur": 4 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 4 * s], "at": 0, "fade_in": 0, "fade_out": 0}]
+    voice = [{"id": "a1", "type": "clip", "media": "m1", "src": [0, 2 * s], "at": 0, "fade_in": 0, "fade_out": 0}]
+    if extra_voice:
+        i = next(n for n, t in enumerate(d["tracks"]) if t["id"] == "A1")
+        d["tracks"].insert(i + 1, {"id": "A3", "role": "voice", "items": voice})
+    else:
+        by["A1"]["items"] = voice
+    by["A2"]["items"] = [{"id": "m2", "type": "clip", "media": "m1", "src": [2 * s, 4 * s], "at": 2 * s, "fade_in": 0, "fade_out": 0}]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    from hermes_studio import oplog as _O
+
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    return pid
+
+
+def _window_db(path: str, start: float, end: float) -> float:
+    """Peak level (dB) of the rendered file's sound between start and end seconds."""
+    import subprocess
+
+    r = subprocess.run(
+        ["ffmpeg", "-i", path, "-af", f"atrim={start}:{end},volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    for line in r.stderr.split("\n"):
+        if "max_volume" in line:
+            return float(line.split(":")[1].strip().replace(" dB", ""))
+    raise AssertionError("no volume reported")
+
+
+def test_set_track_mute_solo_gain_round_trip_and_undo(home):
+    pid = _mixer_cut("mx")
+    v = E.set_track(pid, "A1", mute=True, gain=0.5)
+    a1 = next(t for t in v["tracks"] if t["id"] == "A1")
+    assert a1["mute"] is True and a1["gain"] == 0.5 and a1["solo"] is False
+    raw = next(t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "A1")
+    assert raw["mute"] is True and raw["gain"] == [1, 2]
+    # Back to unity: the field is removed, not stored as [1, 1], so the doc hashes as untouched.
+    E.set_track(pid, "A1", mute=False, gain=1.0)
+    raw = next(t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "A1")
+    assert "mute" not in raw and "gain" not in raw
+    E.undo(pid)
+    raw = next(t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "A1")
+    assert raw["mute"] is True and raw["gain"] == [1, 2]
+    E.undo(pid)
+    raw = next(t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "A1")
+    assert "mute" not in raw and "gain" not in raw
+
+
+def test_set_track_refuses_the_main_track_and_bad_gain(home):
+    pid = _mixer_cut("mx2")
+    for bad in (lambda: E.set_track(pid, "V1", mute=True), lambda: E.set_track(pid, "T1", solo=True),
+                lambda: E.set_track(pid, "A1", gain=9.0), lambda: E.set_track(pid, "A1"),
+                lambda: E.set_track(pid, "A9", mute=True)):
+        with pytest.raises(E.EditorError):
+            bad()
+
+
+def test_render_honours_track_mute_and_solo(home):
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("mx3")
+    out = R.render_project(pid)["path"]
+    assert _window_db(out, 0.2, 1.8) > -30 and _window_db(out, 2.2, 3.8) > -30  # voice, then music
+
+    E.set_track(pid, "A1", mute=True)
+    out = R.render_project(pid)["path"]
+    assert _window_db(out, 0.2, 1.8) < -60  # voice muted: silence where it was
+    assert _window_db(out, 2.2, 3.8) > -30  # music untouched
+    E.undo(pid)
+
+    E.set_track(pid, "A1", solo=True)
+    out = R.render_project(pid)["path"]
+    assert _window_db(out, 0.2, 1.8) > -30  # soloed voice plays
+    assert _window_db(out, 2.2, 3.8) < -60  # everything not soloed is silent
+    E.undo(pid)
+
+    E.set_track(pid, "A1", mute=True)
+    E.set_track(pid, "A2", mute=True)
+    r = R.render_project(pid)
+    assert _window_db(r["path"], 0.0, 4.0) < -60  # all muted: clean silence, not an error
+    assert abs(r["duration"] - 4.0) < 0.1  # muting never changes how long the cut is
+
+
+def test_render_track_gain_scales_the_level(home):
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("mx4")
+    E.set_track(pid, "A1", gain=0.5)
+    half = _window_db(R.render_project(pid)["path"], 0.2, 1.8)
+    E.set_track(pid, "A1", gain=0.25)
+    quarter = _window_db(R.render_project(pid)["path"], 0.2, 1.8)
+    assert 5.0 < half - quarter < 7.0  # halving the gain is -6 dB
+
+
+def test_render_plays_a_second_voice_track(home):
+    """It used to read only the first voice track; sound on A3 was dropped without a word."""
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("mx5", extra_voice=True)
+    out = R.render_project(pid)["path"]
+    assert _window_db(out, 0.2, 1.8) > -30
+
+
+@pytest.fixture()
+def desk(home):
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from hermes_studio.studio import StudioHandler
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), StudioHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield srv.server_address[1]
+    srv.shutdown()
+
+
+def _post(port, path, body):
+    import http.client
+
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    c.request("POST", path, body=json.dumps(body).encode(),
+              headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/json"})
+    r = c.getresponse()
+    return r.status, json.loads(r.read() or b"{}")
+
+
+def test_desk_keeps_a_zero_volume_and_refuses_a_word(desk):
+    """`float(body.get("volume") or 1)` turned a deliberate 0 into full volume."""
+    pid = _mixer_cut("dz")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "volume", "id": "a1", "volume": 0})
+    assert st == 200
+    a1 = next(i for t in res["project"]["tracks"] for i in t["items"] if i["id"] == "a1")
+    assert a1["volume"] == 0.0
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "volume", "id": "a1", "volume": "loud"})
+    assert st == 400 and "number" in res["error"]
+
+
+def test_desk_track_op_sets_the_mixer_strip(desk):
+    pid = _mixer_cut("dt")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "track", "track": "A2", "solo": True, "gain": 0})
+    assert st == 200
+    a2 = next(t for t in res["project"]["tracks"] if t["id"] == "A2")
+    assert a2["solo"] is True and a2["gain"] == 0.0  # gain 0 is silence, not "unset"
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "track", "track": "V1", "mute": True})
+    assert st == 400

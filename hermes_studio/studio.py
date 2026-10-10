@@ -119,6 +119,21 @@ def _start_worker() -> None:
         threading.Thread(target=_worker, name=f"hermes-studio-jobs-{i}", daemon=True).start()
 
 
+def _num(body: dict, key: str, default: float) -> float:
+    """A number from a JSON body. The default applies only when the field is missing or null:
+    `float(body.get(k) or 1)` turned a deliberate 0 (a silent clip) into full volume."""
+    from hermes_studio import editor
+
+    v = body.get(key)
+    if v is None:
+        return default
+    # Refuse here, as the caller's mistake, rather than let float() raise a ValueError that a
+    # broad catch would confuse with a real fault (a corrupt op log is a ValueError too).
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise editor.EditorError(f"'{key}' must be a number")
+    return float(v)
+
+
 def _json(handler: BaseHTTPRequestHandler, code: int, payload: dict | list) -> None:
     body = json.dumps(payload).encode("utf-8")
     handler.send_response(code)
@@ -757,7 +772,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.create(pid)
             elif op == "nudge":
                 project = editor.nudge(
-                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), float(body.get("seconds") or 0.5)
+                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), _num(body, "seconds", 0.5)
                 )
             elif op == "trim":
                 project = editor.trim(
@@ -771,44 +786,54 @@ class StudioHandler(BaseHTTPRequestHandler):
                     pid,
                     str(body.get("item") or ""),
                     str(body.get("edge") or "end"),
-                    float(body.get("at") or 0),
+                    _num(body, "at", 0.0),
                     ripple=bool(body.get("ripple")),
                 )
             elif op == "move":
-                project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+                project = editor.move(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
             elif op == "speed":
-                project = editor.set_speed(pid, str(body.get("id") or ""), float(body.get("speed") or 1))
+                project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
             elif op == "look":
                 project = editor.set_look(pid, str(body.get("id") or ""), body.get("look"))
             elif op == "volume":
-                project = editor.set_volume(pid, str(body.get("id") or ""), float(body.get("volume") or 1))
+                project = editor.set_volume(pid, str(body.get("id") or ""), _num(body, "volume", 1.0))
             elif op == "fade":
                 project = editor.set_fade(
                     pid, str(body.get("id") or ""),
-                    fade_in=float(body.get("fade_in") or 0), fade_out=float(body.get("fade_out") or 0),
+                    fade_in=_num(body, "fade_in", 0.0), fade_out=_num(body, "fade_out", 0.0),
                 )
             elif op == "crop":
                 project = editor.set_crop(
                     pid, str(body.get("id") or ""),
-                    float(body.get("x") or 0), float(body.get("y") or 0),
-                    float(body.get("w") or 1), float(body.get("h") or 1),
+                    _num(body, "x", 0.0), _num(body, "y", 0.0),
+                    _num(body, "w", 1.0), _num(body, "h", 1.0),
                 )
             elif op == "transform":
                 project = editor.set_transform(
                     pid, str(body.get("id") or ""),
-                    x=float(body.get("x") or 0), y=float(body.get("y") or 0),
-                    scale=float(body.get("scale") or 1), rotate=float(body.get("rotate") or 0),
+                    x=_num(body, "x", 0.0), y=_num(body, "y", 0.0),
+                    scale=_num(body, "scale", 1.0), rotate=_num(body, "rotate", 0.0),
                 )
             elif op == "keyframes":
                 project = editor.set_keyframes(pid, str(body.get("id") or ""), body.get("keyframes"))
             elif op == "transition":
                 project = editor.set_transition(
-                    pid, str(body.get("a") or ""), str(body.get("b") or ""), float(body.get("seconds") or 0)
+                    pid, str(body.get("a") or ""), str(body.get("b") or ""), _num(body, "seconds", 0.0)
                 )
             elif op == "canvas":
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "track":
+                # gain 0 is a real value (silence), so never `or`-default it.
+                g = body.get("gain")
+                project = editor.set_track(
+                    pid,
+                    str(body.get("track") or ""),
+                    mute=body["mute"] if isinstance(body.get("mute"), bool) else None,
+                    solo=body["solo"] if isinstance(body.get("solo"), bool) else None,
+                    gain=float(g) if isinstance(g, (int, float)) and not isinstance(g, bool) else None,
+                )
             elif op == "import":
                 project = editor.import_run(pid)
             elif op == "render":
@@ -822,7 +847,7 @@ class StudioHandler(BaseHTTPRequestHandler):
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":
-                project = editor.split(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+                project = editor.split(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "undo":
                 project = editor.undo(pid)
             elif op == "redo":

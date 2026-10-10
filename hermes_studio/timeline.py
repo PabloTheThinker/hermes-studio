@@ -51,6 +51,11 @@ TOP_OPTIONAL = {"hash"}
 MEDIA_KEYS = {"path", "dur", "fps"}
 MEDIA_OPTIONAL = {"proxy"}
 TRACK_KEYS = {"id", "role", "items"}
+# Audio tracks only: the track's mixer strip. mute/solo are booleans, gain a [num, den] ratio
+# 0..4 like a clip's volume. Defaults (false, false, [1, 1]) are dropped by normalize(), so a
+# track that never touched its mixer hashes exactly as it did before these fields existed.
+TRACK_OPTIONAL = {"mute", "solo", "gain"}
+TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1]}
 CLIP_KEYS = {"id", "type", "media", "src", "fade_in", "fade_out"}
 TEXT_KEYS = {"id", "type", "dur", "text", "style", "fade_in", "fade_out"}
 TIMED_OPTIONAL = {"at", "anchor", "split_from"}
@@ -87,7 +92,7 @@ RULES = (
     "non_integer_duration", "fade_too_long", "at_and_anchor", "anchor_not_allowed",
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
-    "bad_keyframes", "bad_order",
+    "bad_keyframes", "bad_order", "track_audio_only",
 )
 
 
@@ -143,6 +148,7 @@ _HINTS = {
     "overlap": "Clips on main and voice tracks may only overlap through an xfade transition.",
     "anchor_not_allowed": "Only text items and clips on music tracks can be anchored.",
     "track_order": "List tracks as text, main, voice, music (text highest number first, audio lowest first).",
+    "track_audio_only": "mute, solo and gain belong to voice and music tracks; text and the main track have none.",
 }
 
 
@@ -400,7 +406,7 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     seen: list[tuple[str, str]] = []
     for ti, tr in enumerate(tracks):
         tp = _j("", "tracks", ti)
-        if not c.keys(tr, tp, TRACK_KEYS):
+        if not c.keys(tr, tp, TRACK_KEYS, TRACK_OPTIONAL):
             continue
         role, tid = tr["role"], tr["id"]
         if not isinstance(role, str) or role not in ROLES:
@@ -417,6 +423,14 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             continue
         claim(tid, tp)
         seen.append((role, tid))
+        for k in sorted(TRACK_OPTIONAL & set(tr)):
+            if role not in ("voice", "music"):
+                c.bad("track_audio_only", _j(tp, k), f"a {role} track has no '{k}'")
+            elif k in ("mute", "solo"):
+                if not isinstance(tr[k], bool):
+                    c.bad("wrong_type", _j(tp, k), f"'{k}' must be true or false")
+            else:
+                c.ratio(tr[k], _j(tp, k), Fraction(0), VOLUME_MAX)
         if not isinstance(tr["items"], list):
             c.bad("wrong_type", _j(tp, "items"), "must be a list")
             continue
@@ -699,6 +713,9 @@ def normalize(doc: dict) -> dict:
     d = copy.deepcopy(doc)
     when = resolve(d)
     for tr in d["tracks"]:
+        for k, v in TRACK_DEFAULTS.items():
+            if k in tr and tr[k] == v:
+                del tr[k]
         for it in tr["items"]:
             if it["type"] == "clip":
                 it["props"] = {**DEFAULT_PROPS, **it.get("props", {})}
@@ -810,7 +827,10 @@ def to_otio(doc: dict):
                 lanes.append([it])
         for ln, lane in enumerate(lanes or [[]]):
             ot = otio.schema.Track(name=track["id"] if ln == 0 else f"{track['id']}.{ln}", kind=kind)
-            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln}
+            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln,
+                                  **{k: track[k] for k in sorted(TRACK_OPTIONAL) if k in track}}
+            if ln == 0 and track.get("mute"):
+                ot.enabled = False  # what an OTIO reader understands as a muted track
             pos = 0
             for it in lane:
                 s, e = when[it["id"]]
@@ -880,7 +900,8 @@ def from_otio(tl) -> dict:
     for ot in tl.tracks:
         tm = _plain(ot.metadata[_META])
         if tm["lane"] == 0:
-            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": []})
+            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": [],
+                                  **{k: tm[k] for k in sorted(TRACK_OPTIONAL) if k in tm}})
         out = doc["tracks"][-1]["items"]
         pos = 0
         for child in ot:

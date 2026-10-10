@@ -1786,7 +1786,7 @@ def test_rule_counts_stay_17_op_level_and_36_validator():
     text = (Path(__file__).resolve().parent.parent / "docs" / "oplog.md").read_text(encoding="utf-8")
     listed = text.split("Op-level `rule`s (17):")[1].split("plus every timeline rule")[0]
     assert len(listed.split("`")[1::2]) == 17
-    assert len(T.RULES) == 38 and "transition_too_long" not in T.RULES
+    assert len(T.RULES) == 39 and "transition_too_long" not in T.RULES
 
 
 # --------------------------------------------------------------------------- S2b: edit_text

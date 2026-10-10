@@ -85,6 +85,9 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `set_fade` | `id, fade_in?, fade_out?` (clips and text) | `set_fields` with the old values |
 | `set_anchor` | `id, anchor` or `anchor: null, at` | `set_fields` with the old `at`/`anchor` |
 | `edit_text` | `id, text?, style?` (a text item; at least one of `text`/`style`) | `set_fields` with the old values of the fields given |
+| `set_canvas` | `width, height` (integers 1–16384) | `set_canvas` with the old size |
+| `set_transition` | `between:[a, b], dur?=0, id?` (adjacent clips on one track; `dur` 0 removes it: a hard cut) | `set_transition` with the old `dur` (moves clip b back) |
+| `set_track` | `id, mute?, solo?, gain?` (voice and music tracks only; at least one field) | `set_track` with the old values of the fields given |
 
 Internal ops (`set_fields`, `shift_items`, `delete_item`, `insert_item`, `insert_marker`,
 `insert_track`, `join_clips`) only appear in inverses and undo entries; a caller sending one gets

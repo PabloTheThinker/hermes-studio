@@ -2,7 +2,7 @@
    Class prefix is tl-, never ed- (that name is the Design page grid).
    Every change goes through /api/editor, which writes only via the op log. */
 (function () {
-  const LAB = 92;
+  const LAB = 164; // track header width; CSS reads it as --lab, so the two can't drift
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
   if (!document.getElementById("tl-css")) {
     const s = document.createElement("style");
@@ -63,13 +63,22 @@
       .tl-sheet{min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
-      .tl-ruler{height:22px;margin-left:92px;position:relative;font:500 10px var(--mono);color:var(--dim)}
+      .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim)}
       .tl-ruler i{position:absolute;top:4px;font-style:normal}
       .tl-stack{position:relative}
-      .tl-trk{display:grid;grid-template-columns:92px 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
-      .tl-rz{position:absolute;left:0;bottom:-3px;width:92px;height:6px;cursor:ns-resize;z-index:4}
+      .tl-trk{display:grid;grid-template-columns:var(--lab,164px) 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
+      .tl-rz{position:absolute;left:0;bottom:-3px;width:var(--lab,164px);height:6px;cursor:ns-resize;z-index:4}
+      .tl-lab{display:flex;align-items:center;gap:6px;padding-right:8px;height:100%;box-sizing:border-box}
+      .tl-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tl-mix{display:flex;gap:3px;flex:none}
+      .tl-mix button{height:18px;min-width:18px;padding:0 4px;border-radius:3px;border:1px solid var(--line-2);background:transparent;color:var(--dim);font:700 9px var(--mono);cursor:pointer;line-height:16px}
+      .tl-mix .tl-m.on{background:#e5484d;border-color:#e5484d;color:#fff}
+      .tl-mix .tl-s.on{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
+      .tl-mix .tl-g{min-width:40px;cursor:ns-resize;font-weight:500}
+      .tl-trk.quiet .tl-lane{opacity:.4}
+      .tl-pill.solo{background:var(--amber);color:var(--amber-ink)}
       .tl-rz:hover,.tl-rz.on{background:linear-gradient(transparent 2px,var(--amber) 2px,var(--amber) 4px,transparent 4px)}
-      .tl-lab{position:sticky;left:0;z-index:3;background:var(--bg);font:500 11px var(--mono);color:var(--dim);padding-left:16px}
+      .tl-lab{position:sticky;left:0;z-index:3;background:var(--bg);font:500 11px var(--mono);color:var(--dim);padding-left:12px}
       .tl-lane{position:relative;height:max(12px,calc(var(--row,var(--trk,48px)) - 12px));background:rgba(242,239,232,.04);border-radius:6px;margin-right:16px}
       .tl-clip{position:absolute;top:max(2px,min(4px,calc((var(--row,var(--trk,48px)) - 12px) / 9)));height:max(8px,calc(var(--row,var(--trk,48px)) - 20px));border-radius:5px;border:1px solid var(--line-2);background:#26313d;color:var(--mute);font:500 11px var(--mono);padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:grab;text-align:left}
       .tl-clip.text{background:#3a2f22}
@@ -132,6 +141,23 @@
     return data;
   }
 
+  // Track mixer strip (mute / solo / gain). The op log owns the values; these just read them.
+  function isAudio(tr) { return tr.role === "voice" || tr.role === "music"; }
+  function audible(tr) {
+    if (!isAudio(tr) || tr.mute || !(tr.gain == null || tr.gain > 0)) return false;
+    return !doc.tracks.some((t) => t.solo) || !!tr.solo;
+  }
+  const DB_FLOOR = -48; // below this a fader reads as off (gain 0)
+  function toDb(g) { return g > 0 ? 20 * Math.log10(g) : -Infinity; }
+  function fromDb(db) { return db <= DB_FLOOR ? 0 : Math.min(4, Math.pow(10, db / 20)); }
+  function fmtDb(g) {
+    const db = toDb(g == null ? 1 : g);
+    if (!Number.isFinite(db)) return "−∞";
+    const r = Math.round(db * 10) / 10;
+    return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(1);
+  }
+  let wheelT = 0, wheelGain = null;
+
   // Audio waveform for one clip, drawn the way Resolve and Final Cut do: peaks on a dB scale
   // (so quiet speech still shows), shaped by the clip's volume and fades, red where it clips.
   function wave(tr, c) {
@@ -152,7 +178,7 @@
     if (b <= a) return "";
     const px = Math.max(1, c.dur * pps);
     const cols = Math.max(1, Math.min(b - a, Math.round(px)));
-    const vol = c.volume == null ? 1 : c.volume;
+    const vol = (c.volume == null ? 1 : c.volume) * (tr.gain == null ? 1 : tr.gain);
     const fi = c.fade_in || 0, fo = c.fade_out || 0;
     const top = [], hot = [];
     for (let j = 0; j < cols; j++) {
@@ -239,10 +265,10 @@
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
     root.innerHTML = `
-      <div class="tl ${folded ? "tl-collapsed" : ""}">
+      <div class="tl ${folded ? "tl-collapsed" : ""}" style="--lab:${LAB}px">
         <div class="tl-top">
           <b>Edit</b>
-          <span class="tl-pill">v${esc(d.version)}</span>
+          <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
           <span class="tl-clock">${esc(fmt(play))} / ${esc(fmt(w))}</span>
           <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
@@ -306,7 +332,7 @@
             <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
-              ${d.tracks.map((tr) => `<div class="tl-trk" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
+              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
@@ -373,6 +399,25 @@
     fitTracks();
     const sc = root.querySelector(".tl-scroll");
     sc.addEventListener("pointerdown", down);
+    sc.addEventListener("wheel", (e) => {
+      // Scroll over a track's dB readout: 1 dB per notch, committed once the wheel rests,
+      // so one gesture is one undo step rather than twenty.
+      const gEl = e.target.closest("[data-gain]");
+      if (!gEl) return;
+      e.preventDefault();
+      const tid = gEl.dataset.gain;
+      const tr = doc.tracks.find((t) => t.id === tid);
+      if (!tr) return;
+      if (!wheelGain || wheelGain.id !== tid) {
+        const db0 = toDb(tr.gain == null ? 1 : tr.gain);
+        wheelGain = { id: tid, db: Number.isFinite(db0) ? db0 : DB_FLOOR - 1 };
+      }
+      wheelGain.db = Math.min(12, Math.max(DB_FLOOR - 1, wheelGain.db + (e.deltaY < 0 ? 1 : -1)));
+      const g = Math.round(fromDb(wheelGain.db) * 1000) / 1000;
+      gEl.textContent = fmtDb(g);
+      clearTimeout(wheelT);
+      wheelT = setTimeout(() => { const w = wheelGain; wheelGain = null; commit({ op: "track", track: w.id, gain: g }); }, 350);
+    }, { passive: false });
     sc.addEventListener("pointermove", movePtr);
     sc.addEventListener("pointerup", up);
     // The preview must follow its box whatever changed it: window, split drag, Hide, a
@@ -419,6 +464,34 @@
 
   function down(e) {
     if (e.button !== 0) return;
+    const ms = e.target.closest("[data-mute],[data-solo]");
+    if (ms) {
+      // Toggle on press (pointer capture would retarget a click). One undoable step.
+      const tid = ms.dataset.mute || ms.dataset.solo;
+      const tr = doc.tracks.find((t) => t.id === tid);
+      if (!tr) return;
+      const body = { op: "track", track: tid };
+      if (ms.dataset.mute) body.mute = !tr.mute; else body.solo = !tr.solo;
+      commit(body);
+      return;
+    }
+    const gEl = e.target.closest("[data-gain]");
+    if (gEl) {
+      const tid = gEl.dataset.gain;
+      const tr = doc.tracks.find((t) => t.id === tid);
+      if (!tr) return;
+      const now = performance.now();
+      if (lastRz.id === "g:" + tid && now - lastRz.t < 400) {
+        lastRz = { id: "", t: 0 };
+        commit({ op: "track", track: tid, gain: 1 });
+        return;
+      }
+      lastRz = { id: "g:" + tid, t: now };
+      const db0 = toDb(tr.gain == null ? 1 : tr.gain);
+      drag = { kind: "gain", id: tid, el: gEl, db0: Number.isFinite(db0) ? db0 : DB_FLOOR, y0: e.clientY, gNow: null };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+      return;
+    }
     const rzEl = e.target.closest("[data-rz]");
     if (rzEl) {
       // Track height: drag the header's bottom edge, the way Resolve does. Pure view state.
@@ -477,6 +550,16 @@
 
   function movePtr(e) {
     if (!drag) return;
+    if (drag.kind === "gain") {
+      // A fader: 4 px per dB, up is louder. Snaps to 0 dB within half a dB, like a detent.
+      let db = drag.db0 - (e.clientY - drag.y0) / 4;
+      db = Math.min(12, db);
+      if (Math.abs(db) < 0.5) db = 0;
+      const g = fromDb(db);
+      drag.gNow = Math.round(g * 1000) / 1000;
+      drag.el.textContent = fmtDb(drag.gNow);
+      return;
+    }
     if (drag.kind === "rz") {
       const h = Math.round(Math.max(TRK_MIN, Math.min(TRK_MAX, drag.h0 + (e.clientY - drag.y0))));
       drag.row.style.setProperty("--row", h + "px");
@@ -529,6 +612,10 @@
   async function up() {
     const d = drag;
     drag = null;
+    if (d && d.kind === "gain") {
+      if (d.gNow != null) await commit({ op: "track", track: d.id, gain: d.gNow });
+      return;
+    }
     if (d && d.kind === "rz") {
       // A click that didn't move must leave the DOM alone, or the second click of a
       // double-click lands on a rebuilt node and the reset never fires.
@@ -680,9 +767,26 @@
     if (!tr) return null;
     return tr.items.find((i) => i.file === file && srcT >= (i.src_in || 0) - 0.04 && srcT < (i.src_out != null ? i.src_out : 1e9) - 0.03) || null;
   }
+  // The preview plays the picture clip's own sound, which in an imported cut is the same
+  // recording as the voice track. So follow that voice clip's mixer state: muted or out of
+  // solo -> silent; otherwise its clip volume x track gain (a <video> can't go above 1).
+  // A true multitrack preview mix needs Web Audio; until then this is honest for that case.
+  function previewMix(v) {
+    if (!v || !doc) return;
+    let level = null;
+    for (const tr of doc.tracks) {
+      if (tr.role !== "voice") continue;
+      const it = tr.items.find((i) => i.file === v.dataset.file && play >= i.at - 0.02 && play < i.at + i.dur);
+      if (it) { level = audible(tr) ? (it.volume == null ? 1 : it.volume) * (tr.gain == null ? 1 : tr.gain) : 0; break; }
+    }
+    if (level == null) { v.muted = false; v.volume = 1; return; }
+    v.muted = level <= 0;
+    v.volume = Math.max(0, Math.min(1, level));
+  }
   function bindFilm(v) {
     v.ontimeupdate = () => {
       if (!playing || !doc) return;
+      previewMix(v);
       const piece = pieceAt(v.dataset.file, v.currentTime);
       if (piece) {
         play = piece.at + (v.currentTime - (piece.src_in || 0));
@@ -703,6 +807,7 @@
     if (!v || !it || !it.file) return false;
     v.hidden = false;
     v.muted = false;
+    previewMix(v);
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
     const want = (it.src_in || 0) + Math.max(0, play - it.at);

@@ -36,7 +36,7 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | doc | `fps` | timeline frame rate, reduced rational `[num, den]`, a whole number of ticks per frame |
 | doc | `size` | `[width, height]`, integers 1–16384 |
 | doc | `media` | id → `{path, dur, fps, proxy?}`; `dur` ticks > 0; `fps` rational or `null` (audio) |
-| doc | `tracks` | list of `{id, role, items}`, in role order (below) |
+| doc | `tracks` | list of `{id, role, items, mute?, solo?, gain?}`, in role order (below) |
 | doc | `markers` | list of `{id, at, label}` |
 | clip | `id, type:"clip", media, src:[in,out], fade_in, fade_out` | required; `src` in media ticks, `in < out ≤ media.dur` |
 | clip | `at` or `anchor` | exactly one; `anchor` only on music tracks |
@@ -69,6 +69,13 @@ track), `voice` and `music` (`A<n>`). Text tracks hold text items; the others ho
 transitions. Track order is meaningful and fixed: text, main, voice, music; text tracks highest
 number first (top of the stack first), audio tracks lowest number first. The default doc is
 T1, V1, A1, A2.
+
+**Track mixer.** Voice and music tracks may carry `mute` and `solo` (booleans) and `gain` (a
+`[num, den]` ratio, 0–4, like a clip's volume); text and the main track may not
+(`track_audio_only`). A muted track is silent; when any track is soloed, only soloed tracks play;
+`gain` multiplies every clip's volume on the track. The render honours all three. `normalize()`
+drops the defaults (`false`, `false`, `[1, 1]`), so a track at unity stores and hashes exactly
+like one that never had a mixer.
 
 **Timing.** A clip lasts `(out − in) / speed` ticks, which must be whole. Fades are plain ticks:
 `fade_in`, `fade_out` ≥ 0 and `fade_in + fade_out` ≤ the item's duration. Gaps are implied by `at`;
@@ -152,7 +159,8 @@ timeline duration) with an `ExternalReference`; speed adds a `LinearTimeWarp`. G
 xfade is a Transition at the start of the overlap (`in_offset` 0, `out_offset` dur), with the
 outgoing clip trimmed by dur. Text items are clips with a `GeneratorReference`
 (`hermes_studio.text`). Tracks whose items overlap are split into lanes (`A2`, `A2.1`). Markers go
-on the top-level stack. Fades, props, anchors, `split_from` and the media table travel in
+on the top-level stack. A muted track's first lane exports with `enabled = false`. Fades, props,
+anchors, `split_from`, track `mute`/`solo`/`gain` and the media table travel in
 `metadata["hermes_studio"]`, so `from_otio(to_otio(doc)) == normalize(doc)`.
 
 `otiotool` reads the file and its `--list-tracks`, `--list-clips`, `--list-media`,
@@ -181,4 +189,4 @@ Open questions (Slice 2 notes):
 `non_integer_duration`, `fade_too_long`, `at_and_anchor`, `anchor_not_allowed`,
 `anchor_target_missing`, `anchor_target_not_main`, `anchor_before_zero`, `overlap`,
 `bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`,
-`bad_keyframes`, `bad_order`.
+`bad_keyframes`, `bad_order`, `track_audio_only`.

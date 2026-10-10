@@ -198,7 +198,12 @@ def view(doc: dict) -> dict:
                 row["file"] = Path(str(media.get("path") or "")).name
                 row["media"] = it.get("media") or None
             items.append(row)
-        tracks.append({"id": tr["id"], "role": tr["role"], "items": items})
+        row_t = {"id": tr["id"], "role": tr["role"], "items": items}
+        if tr["role"] in ("voice", "music"):
+            row_t["mute"] = bool(tr.get("mute", False))
+            row_t["solo"] = bool(tr.get("solo", False))
+            row_t["gain"] = _pair_to_float(tr.get("gain"))
+        tracks.append(row_t)
     return {
         "id": doc["id"],
         "version": doc["version"],
@@ -426,6 +431,31 @@ def set_volume(pid: str, item_id: str, volume: float) -> dict:
     fr = Fraction(v).limit_denominator(1000)
     pair = [fr.numerator, fr.denominator]
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"volume": pair}}], f"Volume {v:g}×")
+
+
+def set_track(pid: str, track_id: str, *, mute: bool | None = None, solo: bool | None = None,
+              gain: float | None = None) -> dict:
+    """An audio track's mixer strip. Only what is given changes; one undo step either way."""
+    from fractions import Fraction
+
+    op: dict = {"op": "set_track", "id": track_id}
+    words = []
+    if mute is not None:
+        op["mute"] = bool(mute)
+        words.append("muted" if mute else "unmuted")
+    if solo is not None:
+        op["solo"] = bool(solo)
+        words.append("solo" if solo else "solo off")
+    if gain is not None:
+        g = float(gain)
+        if not (0.0 <= g <= 4.0):
+            raise EditorError("track gain must be between 0 and 4")
+        fr = Fraction(g).limit_denominator(1000)
+        op["gain"] = [fr.numerator, fr.denominator]
+        words.append(f"gain {g:g}×")
+    if len(op) == 2:
+        raise EditorError("nothing to set on the track")
+    return apply(pid, [op], f"{track_id} " + ", ".join(words))
 
 
 def set_fade(pid: str, item_id: str, *, fade_in: float = 0.0, fade_out: float = 0.0) -> dict:

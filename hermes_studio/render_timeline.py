@@ -210,20 +210,24 @@ def _keyframes(it: dict, rate: int) -> list[dict] | None:
     return out or None
 
 
-def _volume(it: dict) -> float:
-    """The clip's playback volume as a float. props.volume is a reduced [num, den] pair
-    (0 to 4 per the schema); a missing or invalid value means full volume (1.0)."""
-    raw = (it.get("props") or {}).get("volume")
+def _level(raw: Any) -> float:
+    """A level stored as a reduced [num, den] pair (0 to 4 per the schema) as a float; a
+    missing or invalid value means unity (1.0). Used for clip volume and track gain alike."""
     try:
         if isinstance(raw, (list, tuple)) and len(raw) == 2:
             num, den = float(raw[0]), float(raw[1])
             if den != 0 and num >= 0:
                 return min(num / den, 4.0)
-        if isinstance(raw, (int, float)) and raw >= 0:
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw >= 0:
             return min(float(raw), 4.0)
     except (TypeError, ValueError, ZeroDivisionError):
         pass
     return 1.0
+
+
+def _volume(it: dict) -> float:
+    """The clip's playback volume (props.volume) as a float."""
+    return _level((it.get("props") or {}).get("volume"))
 
 
 def _ass_escape_path(path: Path) -> str:
@@ -310,11 +314,25 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed, **clip_extra})
 
     audio: list[dict] = []
-    for role in ("voice", "music"):
-        for it in items(role):
+    # Every audio track, not just the first of each role (a second voice or music track used to
+    # be dropped silently). The mixer strip decides what is heard: a muted track is silent; when
+    # any track is soloed only soloed tracks play; gain scales every clip on the track. A muted
+    # clip still counts toward the length, so muting never changes how long the cut is.
+    audio_tracks = [tr for tr in doc["tracks"] if tr.get("role") in ("voice", "music")]
+    any_solo = any(tr.get("solo") for tr in audio_tracks)
+    for tr in audio_tracks:
+        role = tr["role"]
+        gain = _level(tr.get("gain"))
+        audible = not tr.get("mute") and (not any_solo or bool(tr.get("solo"))) and gain > 0
+        for it in tr["items"]:
+            if "at" not in it or it.get("type") == "transition":
+                continue
             i0, o1 = it["src"]
             rel = str(media.get(it.get("media") or "", {}).get("path") or "")
             if not rel or i0 >= o1:
+                continue
+            end_tick = max(end_tick, it["at"] + (o1 - i0))
+            if not audible:
                 continue
             path = resolve_media(folder, rel)
             if not path.is_file():
@@ -328,14 +346,14 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                 {
                     "idx": idx,
                     "role": role,
+                    "track": tr["id"],
                     "src": (i0, o1),
                     "at": it["at"],
                     "fade_in": it.get("fade_in") or 0,
                     "fade_out": it.get("fade_out") or 0,
-                    "volume": _volume(it),
+                    "volume": _volume(it) * gain,
                 }
             )
-            end_tick = max(end_tick, it["at"] + (o1 - i0))
 
     captions = []
     for it in items("text"):
