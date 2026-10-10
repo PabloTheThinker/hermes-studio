@@ -21,6 +21,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from hermes_studio.editor import EditorError, resolve_media
 
@@ -94,6 +95,55 @@ def _speed(it: dict) -> float:
     return 1.0
 
 
+def _crop(it: dict) -> dict | None:
+    """The clip's crop box, or None. props.crop is {x, y, w, h} as fractions of the source
+    frame (0-1), each a reduced [num, den] pair (the schema stores ratios that way). A
+    missing/empty/identity box means no crop."""
+
+    def frac(v: Any) -> float | None:
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            try:
+                num, den = float(v[0]), float(v[1])
+                return num / den if den != 0 else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+
+    raw = (it.get("props") or {}).get("crop")
+    if not isinstance(raw, dict):
+        return None
+    vals = {k: frac(raw.get(k)) for k in ("x", "y", "w", "h")}
+    if any(v is None for v in vals.values()):
+        return None
+    x, y, w, h = vals["x"], vals["y"], vals["w"], vals["h"]
+    if not all(0.0 <= v <= 1.0 for v in (x, y, w, h)):
+        return None
+    if w <= 0 or h <= 0 or x + w > 1.0 + 1e-6 or y + h > 1.0 + 1e-6:
+        return None
+    if x == 0.0 and y == 0.0 and w == 1.0 and h == 1.0:
+        return None
+    return {"x": x, "y": y, "w": w, "h": h}
+
+
+# Named looks: each maps to an ffmpeg eq/colorbalance chain. Kept small and warm-neutral so
+# they read as a grade, not a gimmick; an unknown name is passed through unchanged.
+_LOOKS: dict[str, str] = {
+    "warm": "eq=contrast=1.06:saturation=1.12,colorbalance=rs=0.06:gs=0.01:bs=-0.05",
+    "cool": "eq=contrast=1.06:saturation=1.05,colorbalance=rs=-0.05:gs=0.0:bs=0.07",
+    "punch": "eq=contrast=1.18:saturation=1.25:gamma_r=1.02",
+    "mono": "eq=saturation=0,eq=contrast=1.12",
+    "film": "eq=contrast=1.08:saturation=0.92,colorbalance=rs=0.03:bs=0.04:gm=-0.01",
+}
+
+
+def _look_chain(look: str | None) -> str:
+    if not look:
+        return ""
+    return _LOOKS.get(look, "")
+
+
 def _ass_escape_path(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -163,13 +213,15 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         cursor = it["at"] + tl_dur
         end_tick = max(end_tick, cursor)
         idx = seen.get(rel)
+        crop = _crop(it)
+        look = str((it.get("props") or {}).get("look") or "").strip() or None
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
             sw, sh = _probe_size(path)
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id"), "speed": speed})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id"), "speed": speed, "crop": crop, "look": look})
         else:
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed, "crop": crop, "look": look})
 
     audio: list[dict] = []
     for role in ("voice", "music"):
@@ -383,12 +435,26 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             seg_ids.append(inp.get("id"))
             seg_durs.append(dur)
             sw, sh = inp["size"] or (w, h)
+            # A crop keeps a sub-rectangle of the source, which then fills the canvas, so
+            # feed _contain the cropped dimensions. Crop happens before scale.
+            crop = inp.get("crop")
+            if crop:
+                cw = max(2, int(round(sw * crop["w"])) // 2 * 2)
+                ch = max(2, int(round(sh * crop["h"])) // 2 * 2)
+                cx = max(0, int(round(sw * crop["x"])) // 2 * 2)
+                cy = max(0, int(round(sh * crop["y"])) // 2 * 2)
+                crop_filter = f"crop={cw}:{ch}:{cx}:{cy},"
+                sw, sh = cw, ch
+            else:
+                crop_filter = ""
             dw, dh, x, y = _contain(sw, sh, w, h)
+            look = _look_chain(inp.get("look"))
+            look_filter = f"{look}," if look else ""
             # Re-base the trimmed segment to zero, then rescale by 1/speed so it plays
             # faster (shorter output) or slower (longer). fps= re-timestamps to the canvas
             # rate. At speed 1 the expression is a no-op, which keeps the normal path exact.
             pts = f"(PTS-STARTPTS)/{speed:.6f}" if abs(speed - 1.0) > 1e-9 else "PTS-STARTPTS"
-            chain = f"scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,setpts={pts},fps={fps:.3f},format=yuv420p"
+            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,{look_filter}setpts={pts},fps={fps:.3f},format=yuv420p"
             fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)

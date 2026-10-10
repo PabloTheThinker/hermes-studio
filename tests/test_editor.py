@@ -536,3 +536,58 @@ def test_set_speed_refuses_out_of_range_and_undoes(home):
     back = E.undo(pid)
     aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
     assert aa["dur"] == pytest.approx(8.0, abs=0.02)
+
+
+def test_render_applies_crop_and_look(home):
+    """props.crop and props.look are in the schema; the render must honour both."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    def make(props, pid):
+        folder = E._dir(pid)
+        _make_source(folder / "media" / "talk.mp4")
+        s = T.TICK_RATE
+        d = T.new_timeline(pid)
+        by = {t["id"]: t for t in d["tracks"]}
+        d["media"] = {"m1": {"path": "media/talk.mp4", "dur": 6 * s, "fps": [30, 1]}}
+        by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 6 * s], "at": 0, "fade_in": 0, "fade_out": 0, "props": props}]
+        d, _ = T.stamp_hash(d)
+        (folder / "base.json").write_text(json.dumps(d))
+        from hermes_studio import oplog as _O
+
+        log = _O.Oplog(d, path=folder / "oplog.jsonl")
+        E._save_current(folder, log.doc)
+
+    def rgb(out, at=1.5):
+        from pathlib import Path
+
+        jpg = Path(str(out["path"]) + f"_p{at}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", out["path"], "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+        from PIL import Image
+
+        im = Image.open(jpg).convert("RGB").resize((8, 8))
+        px = list(im.getdata())
+        n = len(px)
+        return tuple(sum(p[c] for p in px) // n for c in range(3))
+
+    # Crop is a [num, den] pair per the schema. Left half vs right half must differ.
+    make({"crop": {"x": [0, 1], "y": [0, 1], "w": [1, 2], "h": [1, 1]}}, "cropL")
+    make({"crop": {"x": [1, 2], "y": [0, 1], "w": [1, 2], "h": [1, 1]}}, "cropR")
+    left, right = rgb(R.render_project("cropL")), rgb(R.render_project("cropR"))
+    assert left != right
+    # A cropped clip also fills the frame from its crop, so the graph carries a crop=
+    # filter; an ungraded clip carries none.
+    make({}, "plain2")
+    for pid, expect_crop in (("cropL", True), ("plain2", False)):
+        plan = R._build_plan(E._log(E._dir(pid)).doc, E._dir(pid))
+        plan["cache"] = str(E._dir(pid) / "cache")
+        graph, _ = R._build_graph(plan, None)
+        assert ("crop=" in graph) is expect_crop
+
+    # mono is a real grade: it desaturates, so the graph carries an eq=saturation=0 chain.
+    make({"look": "mono"}, "mono2")
+    mplan = R._build_plan(E._log(E._dir("mono2")).doc, E._dir("mono2"))
+    mplan["cache"] = str(E._dir("mono2") / "cache")
+    mgraph, _ = R._build_graph(mplan, None)
+    assert "saturation=0" in mgraph
