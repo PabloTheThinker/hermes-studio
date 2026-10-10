@@ -591,3 +591,49 @@ def test_render_applies_crop_and_look(home):
     mplan["cache"] = str(E._dir("mono2") / "cache")
     mgraph, _ = R._build_graph(mplan, None)
     assert "saturation=0" in mgraph
+
+
+def test_render_fades_video_to_and_from_black(home):
+    """fade_in/fade_out must affect the picture, not just the audio. A white source with
+    1s fades opens and closes near black and is full white in the middle."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    folder = E._dir("vfade")
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=320x180:d=4:r=30",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+         str(folder / "media" / "v.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    d = T.new_timeline("vfade")
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/v.mp4", "dur": 4 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 4 * s], "at": 0, "fade_in": 1 * s, "fade_out": 1 * s}]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    from hermes_studio import oplog as _O
+
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+
+    out = R.render_project("vfade")
+
+    def luma(at):
+        from pathlib import Path
+
+        from PIL import Image
+
+        jpg = Path(str(out["path"]) + f"_f{at}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", out["path"], "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+        im = Image.open(jpg).convert("L").resize((8, 8))
+        px = list(im.getdata())
+        return sum(px) // len(px)
+
+    assert luma(2.0) > 220          # full white in the middle
+    assert luma(0.1) < 80           # near black at the start (fading in)
+    assert luma(3.9) < 80           # near black at the end (fading out)

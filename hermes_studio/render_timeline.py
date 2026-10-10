@@ -215,13 +215,15 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         idx = seen.get(rel)
         crop = _crop(it)
         look = str((it.get("props") or {}).get("look") or "").strip() or None
+        fi, fo = it.get("fade_in") or 0, it.get("fade_out") or 0
+        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
             sw, sh = _probe_size(path)
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id"), "speed": speed, "crop": crop, "look": look})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": (sw, sh), "id": it.get("id"), "speed": speed, **clip_extra})
         else:
-            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed, "crop": crop, "look": look})
+            inputs.append({"role": "clip", "idx": idx, "path": path, "src": (i0, o1), "at": it["at"], "size": None, "id": it.get("id"), "speed": speed, **clip_extra})
 
     audio: list[dict] = []
     for role in ("voice", "music"):
@@ -454,7 +456,16 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # faster (shorter output) or slower (longer). fps= re-timestamps to the canvas
             # rate. At speed 1 the expression is a no-op, which keeps the normal path exact.
             pts = f"(PTS-STARTPTS)/{speed:.6f}" if abs(speed - 1.0) > 1e-9 else "PTS-STARTPTS"
-            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,{look_filter}setpts={pts},fps={fps:.3f},format=yuv420p"
+            # Video fades to/from black sit after setpts so their start times are on the
+            # final (speed-adjusted) timeline. fade_in opens from black; fade_out closes to
+            # it, starting dur-fo seconds in so it lands exactly on the clip's last frame.
+            vfade = ""
+            fi_v, fo_v = inp.get("fade_in") or 0, inp.get("fade_out") or 0
+            if fi_v:
+                vfade += f",fade=t=in:st=0:d={_t2s(fi_v, rate):.3f}"
+            if fo_v:
+                vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
+            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,pad={w}:{h}:{x}:{y}:black,{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
             fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
