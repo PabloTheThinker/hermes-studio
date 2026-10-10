@@ -25,8 +25,8 @@
       .tl button:hover{color:var(--ink);border-color:var(--amber)}
       .tl button.on{color:var(--ink);border-color:var(--amber);background:rgba(255,200,61,.08)}
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
-      .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;min-height:0}
-      .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0}
+      .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden}
+      .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0;min-height:0;overflow:hidden}
       .tl-frame{height:auto;width:auto;max-height:96%;max-width:96%;aspect-ratio:16/9;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden;box-sizing:border-box}
       .tl-vid,.tl-pic{object-fit:contain}
       .tl-can{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
@@ -43,7 +43,7 @@
       .tl-frame .big{font:500 28px/1 var(--mono);color:var(--amber);margin:.4rem 0 .2rem}
       .tl-frame .who{color:var(--mute);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .tl-bar{position:absolute;left:0;bottom:0;height:3px;background:var(--amber);width:0}
-      .tl-insp{padding:16px 16px 8px;overflow:auto;min-width:0}
+      .tl-insp{padding:16px 16px 8px;overflow:auto;min-width:0;min-height:0}
       .tl-insp h3{margin:0 0 8px;font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
       .tl-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:8px 0;font-size:13px}
       .tl-row span{color:var(--dim)} .tl-row b{font-weight:500;font-family:var(--mono);font-size:12px}
@@ -66,10 +66,12 @@
       .tl-ruler{height:22px;margin-left:92px;position:relative;font:500 10px var(--mono);color:var(--dim)}
       .tl-ruler i{position:absolute;top:4px;font-style:normal}
       .tl-stack{position:relative}
-      .tl-trk{display:grid;grid-template-columns:92px 1fr;align-items:center;height:var(--trk,48px)}
+      .tl-trk{display:grid;grid-template-columns:92px 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
+      .tl-rz{position:absolute;left:0;bottom:-3px;width:92px;height:6px;cursor:ns-resize;z-index:4}
+      .tl-rz:hover,.tl-rz.on{background:linear-gradient(transparent 2px,var(--amber) 2px,var(--amber) 4px,transparent 4px)}
       .tl-lab{position:sticky;left:0;z-index:3;background:var(--bg);font:500 11px var(--mono);color:var(--dim);padding-left:16px}
-      .tl-lane{position:relative;height:36px;background:rgba(242,239,232,.04);border-radius:6px;margin-right:16px}
-      .tl-clip{position:absolute;top:4px;height:28px;border-radius:5px;border:1px solid var(--line-2);background:#26313d;color:var(--mute);font:500 11px var(--mono);padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:grab;text-align:left}
+      .tl-lane{position:relative;height:max(12px,calc(var(--row,var(--trk,48px)) - 12px));background:rgba(242,239,232,.04);border-radius:6px;margin-right:16px}
+      .tl-clip{position:absolute;top:max(2px,min(4px,calc((var(--row,var(--trk,48px)) - 12px) / 9)));height:max(8px,calc(var(--row,var(--trk,48px)) - 20px));border-radius:5px;border:1px solid var(--line-2);background:#26313d;color:var(--mute);font:500 11px var(--mono);padding:0 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:grab;text-align:left}
       .tl-clip.text{background:#3a2f22}
       .tl-clip{isolation:isolate}
       .tl-clip.aud{font-size:10px;line-height:11px;padding-top:1px;background:#1f2a30}
@@ -101,6 +103,17 @@
     const saved = Number(localStorage.getItem("tl-stage-pct"));
     if (saved >= 24 && saved <= 86) stagePct = saved;
   } catch (err) { /* private mode: keep the default */ }
+  // Per-track row heights the person dragged (a view preference, like Resolve's track height:
+  // it is not an edit, so it never touches the op log). Unset tracks share what's left.
+  const TRK_MIN = 20, TRK_MAX = 160;
+  let trkH = {};
+  try {
+    const raw = JSON.parse(localStorage.getItem("tl-trk-h") || "{}");
+    for (const [k, v] of Object.entries(raw || {})) if (Number(v) >= TRK_MIN && Number(v) <= TRK_MAX) trkH[k] = Number(v);
+  } catch (err) { trkH = {}; }
+  let lastRz = { id: "", t: 0 };
+  let viewRo = null;
+  function saveTrkH() { try { localStorage.setItem("tl-trk-h", JSON.stringify(trkH)); } catch (err) { /* private mode */ } }
   let ripple = false, snapOn = true, playing = false, raf = 0, lastT = 0, drag = null;
   let rz = 0;
   window.addEventListener("resize", () => {
@@ -293,7 +306,7 @@
             <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
-              ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
+              ${d.tracks.map((tr) => `<div class="tl-trk" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
@@ -362,6 +375,15 @@
     sc.addEventListener("pointerdown", down);
     sc.addEventListener("pointermove", movePtr);
     sc.addEventListener("pointerup", up);
+    // The preview must follow its box whatever changed it: window, split drag, Hide, a
+    // taller track. A window resize event alone misses most of those.
+    if (viewRo) viewRo.disconnect();
+    const view = root.querySelector(".tl-view");
+    if (view && window.ResizeObserver) {
+      viewRo = new ResizeObserver(() => requestAnimationFrame(() => { sizeFrame(); fitTracks(); }));
+      viewRo.observe(view);
+      viewRo.observe(sc);
+    }
   }
 
   function head() {
@@ -397,6 +419,26 @@
 
   function down(e) {
     if (e.button !== 0) return;
+    const rzEl = e.target.closest("[data-rz]");
+    if (rzEl) {
+      // Track height: drag the header's bottom edge, the way Resolve does. Pure view state.
+      // Double-click resets. It is detected here, not with a dblclick listener: pointer capture
+      // retargets click/dblclick to the scroll box, so the handle never sees them.
+      const now = performance.now();
+      if (lastRz.id === rzEl.dataset.rz && now - lastRz.t < 400) {
+        lastRz = { id: "", t: 0 };
+        delete trkH[rzEl.dataset.rz];
+        saveTrkH();
+        paint();
+        return;
+      }
+      lastRz = { id: rzEl.dataset.rz, t: now };
+      const row = rzEl.closest("[data-trk]");
+      drag = { kind: "rz", id: rzEl.dataset.rz, row, h0: row.getBoundingClientRect().height, y0: e.clientY };
+      rzEl.classList.add("on");
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+      return;
+    }
     stop();
     const kf = e.target.closest("[data-kfidx]");
     if (kf) {
@@ -435,6 +477,12 @@
 
   function movePtr(e) {
     if (!drag) return;
+    if (drag.kind === "rz") {
+      const h = Math.round(Math.max(TRK_MIN, Math.min(TRK_MAX, drag.h0 + (e.clientY - drag.y0))));
+      drag.row.style.setProperty("--row", h + "px");
+      drag.hNow = h;
+      return;
+    }
     if (drag.kind === "seek") {
       play = snap(Math.max(0, Math.min(doc.duration, xToTime(e))));
       head();
@@ -481,6 +529,15 @@
   async function up() {
     const d = drag;
     drag = null;
+    if (d && d.kind === "rz") {
+      // A click that didn't move must leave the DOM alone, or the second click of a
+      // double-click lands on a rebuilt node and the reset never fires.
+      if (d.hNow == null || d.hNow === Math.round(d.h0)) { root.querySelectorAll(".tl-rz.on").forEach((n) => n.classList.remove("on")); return; }
+      trkH[d.id] = d.hNow;
+      saveTrkH();
+      paint();
+      return;
+    }
     if (!d || d.kind === "seek" || d.atNow == null) return;
     if (d.kind === "kf") {
       if (!d.moved) { paint(); return; }
@@ -574,7 +631,6 @@
     const sc = root && root.querySelector(".tl-scroll");
     const shell = root && root.querySelector(".tl");
     if (!sc || !shell || !doc) return;
-    const n = Math.max(1, doc.tracks.length);
     const h = sc.clientHeight;
     // A box with no height yet (just re-divided, or mid-teardown) would compute a
     // nonsense row size and hide tracks. Keep the last sane value instead.
@@ -584,7 +640,11 @@
       shell.style.setProperty("--trk", "22px");
       return;
     }
-    const want = Math.floor((h - 22) / n); // the ruler
+    // Tracks the person sized keep their height; the rest share what's left of the panel.
+    const fixed = doc.tracks.reduce((s, t) => s + (trkH[t.id] || 0), 0);
+    const free = doc.tracks.filter((t) => !trkH[t.id]).length;
+    if (!free) return;
+    const want = Math.floor((h - 22 - fixed) / free); // the ruler
     // 18px is the smallest row that still reads as a track; below that the panel is too
     // short to show every track, and the fold button is the honest answer.
     shell.style.setProperty("--trk", Math.max(18, Math.min(48, want)) + "px");
@@ -909,6 +969,7 @@
   }
   function leave() {
     stop();
+    if (viewRo) { viewRo.disconnect(); viewRo = null; }
     document.body.classList.remove("editing");
     root = null;
   }
