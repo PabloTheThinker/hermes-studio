@@ -717,3 +717,18 @@ def test_set_fade_round_trips(home):
     back = E.undo(pid)
     aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
     assert aa["fade_in"] == 0 and aa["fade_out"] == 0
+
+
+def test_set_crop_round_trips_and_validates(home):
+    pid = _two_clips(home, "cropctl")
+    v = E.set_crop(pid, "aa", 0.0, 0.0, 0.5, 1.0)  # left half
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["crop"] == {"x": 0.0, "y": 0.0, "w": 0.5, "h": 1.0}
+    # clearing it back to the full frame removes the crop
+    v = E.set_crop(pid, "aa", 0, 0, 1, 1)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["crop"] is None
+    # an out-of-frame box is refused
+    for bad in ((0.8, 0, 0.5, 1), (0, 0, 1.5, 1), (-0.1, 0, 1, 1)):
+        with pytest.raises(E.EditorError):
+            E.set_crop(pid, "aa", *bad)

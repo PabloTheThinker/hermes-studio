@@ -213,6 +213,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Look</span><span style="display:flex;gap:4px;align-items:center"><select data-look style="flex:1"><option value="" ${it.look ? "" : "selected"}>None</option>${["warm","cool","punch","mono","film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select><button type="button" data-act="apply-look">Set</button></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -601,6 +602,18 @@
       const fo = root.querySelector("[data-fadeout]");
       if (!s2 || !fi || !fo) return;
       await commit({ op: "fade", id: s2.id, fade_in: parseFloat(fi.value) || 0, fade_out: parseFloat(fo.value) || 0 });
+      return;
+    }
+    if (name === "apply-crop") {
+      const s2 = find(sel);
+      const pick = root.querySelector("[data-crop]");
+      if (!s2 || !pick) return;
+      const presets = {
+        "": [0, 0, 1, 1], c: [0.25, 0.25, 0.5, 0.5], l: [0, 0, 0.5, 1], r: [0.5, 0, 0.5, 1],
+        t: [0, 0, 1, 0.5], b: [0, 0.5, 1, 0.5], sq: [0.25, 0.125, 0.5, 0.5],
+      };
+      const [x, y, w, h] = presets[pick.value] || presets[""];
+      await commit({ op: "crop", id: s2.id, x, y, w, h });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }

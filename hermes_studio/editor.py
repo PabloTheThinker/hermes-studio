@@ -52,6 +52,19 @@ def _pair_to_float(v: object) -> float:
     return 1.0
 
 
+def _crop_view(v: object) -> dict | None:
+    """props.crop is {x, y, w, h} as [num, den] pairs; the page wants plain floats. Returns
+    None when there is no crop, so the inspector can tell 'no crop' from a full-frame one."""
+    if not isinstance(v, dict):
+        return None
+    out = {}
+    for k in ("x", "y", "w", "h"):
+        if k not in v:
+            return None
+        out[k] = round(_pair_to_float(v[k]), 4)
+    return out
+
+
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / "timeline.json.tmp"
@@ -143,6 +156,7 @@ def view(doc: dict) -> dict:
                 props = it.get("props") or {}
                 row["look"] = props.get("look") or None
                 row["volume"] = _pair_to_float(props.get("volume"))
+                row["crop"] = _crop_view(props.get("crop"))
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
@@ -386,6 +400,30 @@ def set_fade(pid: str, item_id: str, *, fade_in: float = 0.0, fade_out: float = 
     fi = max(0, T.seconds_to_ticks(fade_in))
     fo = max(0, T.seconds_to_ticks(fade_out))
     return apply(pid, [{"op": "set_fade", "id": item_id, "fade_in": fi, "fade_out": fo}], f"Fade {fade_in:g}s/{fade_out:g}s")
+
+
+def set_crop(pid: str, item_id: str, x: float, y: float, w: float, h: float) -> dict:
+    """Reframe a clip by keeping a sub-rectangle of its source, which then fills the canvas.
+    Each value is a fraction of the source frame (0-1); x+w and y+h must stay within 1.
+    Passing the full frame (0,0,1,1) clears the crop. Stored as [num, den] pairs, like speed."""
+    from fractions import Fraction
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    vals = [float(x), float(y), float(w), float(h)]
+    if any(not (0.0 <= v <= 1.0) for v in vals):
+        raise EditorError("crop values must be between 0 and 1")
+    if w <= 0 or h <= 0 or x + w > 1.0 + 1e-6 or y + h > 1.0 + 1e-6:
+        raise EditorError("crop box must be non-empty and inside the frame")
+    if x == 0.0 and y == 0.0 and w == 1.0 and h == 1.0:
+        crop = None
+        label = "Crop cleared"
+    else:
+        crop = {"x": pair(x), "y": pair(y), "w": pair(w), "h": pair(h)}
+        label = f"Crop {w:g}×{h:g}"
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"crop": crop}}], label)
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:

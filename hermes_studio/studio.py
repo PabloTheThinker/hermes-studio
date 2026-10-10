@@ -783,6 +783,12 @@ class StudioHandler(BaseHTTPRequestHandler):
                     pid, str(body.get("id") or ""),
                     fade_in=float(body.get("fade_in") or 0), fade_out=float(body.get("fade_out") or 0),
                 )
+            elif op == "crop":
+                project = editor.set_crop(
+                    pid, str(body.get("id") or ""),
+                    float(body.get("x") or 0), float(body.get("y") or 0),
+                    float(body.get("w") or 1), float(body.get("h") or 1),
+                )
             elif op == "transition":
                 project = editor.set_transition(
                     pid, str(body.get("a") or ""), str(body.get("b") or ""), float(body.get("seconds") or 0)
