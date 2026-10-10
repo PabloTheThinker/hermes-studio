@@ -75,6 +75,9 @@
       .tl-h{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;background:transparent}
       .tl-h.a{left:0} .tl-h.b{right:0}
       .tl-clip.on .tl-h{background:var(--amber)}
+      .tl-xf{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;border-radius:99px;background:var(--amber);color:var(--amber-ink);font:700 9px var(--sans);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;border:0;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+      .tl-xf:hover{filter:brightness(1.12)}
+      .tl-xf i{font-style:normal;font-size:10px}
       .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:4;pointer-events:none}
       .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%)}
     `;
@@ -117,6 +120,18 @@
     }
     return null;
   }
+  function nextClip(it) {
+    // The clip that starts where this one ends, on the same track -- the seam a dissolve
+    // would live on. Returns null when there is no such neighbour (end of track, or a gap).
+    if (!it) return null;
+    const tr = doc.tracks.find((t) => t.items.some((i) => i.id === it.id));
+    if (!tr) return null;
+    const clips = tr.items.filter((i) => i.type === "clip").sort((a, b) => a.at - b.at);
+    const idx = clips.findIndex((c) => c.id === it.id);
+    if (idx < 0 || idx + 1 >= clips.length) return null;
+    const nx = clips[idx + 1];
+    return Math.abs(nx.at - (it.at + it.dur)) < 0.05 ? nx : null;
+  }
   function marks() {
     const out = [0, doc.duration];
     for (const tr of doc.tracks) for (const it of tr.items) out.push(it.at, it.at + it.dur);
@@ -152,6 +167,7 @@
     const step = pps >= 36 ? 1 : pps >= 16 ? 2 : 5;
     for (let t = 0; t <= w + 0.01; t += step) ticks.push(`<i style="left:${t * pps}px">${esc(fmt(t))}</i>`);
     const it = find(sel);
+    const nextNeighbor = it ? nextClip(it) : null;
     const rows = it
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
@@ -191,6 +207,7 @@
               <button type="button" data-act="canvas">Set</button>
             </div>
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
+            ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -217,6 +234,7 @@
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
             </div>`}
           </div>
@@ -231,6 +249,13 @@
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
     root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
+    root.querySelectorAll("[data-xf]").forEach((b) => b.addEventListener("click", async () => {
+      const pair = String(b.dataset.between || "").split(",");
+      if (pair.length !== 2) return;
+      // Clicking a dissolve badge removes it (back to a hard cut), which is the common
+      // correction; setting a length is the inspector's job.
+      await commit({ op: "transition", a: pair[0], b: pair[1], seconds: 0 });
+    }));
     const grip = root.querySelector(".tl-grip");
     if (grip) {
       grip.addEventListener("pointerdown", gripDown);
@@ -532,6 +557,14 @@
       return;
     }
     if (name === "grip") return;
+    if (name === "dissolve") {
+      const it = find(sel);
+      const nx = it ? nextClip(it) : null;
+      if (!nx) { msg = "No clip next to dissolve into."; paint(); return; }
+      // A 0.75s dissolve is a sane default that reads on screen; undo restores the hard cut.
+      await commit({ op: "transition", a: it.id, b: nx.id, seconds: 0.75 });
+      return;
+    }
     if (name === "ripple") { ripple = !ripple; paint(); return; }
     if (name === "snap") { snapOn = !snapOn; paint(); return; }
     if (name === "zoom-in" || name === "zoom-out") { pps = Math.max(8, Math.min(220, pps * (name === "zoom-in" ? 1.25 : 0.8))); paint(); return; }
