@@ -997,7 +997,14 @@ def frame_jpeg(pid: str, seconds: float) -> bytes:
         else:
             raise EditorError("picture file is missing")
     slot = max(0, int(round(src_s * 5)))
-    cache = folder / "frames" / f"{slot:05d}.jpg"
+    # Keyed by media as well as time: two clips from different files at the same source second
+    # used to share one cached JPEG, so the preview showed the other file's picture. The media
+    # id is made filename-safe (ids are free strings); a hash keeps two ids from colliding.
+    import hashlib as _hl
+
+    mkey = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(media_id))[:40]
+    mkey += "-" + _hl.sha1(str(media_id).encode()).hexdigest()[:8]
+    cache = folder / "frames" / mkey / f"{slot:05d}.jpg"
     if not cache.is_file() or cache.stat().st_size < 100:
         cache.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache.with_name("." + cache.stem + ".tmp.jpg")

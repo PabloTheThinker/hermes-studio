@@ -185,3 +185,42 @@ def test_desk_grade(desk):
     assert st == 200
     row = next(i for t in res["project"]["tracks"] for i in t["items"] if i["id"] == "c1")
     assert row["grade"]["gamma"] == pytest.approx([1, 1.5, 1]) and res["project"]["summary"] == "Grade c1"
+
+
+def test_preview_frames_are_cached_per_media_not_just_per_time(home):
+    """Two clips from different files at the same source second: each preview frame shows its
+    own file. The cache used to key on time alone, so the second clip got the first's picture."""
+    import io
+
+    pid = "frames2"
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    for name, colour in (("red.mp4", "red"), ("blue.mp4", "blue")):
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={colour}:s=64x36:d=2:r=30",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(folder / "media" / name)],
+                       check=True, capture_output=True)
+    s = T.TICK_RATE
+    d = T.new_timeline(pid, size=(64, 36))
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"mr": {"path": "media/red.mp4", "dur": 2 * s, "fps": [30, 1]},
+                  "mb": {"path": "media/blue.mp4", "dur": 2 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [
+        {"id": "r", "type": "clip", "media": "mr", "src": [0, 2 * s], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "b", "type": "clip", "media": "mb", "src": [0, 2 * s], "at": 2 * s, "fade_in": 0, "fade_out": 0},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    from hermes_studio import oplog as O
+
+    E._save_current(folder, O.Oplog(d, path=folder / "oplog.jsonl").doc)
+
+    def mean_rgb(jpeg: bytes):
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", "-", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                             input=jpeg, capture_output=True, check=True).stdout
+        n = len(raw) // 3
+        return [sum(raw[i::3]) / n for i in range(3)]
+
+    red = mean_rgb(E.frame_jpeg(pid, 1.0))   # clip r, source 1.0 s
+    blue = mean_rgb(E.frame_jpeg(pid, 3.0))  # clip b, source 1.0 s too
+    assert red[0] > 150 and red[2] < 80, red
+    assert blue[2] > 150 and blue[0] < 80, blue
