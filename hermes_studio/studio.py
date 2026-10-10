@@ -825,6 +825,16 @@ class StudioHandler(BaseHTTPRequestHandler):
                 )
             elif op == "canvas":
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "marker":
+                project = editor.add_marker(pid, _num(body, "at", -1.0), body.get("label") or "", body.get("color"))
+            elif op == "marker_set":
+                project = editor.set_marker(
+                    pid, str(body.get("id") or ""),
+                    at=_num(body, "at", -1.0) if body.get("at") is not None else None,
+                    label=body.get("label"), color=body.get("color"),
+                )
+            elif op == "marker_del":
+                project = editor.remove_marker(pid, str(body.get("id") or ""))
             elif op == "gainkeys":
                 keys = body.get("keys")
                 project = editor.set_gain_keys(pid, str(body.get("id") or ""), keys if isinstance(keys, list) else None)

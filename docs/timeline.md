@@ -37,7 +37,8 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | doc | `size` | `[width, height]`, integers 1–16384 |
 | doc | `media` | id → `{path, dur, fps, proxy?}`; `dur` ticks > 0; `fps` rational or `null` (audio) |
 | doc | `tracks` | list of `{id, role, items, mute?, solo?, gain?}`, in role order (below) |
-| doc | `markers` | list of `{id, at, label}` |
+| doc | `markers` | list of `{id, at, label, color?}`; `at` ticks, `label` NFC, `color` optional (see below) |
+| doc | `markers[].color` | optional `cyan`/`green`/`yellow`/`orange`/`red`/`pink`/`purple`. `blue` is the default and is never stored, so an uncoloured marker hashes as before |
 | clip | `id, type:"clip", media, src:[in,out], fade_in, fade_out` | required; `src` in media ticks, `in < out ≤ media.dur` |
 | clip | `at` or `anchor` | exactly one; `anchor` only on music tracks |
 | clip | `props` | optional `{volume, speed, crop, look, transform, keyframes, gain_keys}`; defaults `[1,1]`, `[1,1]`, `null`, `null`, `null`, `null`, `null` |

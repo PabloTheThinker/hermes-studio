@@ -375,8 +375,33 @@ def op_add_transition(ctx: _Ctx, a: dict) -> list[dict]:
 
 def op_add_marker(ctx: _Ctx, a: dict) -> list[dict]:
     iid = _new_id(ctx, a, "mk")
-    ctx.doc["markers"].append({"id": iid, "at": a["at"], "label": a["label"]})
+    mk = {"id": iid, "at": a["at"], "label": a["label"]}
+    if a.get("color") not in (None, T.MARKER_DEFAULT_COLOR):
+        mk["color"] = a["color"]
+    ctx.doc["markers"].append(mk)
     return [{"op": "remove_marker", "id": iid}]
+
+
+def op_set_marker(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move, rename or recolour a marker: only the fields given change. ``color`` null or
+    "blue" (the default) removes the field. The values are checked by the validator after the
+    op (ticks, label, colour), under their own rule ids."""
+    given = [k for k in ("at", "label", "color") if k in a]
+    if not given:
+        raise _OpError("missing_arg", "set_marker needs 'at', 'label' and/or 'color'")
+    for mk in ctx.doc["markers"]:
+        if mk["id"] == a["id"]:
+            break
+    else:
+        raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found", ident=a["id"])
+    inverse = {"op": "set_marker", "id": mk["id"]}
+    for k in given:
+        inverse[k] = copy.deepcopy(mk.get(k))
+        if k == "color" and a[k] in (None, T.MARKER_DEFAULT_COLOR):
+            mk.pop("color", None)
+        else:
+            mk[k] = copy.deepcopy(a[k])
+    return [inverse]
 
 
 def op_remove_marker(ctx: _Ctx, a: dict) -> list[dict]:
@@ -813,8 +838,9 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "add_transition": (op_add_transition, frozenset({"between", "dur"}), frozenset({"id", "track", "kind"})),
     "add_track": (op_add_track, frozenset({"role"}), frozenset({"id"})),
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
-    "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id"})),
+    "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id", "color"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
+    "set_marker": (op_set_marker, frozenset({"id"}), frozenset({"at", "label", "color"})),
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fields": (op_set_fields, frozenset({"id"}), frozenset({"set", "unset"})),

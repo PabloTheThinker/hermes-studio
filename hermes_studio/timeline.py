@@ -62,6 +62,11 @@ TIMED_OPTIONAL = {"at", "anchor", "split_from"}
 CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
+# A marker's colour: OpenTimelineIO's marker colours bar black and white, so a round trip keeps
+# it. Blue is the default (Resolve's) and is never stored, so an uncoloured marker hashes as before.
+MARKER_OPTIONAL = {"color"}
+MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
+MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
 PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
@@ -471,12 +476,14 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     for mi, mk in enumerate(markers):
         mp = _j("", "markers", mi)
         c.cur = mk.get("id") if isinstance(mk, dict) and isinstance(mk.get("id"), str) else None
-        if not c.keys(mk, mp, MARKER_KEYS):
+        if not c.keys(mk, mp, MARKER_KEYS, MARKER_OPTIONAL):
             continue
         if c.ident(mk["id"], _j(mp, "id")):
             claim(mk["id"], mp)
         c.ticks(mk["at"], _j(mp, "at"))
         c.string(mk["label"], _j(mp, "label"), empty=True)
+        if "color" in mk and mk["color"] not in MARKER_COLORS[1:]:
+            c.bad("out_of_range", _j(mp, "color"), f"color must be one of {', '.join(MARKER_COLORS[1:])} (blue is the default: leave it out)")
     c.cur = None
 
     if not c.problems:
@@ -889,7 +896,8 @@ def to_otio(doc: dict):
                 pos = e - trim
             tl.tracks.append(ot)
     for mk in doc["markers"]:
-        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0))
+        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0),
+                               color=mk.get("color", MARKER_DEFAULT_COLOR).upper())
         m.metadata[_META] = {"id": mk["id"]}
         tl.tracks.markers.append(m)
     return tl
@@ -968,6 +976,9 @@ def from_otio(tl) -> dict:
     for mk in tl.tracks.markers:
         doc["markers"].append({"id": _plain(mk.metadata[_META])["id"], "at": _ticks(mk.marked_range.start_time),
                                "label": mk.name})
+        color = str(mk.color or "").lower()
+        if color in MARKER_COLORS[1:]:
+            doc["markers"][-1]["color"] = color
     return normalize(validate_or_raise(doc))
 
 

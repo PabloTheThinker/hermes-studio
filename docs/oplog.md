@@ -75,7 +75,8 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `insert_clip` | `track, media, src, at \| anchor, id?, fade_in?=0, fade_out?=0, props?` | `delete_item{id}` |
 | `add_text` | `dur, text, style, at \| anchor, id?, track?=first text track, fade_in?, fade_out?` | `delete_item{id}` |
 | `add_transition` | `between, dur, id?, track?=V1, kind?=xfade` | `delete_item{id}` |
-| `add_marker` / `remove_marker` | `at, label, id?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
+| `add_marker` / `remove_marker` | `at, label, id?, color?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
+| `set_marker` | `id`, plus `at?`, `label?`, `color?` (only the fields given change; `color` null or `"blue"` removes it) | `set_marker` with the old values |
 | `add_track` / `remove_track` | `role, id?` / `id` | `remove_track` / `insert_track{index, track}` |
 | `move_clip` | `id, at` (items with their own `at`) | `move_clip` with the old `at` |
 | `trim_clip` | `id, src_in? src_out?` (clip) or `dur` (text), `ripple?` | `set_fields` with the old values (+ `shift_items` back) |

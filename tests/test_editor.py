@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import opentimelineio as otio
 import pytest
 
 from hermes_studio import editor as E
@@ -1281,3 +1282,91 @@ def test_undo_and_redo_walk_the_stack_like_every_editor(home):
     assert seen == [0.5, 1]
     with pytest.raises(E.EditorError, match="nothing to undo"):
         E.undo(pid)
+
+
+# ---------------------------------------------------------------- markers
+
+
+def _markers(pid):
+    return E.view(E._log(E._dir(pid)).doc)["markers"]
+
+
+def test_view_returns_markers_in_time_order_not_storage_order(home):
+    """The op log only appends, so a marker dropped at 1.5s is stored before one at 0.5s.
+    view() sorts them, which is the order the ruler and marker jumping need."""
+    pid = _mixer_cut("mk3")
+    E.add_marker(pid, 1.5, "late")
+    E.add_marker(pid, 0.5, "early")
+    by_label = {m["label"]: m["id"] for m in E.view(E._log(E._dir(pid)).doc)["markers"]}
+    E.set_marker(pid, by_label["late"], at=3.25)
+    assert [(m["at"], m["label"]) for m in _markers(pid)] == [(0.5, "early"), (3.25, "late")]
+    # ...while the op log still holds them in insertion order.
+    assert [m["at"] for m in E._log(E._dir(pid)).doc["markers"]] == [2293200000, 352800000]
+
+
+def test_markers_add_move_rename_recolour_remove_and_undo(home):
+    pid = _mixer_cut("mk")
+    E.add_marker(pid, 1.5, "  Hook  ")
+    E.add_marker(pid, 0.5, "", "red")
+    m = _markers(pid)
+    assert [(x["at"], x["label"], x["color"]) for x in m] == [(0.5, "", "red"), (1.5, "Hook", "blue")]
+    hook = m[1]["id"]
+    E.set_marker(pid, hook, at=3.0)
+    E.set_marker(pid, hook, label="Payoff")
+    E.set_marker(pid, hook, color="green")
+    assert [(x["at"], x["label"], x["color"]) for x in _markers(pid)][-1] == (3.0, "Payoff", "green")
+    # Blue is the default: setting it removes the field, so the doc is as if never coloured.
+    E.set_marker(pid, hook, color="blue")
+    raw = next(x for x in E._log(E._dir(pid)).doc["markers"] if x["id"] == hook)
+    assert "color" not in raw
+    for _ in range(4):
+        E.undo(pid)
+    assert [(x["at"], x["label"], x["color"]) for x in _markers(pid)][-1] == (1.5, "Hook", "blue")
+    E.remove_marker(pid, hook)
+    assert len(_markers(pid)) == 1
+    E.undo(pid)
+    assert len(_markers(pid)) == 2
+
+
+def test_marker_values_are_checked(home):
+    pid = _mixer_cut("mk2")
+    v = E.add_marker(pid, 1.0, "x")
+    mid = v["markers"][0]["id"]
+    for bad in (lambda: E.add_marker(pid, -1), lambda: E.add_marker(pid, float("inf")),
+                lambda: E.add_marker(pid, float("nan")), lambda: E.add_marker(pid, 1, "x", "teal"),
+                lambda: E.add_marker(pid, 1, "x" * 201), lambda: E.set_marker(pid, mid),
+                lambda: E.set_marker(pid, "nope", label="a"), lambda: E.set_marker(pid, mid, color="black")):
+        with pytest.raises(E.EditorError):
+            bad()
+    assert len(_markers(pid)) == 1
+
+
+def test_an_uncoloured_marker_keeps_the_old_hash_and_colour_survives_otio(home, tmp_path):
+    from hermes_studio import timeline as T
+
+    d = T.new_timeline("h")
+    d["markers"] = [{"id": "k1", "at": 0, "label": "a"}]
+    before = T.stamp_hash(d)[1]
+    d2 = json.loads(json.dumps(d))
+    d2["markers"][0]["color"] = "red"
+    assert T.stamp_hash(d2)[1] != before
+    assert T.validate(d2) == []
+    d2["markers"][0]["color"] = "blue"  # the default is never stored
+    assert any(p["rule"] == "out_of_range" for p in T.validate(d2))
+    d2["markers"] = [{"id": "k1", "at": 0, "label": "a", "color": "purple"}, {"id": "k2", "at": 5, "label": "b"}]
+    path = T.write_otio(T.stamp_hash(d2)[0], str(tmp_path / "m.otio"))
+    back = T.from_otio(otio.adapters.read_from_file(path))
+    assert [(m["id"], m.get("color")) for m in back["markers"]] == [("k1", "purple"), ("k2", None)]
+
+
+def test_desk_marker_ops(desk):
+    pid = _mixer_cut("dmk")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "marker", "at": 2, "label": "Beat", "color": "yellow"})
+    assert st == 200 and res["project"]["markers"][0]["color"] == "yellow"
+    mid = res["project"]["markers"][0]["id"]
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "marker_set", "id": mid, "at": 2.5, "label": "Beat 2"})
+    assert st == 200 and res["project"]["markers"][0]["at"] == 2.5
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "marker_set", "id": mid, "color": "teal"})
+    assert st == 400
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "marker_del", "id": mid})
+    assert st == 200 and res["project"]["markers"] == []

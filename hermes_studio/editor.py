@@ -219,6 +219,14 @@ def view(doc: dict) -> dict:
         # timecode (30000/1001 stays exact; a float would drift over an hour).
         "fps": list(doc.get("fps") or [30, 1]),
         "tracks": tracks,
+        # Timeline markers, in seconds, in time order. The op log only appends (an undo's inverse
+        # must be able to put a marker back where it was), so stored order is insertion order;
+        # this is the order clients and the ruler need.
+        "markers": [
+            {"id": mk["id"], "at": round(mk["at"] / doc["tick_rate"], 4), "label": mk["label"],
+             "color": mk.get("color", T.MARKER_DEFAULT_COLOR)}
+            for mk in sorted(doc.get("markers") or [], key=lambda m: (m["at"], m["id"]))
+        ],
     }
 
 
@@ -464,6 +472,58 @@ def set_track(pid: str, track_id: str, *, mute: bool | None = None, solo: bool |
     if len(op) == 2:
         raise EditorError("nothing to set on the track")
     return apply(pid, [op], f"{track_id} " + ", ".join(words))
+
+
+MARKER_LABEL_MAX = 200
+
+
+def _marker_label(label: object) -> str:
+    import unicodedata
+
+    s = unicodedata.normalize("NFC", str(label or "")).strip()
+    if len(s) > MARKER_LABEL_MAX:
+        raise EditorError(f"a marker name is at most {MARKER_LABEL_MAX} characters")
+    return s
+
+
+def _marker_color(color: object) -> str | None:
+    if color in (None, ""):
+        return None
+    if color not in T.MARKER_COLORS:
+        raise EditorError("a marker colour is one of " + ", ".join(T.MARKER_COLORS))
+    return str(color)
+
+
+def add_marker(pid: str, at: float, label: str = "", color: str | None = None) -> dict:
+    """Drop a marker at ``at`` seconds (Resolve's M)."""
+    if not (0 <= at < 1e7):
+        raise EditorError("a marker must sit at a time from the start of the cut")
+    op = {"op": "add_marker", "at": T.seconds_to_ticks(at), "label": _marker_label(label)}
+    c = _marker_color(color)
+    if c:
+        op["color"] = c
+    return apply(pid, [op], "Marker" + (f" “{op['label']}”" if op["label"] else ""))
+
+
+def set_marker(pid: str, marker_id: str, **fields) -> dict:
+    """Move (``at`` seconds), rename (``label``) or recolour (``color``) a marker."""
+    op: dict = {"op": "set_marker", "id": marker_id}
+    if fields.get("at") is not None:
+        if not (0 <= fields["at"] < 1e7):
+            raise EditorError("a marker must sit at a time from the start of the cut")
+        op["at"] = T.seconds_to_ticks(fields["at"])
+    if "label" in fields and fields["label"] is not None:
+        op["label"] = _marker_label(fields["label"])
+    if "color" in fields and fields["color"] is not None:
+        op["color"] = _marker_color(fields["color"]) or T.MARKER_DEFAULT_COLOR
+    if len(op) == 2:
+        raise EditorError("say what to change: at, label or color")
+    what = "Marker moved" if "at" in op else "Marker renamed" if "label" in op else "Marker colour"
+    return apply(pid, [op], what)
+
+
+def remove_marker(pid: str, marker_id: str) -> dict:
+    return apply(pid, [{"op": "remove_marker", "id": marker_id}], "Marker removed")
 
 
 def set_gain_keys(pid: str, item_id: str, keys: list | None) -> dict:
