@@ -216,6 +216,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Animating ${it.keyframes.length} keys</span> <button type="button" data-act="clear-kenburns">Clear</button></div>` : ""}` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -637,6 +638,27 @@
       const pr = root.querySelector("[data-tfrot]");
       if (!sc || !px || !py || !pr) return;
       await commit({ op: "transform", id: s2.id, scale: parseFloat(sc.value) || 1, x: parseFloat(px.value) || 0, y: parseFloat(py.value) || 0, rotate: parseFloat(pr.value) || 0 });
+      return;
+    }
+    if (name === "apply-kenburns" || name === "clear-kenburns") {
+      const s2 = find(sel);
+      if (!s2) return;
+      if (name === "clear-kenburns") {
+        await commit({ op: "keyframes", id: s2.id, keyframes: null });
+        return;
+      }
+      // A Ken Burns push: from the clip's current static transform to the target scale,
+      // across the clip's full length. Two keyframes cover the common move.
+      const endEl = root.querySelector("[data-kbend]");
+      const endScale = parseFloat((endEl || {}).value) || 1.5;
+      const start = it.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
+      await commit({
+        op: "keyframes", id: s2.id,
+        keyframes: [
+          { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate },
+          { at: it.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate },
+        ],
+      });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }

@@ -795,6 +795,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                     x=float(body.get("x") or 0), y=float(body.get("y") or 0),
                     scale=float(body.get("scale") or 1), rotate=float(body.get("rotate") or 0),
                 )
+            elif op == "keyframes":
+                project = editor.set_keyframes(pid, str(body.get("id") or ""), body.get("keyframes"))
             elif op == "transition":
                 project = editor.set_transition(
                     pid, str(body.get("a") or ""), str(body.get("b") or ""), float(body.get("seconds") or 0)

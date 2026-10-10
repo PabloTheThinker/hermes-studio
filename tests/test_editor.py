@@ -870,3 +870,30 @@ def test_render_animates_keyframes(home):
     # A real animation changes the pixels between early and late; a snapped/static value
     # (or a keyframe track the render ignored) would leave them identical.
     assert early != late
+
+
+def test_set_keyframes_round_trips_and_validates(home):
+    pid = _two_clips(home, "kfset")
+    v = E.set_keyframes(pid, "aa", [
+        {"at": 0.0, "x": 0, "y": 0, "scale": 1, "rotate": 0},
+        {"at": 4.0, "x": 0, "y": 0, "scale": 2, "rotate": 0},
+    ])
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    kfs = aa["keyframes"]
+    assert len(kfs) == 2
+    assert kfs[0]["at"] == pytest.approx(0.0, abs=0.01) and kfs[0]["scale"] == pytest.approx(1.0, abs=0.01)
+    assert kfs[1]["at"] == pytest.approx(4.0, abs=0.01) and kfs[1]["scale"] == pytest.approx(2.0, abs=0.01)
+    # a single keyframe (or none) clears the animation
+    v = E.set_keyframes(pid, "aa", [{"at": 0.0, "x": 0, "y": 0, "scale": 1, "rotate": 0}])
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["keyframes"] is None
+    # out-of-order times and bad scale are refused
+    with pytest.raises(E.EditorError):
+        E.set_keyframes(pid, "aa", [{"at": 4.0, "scale": 1}, {"at": 1.0, "scale": 1}])
+    with pytest.raises(E.EditorError):
+        E.set_keyframes(pid, "aa", [{"at": 0.0, "scale": 1}, {"at": 2.0, "scale": 0}])
+    # undo restores
+    E.set_keyframes(pid, "aa", [{"at": 0.0, "scale": 1}, {"at": 2.0, "scale": 2}])
+    back = E.undo(pid)
+    aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["keyframes"] is None

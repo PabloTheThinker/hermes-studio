@@ -78,6 +78,24 @@ def _transform_view(v: object) -> dict | None:
     return out
 
 
+def _keyframes_view(v: object, rate: int) -> list[dict] | None:
+    """props.keyframes is a list of {at, x, y, scale, rotate} as [num, den] pairs; the page
+    wants plain floats with `at` in seconds from the clip start. None when there are none."""
+    if not isinstance(v, list) or not v:
+        return None
+    out = []
+    for kf in v:
+        if not isinstance(kf, dict) or "at" not in kf:
+            return None
+        row = {"at": round(_pair_to_float(kf["at"]) if isinstance(kf["at"], (list, tuple)) else kf["at"] / rate, 4)}
+        for k in ("x", "y", "scale", "rotate"):
+            if k not in kf:
+                return None
+            row[k] = round(_pair_to_float(kf[k]), 4)
+        out.append(row)
+    return out or None
+
+
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     tmp = folder / "timeline.json.tmp"
@@ -171,6 +189,7 @@ def view(doc: dict) -> dict:
                 row["volume"] = _pair_to_float(props.get("volume"))
                 row["crop"] = _crop_view(props.get("crop"))
                 row["transform"] = _transform_view(props.get("transform"))
+                row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
@@ -464,6 +483,41 @@ def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, sca
         transform = {"x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)}
         label = f"Transform {fs:g}×" if (fs != 1.0 and fx == 0 and fy == 0 and fr_ == 0) else "Transform"
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"transform": transform}}], label)
+
+
+def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
+    """Set a clip's animated transform. Each keyframe is {at, x, y, scale, rotate} with `at`
+    in seconds from the clip start; values match the transform's ranges. A single-element or
+    empty list clears the animation (back to a static transform). Stored as [num, den] pairs
+    and validated by the schema (increasing time, within range). Passing None clears it."""
+    from fractions import Fraction
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    if not keyframes or len(keyframes) < 2:
+        return apply(pid, [{"op": "set_props", "id": item_id, "props": {"keyframes": None}}], "Keyframes cleared")
+    if len(keyframes) > 64:
+        raise EditorError("at most 64 keyframes")
+    out = []
+    prev = None
+    for kf in keyframes:
+        at = float(kf.get("at", 0.0))
+        fx, fy = float(kf.get("x", 0.0)), float(kf.get("y", 0.0))
+        fs, fr_ = float(kf.get("scale", 1.0)), float(kf.get("rotate", 0.0))
+        if not (-4.0 <= fx <= 4.0 and -4.0 <= fy <= 4.0):
+            raise EditorError("position must be within ±4 of the canvas")
+        if not (0.01 <= fs <= 100.0):
+            raise EditorError("scale must be between 0.01 and 100")
+        if not (-3600.0 <= fr_ <= 3600.0):
+            raise EditorError("rotate must be within ±3600 degrees")
+        ticks = T.seconds_to_ticks(at)
+        if prev is not None and ticks <= prev:
+            raise EditorError("keyframes must be in strictly increasing time order")
+        prev = ticks
+        out.append({"at": ticks, "x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)})
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"keyframes": out}}], f"Animate ({len(out)} keys)")
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:
