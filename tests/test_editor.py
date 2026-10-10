@@ -817,3 +817,56 @@ def test_set_transform_round_trips_and_validates(home):
     back = E.undo(pid)
     aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
     assert aa["transform"] is None
+
+
+def test_render_animates_keyframes(home):
+    """A keyframe track must actually animate: frames early and late in a scale 1->2 push
+    must differ from each other (and from the static source), proving the value moves over
+    time rather than snapping to one value."""
+    import subprocess
+
+    from hermes_studio import render_timeline as R
+
+    folder = E._dir("kfanim")
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "smptebars=s=640x360:d=4:r=30",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac",
+         str(folder / "media" / "v.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    kfs = [
+        {"at": 0, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]},
+        {"at": 4 * s, "x": [0, 1], "y": [0, 1], "scale": [2, 1], "rotate": [0, 1]},
+    ]
+    d = T.new_timeline("kfanim", size=(640, 360))
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/v.mp4", "dur": 4 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "c1", "type": "clip", "media": "m1", "src": [0, 4 * s], "at": 0, "fade_in": 0, "fade_out": 0, "props": {"keyframes": kfs}}]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    from hermes_studio import oplog as _O
+
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+
+    out = R.render_project("kfanim")
+    assert "zoompan" in R._build_graph(R._build_plan(E._log(folder).doc, folder), None)[0]
+
+    def topband(path, at):
+        from pathlib import Path
+
+        from PIL import Image
+
+        jpg = Path(str(path) + f"_a{at}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", path, "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+        im = Image.open(jpg).convert("RGB")
+        W, H = im.size
+        return [im.getpixel((x, H // 4)) for x in range(0, W, 3)]
+
+    early, late = topband(out["path"], 0.2), topband(out["path"], 3.6)
+    # A real animation changes the pixels between early and late; a snapped/static value
+    # (or a keyframe track the render ignored) would leave them identical.
+    assert early != late

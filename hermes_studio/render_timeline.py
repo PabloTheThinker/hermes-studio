@@ -174,6 +174,42 @@ def _transform(it: dict) -> dict | None:
     return {"x": x, "y": y, "scale": scale, "rotate": rotate}
 
 
+def _keyframes(it: dict, rate: int) -> list[dict] | None:
+    """The clip's keyframes as plain floats, `at` in seconds from the clip's start, sorted.
+    None when there are none. Each is {at, x, y, scale, rotate}; the values match the
+    transform's ranges and are stored as [num, den] pairs."""
+
+    def frac(v: Any) -> float | None:
+        if isinstance(v, (list, tuple)) and len(v) == 2:
+            try:
+                num, den = float(v[0]), float(v[1])
+                return num / den if den != 0 else None
+            except (TypeError, ValueError, ZeroDivisionError):
+                return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        return None
+
+    raw = (it.get("props") or {}).get("keyframes")
+    if not isinstance(raw, list) or not raw:
+        return None
+    out = []
+    for kf in raw:
+        if not isinstance(kf, dict):
+            return None
+        at = kf.get("at")
+        if not isinstance(at, int):
+            return None
+        vals = {k: frac(kf.get(k)) for k in ("x", "y", "scale", "rotate")}
+        if any(v is None for v in vals.values()):
+            return None
+        if vals["scale"] <= 0:
+            return None
+        out.append({"at": at / rate, **vals})
+    out.sort(key=lambda k: k["at"])
+    return out or None
+
+
 def _volume(it: dict) -> float:
     """The clip's playback volume as a float. props.volume is a reduced [num, den] pair
     (0 to 4 per the schema); a missing or invalid value means full volume (1.0)."""
@@ -262,8 +298,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         crop = _crop(it)
         look = str((it.get("props") or {}).get("look") or "").strip() or None
         transform = _transform(it)
+        keyframes = _keyframes(it, rate)
         fi, fo = it.get("fade_in") or 0, it.get("fade_out") or 0
-        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo, "transform": transform}
+        clip_extra = {"crop": crop, "look": look, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -393,6 +430,46 @@ def _build_ass(plan: dict, cache: Path) -> Path | None:
 # --------------------------------------------------------------------------- graph
 
 
+def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
+    """A piecewise-linear ffmpeg expression for one transform value over the keyframes.
+    Between two keyframes the value is a linear ramp; before the first and after the last it
+    holds the endpoint. Each segment is ``if(between(t,a,b), a+(b-a)*(t-a)/(b-a), <next>)``,
+    built from the last segment inward so the final else is the first keyframe's value."""
+    expr = f"{kfs[0][key]:.6f}"
+    for i in range(1, len(kfs)):
+        a, b = kfs[i - 1], kfs[i]
+        if abs(b[key] - a[key]) < 1e-12:
+            expr = f"{a[key]:.6f}"
+        else:
+            ramp = f"{a[key]:.6f}+({b[key]:.6f}-{a[key]:.6f})*({tvar}-{a['at']:.6f})/({b['at']:.6f}-{a['at']:.6f})"
+            expr = f"if(between({tvar},{a['at']:.6f},{b['at']:.6f}),{ramp},{expr})"
+    return expr
+
+
+def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
+    """A zoompan filter string that animates scale and pan over the keyframes. zoompan
+    re-evaluates its expressions on every output frame, keyed by ``on`` (the output frame
+    number), which this build advances reliably -- unlike scale's eval=frame, whose output
+    size is fixed at init and so cannot resize per frame. The keyframe times (seconds) are
+    converted to frame numbers by ``on``/``fps`` being the rebased clock, so the ramp is over
+    frames. Rotation is not animated (zoompan has no rotate); a keyframe track with a non-zero
+    rotate still animates position and scale."""
+    # The caller feeds an already contain-fitted frame that fills the canvas at zoom 1, so the
+    # keyframe scale is zoompan's zoom directly. Keyframe times are frames now (at * fps).
+    frame_kfs = [{**k, "at": k["at"] * fps} for k in kfs]
+    z = _interp_expr(frame_kfs, "scale", "on")
+    xx = _interp_expr(frame_kfs, "x", "on")
+    yy = _interp_expr(frame_kfs, "y", "on")
+    # zoompan's x/y are the top-left of the crop window in the zoomed image; centre the crop
+    # and add the pan offset (a fraction of the input size). iw/ih are the input size.
+    xexp = f"iw/2-(iw/zoom/2)+({xx})*iw"
+    yexp = f"ih/2-(ih/zoom/2)+({yy})*ih"
+    return f"zoompan=z='{z}':x='{xexp}':y='{yexp}':d=1:s={w}x{h}:fps={fps:.3f},"
+
+
+# --------------------------------------------------------------------------- graph
+
+
 def _assemble_video(segs: list, seg_ids: list, seg_durs: list, transitions: list, rate: int) -> list:
     """Join the picture segments into ``[outv]`` as filter-graph lines.
 
@@ -506,7 +583,16 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # black), shifted by the transform offset, then a canvas-sized window is cropped
             # from the centre -- which gives zoom-in (crop) and pan for free.
             tf = inp.get("transform")
-            if tf:
+            kfs = inp.get("keyframes")
+            if kfs:
+                # Animated transform: zoompan evaluates its zoom/x/y expressions on every
+                # output frame, so a piecewise-linear expression over the keyframes animates
+                # the move. `on` is the output frame number; the clip's keyframe times are
+                # already seconds from the clip start, and the segment is rebased to zero, so
+                # `on/fps` is that same clock. Values before the first / after the last
+                # keyframe hold the endpoint (clamped), which is how a Ken Burns push reads.
+                xf = _zoompan(kfs, w, h, fps, dur)
+            elif tf:
                 tscale = tf["scale"]
                 tw = max(2, int(round(dw * tscale)) // 2 * 2)
                 th = max(2, int(round(dh * tscale)) // 2 * 2)
