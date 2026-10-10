@@ -323,6 +323,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "editor.js", "text/javascript; charset=utf-8", cache=False)
         if path.split("?")[0] == "/mix.js":
             return self._file(UI_DIR / "mix.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/scopes.js":
+            return self._file(UI_DIR / "scopes.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):

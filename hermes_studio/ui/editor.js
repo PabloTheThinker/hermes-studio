@@ -44,6 +44,11 @@
       .tl-frame .who{color:var(--mute);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .tl-bar{position:absolute;left:0;bottom:0;height:3px;background:var(--amber);width:0}
       .tl-insp{padding:16px 16px 8px;overflow:auto;min-width:0;min-height:0}
+      .tl-scope{flex:none;margin:0 0 12px;border:1px solid var(--line);border-radius:6px;background:#08090a;overflow:hidden}
+      .tl-scope canvas{display:block;width:100%;height:132px}
+      .tl-scope nav{display:flex;gap:2px;padding:4px;border-top:1px solid var(--line)}
+      .tl-scope nav button{flex:1;padding:3px 0;font:500 10px var(--mono);letter-spacing:.06em}
+      .tl-scope .tl-sread{font:500 10px var(--mono);color:var(--dim);padding:0 6px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .tl-insp h3{margin:0 0 8px;font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
       .tl-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:8px 0;font-size:13px}
       .tl-row span{color:var(--dim)} .tl-row b{font-weight:500;font-family:var(--mono);font-size:12px}
@@ -149,6 +154,9 @@
   // anchored item (a text bound to a clip) never joins the group -- it has no timeline of
   // its own to move on -- but a marquee over the timeline still shows the clips it covers.
   let selSet = new Set();
+  // Scopes (scopes.js): which one shows above the inspector, kept across reloads.
+  let scopeMode = (() => { try { return localStorage.getItem("tl-scope") || "wave"; } catch (e) { return "wave"; } })();
+  let scopeLast = null, scopeAt = 0;
   let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
   let waves = {}; // media id -> {rate, peaks} once fetched, "wait" while in flight
   // The preview mixer (mix.js): when every audible clip's sound is decoded, playback runs on
@@ -500,6 +508,7 @@
             <span class="tl-bar" style="width:${(play / w) * 100}%"></span>
           </div></div>
           <aside class="tl-insp">
+            ${scopeMode !== "off" ? `<div class="tl-scope"><canvas class="tl-scopec" width="230" height="132" aria-label="${scopeMode === "vector" ? "Vectorscope" : scopeMode === "parade" ? "RGB parade" : "Luma waveform"} of the graded preview"></canvas><div class="tl-sread"></div><nav>` : `<div class="tl-scope"><nav>`}${[["wave", "Wave"], ["parade", "Parade"], ["vector", "Vector"], ["off", "Off"]].map(([m, l]) => `<button type="button" data-scope="${m}" class="${scopeMode === m ? "on" : ""}" title="${m === "off" ? "Hide the scopes" : l + " of the graded picture"}">${l}</button>`).join("")}</nav></div>
             <h3>${esc(it ? it.label : "Nothing selected")}</h3>
             <div class="tl-can">
               <button type="button" data-canvas="phone" class="${preset === "phone" ? "on" : ""}">Phone</button>
@@ -611,6 +620,13 @@
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
     showGrade(); // the DOM was just rebuilt: put the clip's grade back on the picture
     showFrame();
+    root.querySelectorAll("[data-scope]").forEach((b) => b.addEventListener("click", () => {
+      scopeMode = b.dataset.scope;
+      try { localStorage.setItem("tl-scope", scopeMode); } catch (e) { /* private mode */ }
+      paint();
+    }));
+    if (pic) pic.addEventListener("load", () => updateScope(true));
+    updateScope(true);
     applySplit();
     sizeFrame();
     fitTracks();
@@ -660,6 +676,7 @@
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
     showGrade();
     showFrame();
+    updateScope(false);
   }
 
   // ---- the clip's grade, live in the preview ------------------------------------------
@@ -704,6 +721,49 @@
     // The element's own backdrop would be graded too (a lift would grey the letterbox), so it
     // goes transparent and the frame's identical #050505 shows through, as in the render.
     els.forEach((n) => { n.style.filter = "url(#hs-grade)"; n.style.background = "transparent"; });
+  }
+
+  // ---- scopes: read the graded preview -------------------------------------------------
+  // Draw the picture the viewer sees (the still, or the playing <video>) into a small canvas
+  // through the same #hs-grade filter, and hand the pixels to scopes.js. 256 px wide is plenty
+  // for a 128-column waveform and keeps it cheap enough to run ten times a second in play.
+  let scopeBuf = null;
+  function updateScope(force) {
+    if (!root || !doc || scopeMode === "off" || !window.HSScopes) return;
+    const now = performance.now();
+    if (!force && now - scopeAt < 100) return;
+    scopeAt = now;
+    const out = root.querySelector(".tl-scopec");
+    if (!out) return;
+    const v = root.querySelector(".tl-vid"), img = root.querySelector(".tl-pic");
+    const src = v && !v.hidden && v.readyState >= 2 && v.videoWidth ? v : img && img.complete && img.naturalWidth ? img : null;
+    if (!src) { window.HSScopes.draw(out, scopeMode, null); scopeLast = null; return; }
+    const sw = src.videoWidth || src.naturalWidth, sh = src.videoHeight || src.naturalHeight;
+    const cw = 256, ch = Math.max(1, Math.round((256 * sh) / sw));
+    if (!scopeBuf) scopeBuf = document.createElement("canvas");
+    scopeBuf.width = cw; scopeBuf.height = ch;
+    const ctx = scopeBuf.getContext("2d", { willReadFrequently: true });
+    const it = mainClip(play);
+    ctx.filter = it && it.grade_preview && root.querySelector("#hs-grade") ? "url(#hs-grade)" : "none";
+    ctx.clearRect(0, 0, cw, ch);
+    try { ctx.drawImage(src, 0, 0, cw, ch); } catch (e) { return; }
+    const a = window.HSScopes.analyze(ctx.getImageData(0, 0, cw, ch).data, cw, ch, 128);
+    // Back the scope canvas with device pixels for its on-screen box, so its text is crisp
+    // and the size it was designed at (a fixed backing scaled down made 9 px labels 4 px).
+    const k = window.devicePixelRatio || 1;
+    const bw = Math.max(1, Math.round(out.clientWidth * k)), bh = Math.max(1, Math.round(out.clientHeight * k));
+    if (out.width !== bw || out.height !== bh) { out.width = bw; out.height = bh; }
+    window.HSScopes.draw(out, scopeMode, a, k);
+    scopeLast = a.stats;
+    const rd = root.querySelector(".tl-sread");
+    if (rd && a.stats) {
+      const p = (v) => Math.round((v / 255) * 100);
+      rd.textContent = scopeMode === "parade"
+        ? `R ${p(a.stats.r[0])}–${p(a.stats.r[1])}  G ${p(a.stats.g[0])}–${p(a.stats.g[1])}  B ${p(a.stats.b[0])}–${p(a.stats.b[1])} %`
+        : scopeMode === "vector"
+          ? `Chroma max ${Math.round(a.stats.chroma * 100)} %${it && it.grade ? " · graded" : ""}`
+          : `Luma ${p(a.stats.luma[0])}–${p(a.stats.luma[1])} %${it && it.grade ? " · graded" : ""}`;
+    }
   }
 
   let shown = -1;
@@ -1861,5 +1921,7 @@
     mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, marks: { ...inOut }, stopAt, mkSel, levels: mix.levels(), waiting: mix.waiting() } : null),
     // The live audio context, so a check can suspend it to prove the stalled-clock fallback.
     mixContext: () => (mix ? mix.context : null),
+    // The last scope reading (8-bit min/max per channel and luma), for checks.
+    scopeStats: () => scopeLast,
   };
 })();
