@@ -78,7 +78,9 @@
       .tl-xf{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;border-radius:99px;background:var(--amber);color:var(--amber-ink);font:700 9px var(--sans);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;border:0;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
       .tl-xf:hover{filter:brightness(1.12)}
       .tl-xf i{font-style:normal;font-size:10px}
-      .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+      .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4);cursor:pointer}
+      .tl-kf:hover{filter:brightness(1.3)}
+      .tl-kf.on{background:#fff;box-shadow:0 0 0 2px var(--amber);width:10px;height:10px;margin-left:-5px}
       .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:4;pointer-events:none}
       .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%)}
     `;
@@ -86,6 +88,7 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
+  let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
   let tab = "clips", words = [], hist = [], folded = false, stagePct = 62;
   try {
     const saved = Number(localStorage.getItem("tl-stage-pct"));
@@ -217,7 +220,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Animating ${it.keyframes.length} keys</span> <button type="button" data-act="clear-kenburns">Clear</button></div>` : ""}` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -243,7 +246,7 @@
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               ${d.tracks.map((tr) => `<div class="tl-trk"><span class="tl-lab">${esc(tr.id)} ${esc(tr.role)}</span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k) => `<i class="tl-kf" style="left:${k.at * pps}px" title="Keyframe at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}×"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
             </div>`}
@@ -347,6 +350,14 @@
   function down(e) {
     if (e.button !== 0) return;
     stop();
+    const kf = e.target.closest("[data-kfidx]");
+    if (kf) {
+      // A keyframe diamond: select it (no drag -- editing its values is the inspector's job).
+      sel = kf.closest("[data-id]").dataset.id;
+      selKf = Number(kf.dataset.kfidx);
+      paint();
+      return;
+    }
     const edge = e.target.closest("[data-edge]");
     const clip = e.target.closest("[data-id]");
     if (edge) {
@@ -355,6 +366,7 @@
       drag = { kind: "trim", edge: edge.dataset.edge, id: sel, at: it.at, dur: it.dur };
     } else if (clip && clip.dataset.at) {
       sel = clip.dataset.id;
+      selKf = -1;
       drag = { kind: "move", id: sel, at0: Number(clip.dataset.at), x0: e.clientX, moved: false };
     } else if (e.target.closest("[data-lane]")) {
       play = snap(Math.max(0, Math.min(doc.duration, xToTime(e))));
@@ -415,6 +427,10 @@
         }
         sel = best ? best.id : "";
       }
+      // The keyframe list may have shrunk or been cleared; clamp the selection so the
+      // inspector doesn't point past the end.
+      const cur = find(sel);
+      if (!cur || !cur.keyframes || selKf >= cur.keyframes.length) selKf = -1;
     } catch (e) {
       msg = e.message;
     }
@@ -652,14 +668,42 @@
       // across the clip's full length. Two keyframes cover the common move.
       const endEl = root.querySelector("[data-kbend]");
       const endScale = parseFloat((endEl || {}).value) || 1.5;
-      const start = it.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
+      const start = s2.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
       await commit({
         op: "keyframes", id: s2.id,
         keyframes: [
           { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate },
-          { at: it.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate },
+          { at: s2.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate },
         ],
       });
+      return;
+    }
+    if (name === "add-kf" || name === "set-kf" || name === "del-kf") {
+      const s2 = find(sel);
+      if (!s2 || !s2.keyframes) return;
+      // Work on a copy of the keyframe list; each edit re-sends the whole track (the op is
+      // all-or-nothing, which keeps the schema's increasing-time rule enforced in one place).
+      let kfs = s2.keyframes.map((k) => ({ ...k }));
+      if (name === "add-kf") {
+        // Insert a key at the playhead, carrying the current static transform's scale so the
+        // move doesn't jump. Re-sorted by time below.
+        const base = s2.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
+        kfs.push({ at: Math.max(0, Math.min(s2.dur, play)), x: base.x, y: base.y, scale: base.scale, rotate: base.rotate });
+      } else if (name === "del-kf") {
+        if (selKf < 0 || selKf >= kfs.length) return;
+        kfs.splice(selKf, 1);
+        selKf = -1;
+        await commit({ op: "keyframes", id: s2.id, keyframes: kfs.length >= 2 ? kfs : null });
+        return;
+      } else {  // set-kf: edit the selected keyframe's time and scale
+        if (selKf < 0 || selKf >= kfs.length) return;
+        const atEl = root.querySelector("[data-kfat]");
+        const scEl = root.querySelector("[data-kfscale]");
+        kfs[selKf].at = parseFloat((atEl || {}).value) || 0;
+        kfs[selKf].scale = parseFloat((scEl || {}).value) || 1;
+      }
+      kfs.sort((a, b) => a.at - b.at);
+      await commit({ op: "keyframes", id: s2.id, keyframes: kfs.length >= 2 ? kfs : null });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }
