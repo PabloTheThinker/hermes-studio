@@ -122,6 +122,8 @@
       .tl-clip.sel{outline:2px dashed rgba(222,171,66,.7);z-index:2}
       .tl-clip.sel.on{outline:2px solid var(--amber)}
       /* The marquee rectangle, drawn over the lanes while a drag selects. */
+      .tl-clip.rolling{outline:2px dotted var(--amber);z-index:3}
+      .tl-clip.rolling .tl-h{background:var(--amber)}
       .tl-clip.slipping{cursor:ew-resize;outline:2px dotted var(--amber)}
       .tl-clip.slipping .tl-wave{opacity:.85}
       .tl-marq{position:absolute;border:1px solid var(--amber);background:rgba(222,171,66,.12);pointer-events:none;z-index:6;border-radius:2px}
@@ -361,6 +363,22 @@
   function clearSelSet() { selSet = new Set(); }
   // Resolve a live drag offset into a signed seconds delta for the group.
   function groupDelta(d, e) { return snap(d.at0 + (e.clientX - d.x0) / pps) - d.at0; }
+  // The two clips meeting at an edge, and the crossfade on the cut (0 = hard cut). From the
+  // end edge of A, or the start edge of B. Null when the edge sits on a gap.
+  function rollPair(it, side) {
+    if (!it || it.type !== "clip") return null;
+    const tr = doc.tracks.find((t) => t.items.some((i) => i.id === it.id));
+    if (!tr) return null;
+    const clips = tr.items.filter((i) => i.type === "clip" && i.id !== it.id);
+    const xd = (a, b) => { const t = tr.items.find((i) => i.type === "transition" && i.between && i.between[0] === a.id && i.between[1] === b.id); return t ? t.dur : 0; };
+    const near = (p, q) => Math.abs(p - q) < 1e-3;
+    if (side === "end") {
+      const b = clips.find((c) => near(c.at, it.at + it.dur - xd(it, c)));
+      return b ? { a: it, b, x: xd(it, b) } : null;
+    }
+    const a = clips.find((c) => near(it.at, c.at + c.dur - xd(c, it)));
+    return a ? { a, b: it, x: xd(a, it) } : null;
+  }
   function nextClip(it) {
     // The clip that starts where this one ends, on the same track -- the seam a dissolve
     // would live on. Returns null when there is no such neighbour (end of track, or a gap).
@@ -530,7 +548,7 @@
               <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
               <div class="tl-marq" hidden></div>
@@ -787,6 +805,21 @@
     }
     const edge = e.target.closest("[data-edge]");
     const clip = e.target.closest("[data-id]");
+    if (edge && e.altKey) {
+      // Alt/Option-drag an edge rolls the edit point it sits on (Final Cut's roll, Resolve's
+      // trim-mode drag on a cut): one clip gets longer by what its neighbour loses.
+      const pair = rollPair(find(edge.dataset.id), edge.dataset.edge);
+      if (!pair) { msg = "Nothing touches this edge: roll moves the cut between two clips."; paint(); return; }
+      const { a, b, x } = pair, f = fpsOf();
+      sel = a.id; selKf = -1; selSet = new Set([a.id]); paintSel();
+      drag = { kind: "roll", a, b, x0: e.clientX, by: 0, moved: false,
+        ea: root.querySelector(`[data-id="${a.id}"]`), eb: root.querySelector(`[data-id="${b.id}"]`),
+        hi: Math.min(b.dur - x - 1 / f, a.media_dur != null ? (a.media_dur - a.src_out) / (a.speed || 1) : b.dur),
+        lo: Math.max(-(a.dur - x - 1 / f), -(b.src_in || 0) / (b.speed || 1)) };
+      [drag.ea, drag.eb].forEach((n) => n && n.classList.add("rolling"));
+      e.currentTarget.setPointerCapture(e.pointerId);
+      return;
+    }
     if (edge) {
       const it = find(edge.dataset.id);
       sel = edge.dataset.id;
@@ -921,6 +954,19 @@
       paintSel();
       return;
     }
+    if (drag.kind === "roll") {
+      // Frame grid, clamped live. The cut moves on screen: A's right edge and B's left edge
+      // travel together, B's right edge stays put.
+      const f = fpsOf();
+      drag.by = Math.max(drag.lo, Math.min(drag.hi, Math.round(((e.clientX - drag.x0) / pps) * f) / f));
+      drag.moved = drag.moved || Math.abs(e.clientX - drag.x0) > 3;
+      const { a, b } = drag;
+      if (drag.ea) drag.ea.style.width = Math.max(2, (a.dur + drag.by) * pps) + "px";
+      if (drag.eb) { drag.eb.style.left = (b.at + drag.by) * pps + "px"; drag.eb.style.width = Math.max(2, (b.dur - drag.by) * pps) + "px"; }
+      const st = root.querySelector(".tl-status");
+      if (st) st.textContent = `Roll ${a.id}|${b.id} ${drag.by >= 0 ? "+" : "−"}${tc(Math.abs(drag.by))} · cut at ${tc(a.at + a.dur + drag.by)}${drag.by === drag.lo || drag.by === drag.hi ? " · limit" : ""}`;
+      return;
+    }
     if (drag.kind === "slip") {
       // Timeline seconds on the frame grid, clamped to the media. Only the readout and the
       // waveform move live; the clip's box stays where it is, which is the point of a slip.
@@ -1002,6 +1048,12 @@
       trkH[d.id] = d.hNow;
       saveTrkH();
       paint();
+      return;
+    }
+    if (d && d.kind === "roll") {
+      [d.ea, d.eb].forEach((n) => n && n.classList.remove("rolling"));
+      if (!d.moved || Math.abs(d.by) < 1e-9) { paint(); return; }
+      await commit({ op: "roll", item: d.a.id, by: Math.round(d.by * 1e6) / 1e6 });
       return;
     }
     if (d && d.kind === "slip") {
