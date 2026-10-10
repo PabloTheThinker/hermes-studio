@@ -251,6 +251,9 @@ BAD = {
     "split_from itself (Glyph 2)": (_set("@c3.split_from", "c3"), "bad_split_from"),
     "split_from not an id": (_set("@c3.split_from", ""), "wrong_type"),
     "stale hash": (lambda d: d.update(hash="sha256:" + "0" * 64), "hash_mismatch"),
+    "keyframes not a list": (_set("@c3.props.keyframes", {}), "bad_keyframes"),
+    "keyframes empty": (_set("@c3.props.keyframes", []), "bad_keyframes"),
+    "keyframes out of order": (_set("@c3.props.keyframes", [{"at": 8 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}]), "bad_order"),
 }
 
 
@@ -619,7 +622,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 36  # out_of_range also covers values past 2^53; no new id
+    assert len(T.RULES) == 38  # out_of_range also covers values past 2^53; no new id
 
 
 def _huge_scaled_src(d):

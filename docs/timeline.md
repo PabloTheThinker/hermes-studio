@@ -176,4 +176,5 @@ Open questions (Slice 2 notes):
 `track_order`, `item_not_allowed_on_track`, `unknown_media`, `src_out_of_media`, `empty_range`,
 `non_integer_duration`, `fade_too_long`, `at_and_anchor`, `anchor_not_allowed`,
 `anchor_target_missing`, `anchor_target_not_main`, `anchor_before_zero`, `overlap`,
-`bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`.
+`bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`,
+`bad_keyframes`, `bad_order`.

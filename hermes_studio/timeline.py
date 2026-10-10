@@ -58,10 +58,11 @@ CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes"}
 CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None}
+KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None}
 VOLUME_MAX = Fraction(4)
 SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
 # Transform ranges: position is a fraction of the canvas (so it can move a frame's width),
@@ -69,6 +70,9 @@ SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
 TRANSFORM_POS_MAX = Fraction(4)
 SCALE_MIN, SCALE_MAX = Fraction(1, 100), Fraction(100)
 ROTATE_MAX = Fraction(3600)
+# A clip may carry at most this many keyframes; enough for a smooth move without letting a
+# bad write balloon the doc.
+MAX_KEYFRAMES = 64
 NOT_HASHED = ("version", "hash")
 
 # Every rule id the validator can report (docs/timeline.md describes each).
@@ -80,6 +84,7 @@ RULES = (
     "non_integer_duration", "fade_too_long", "at_and_anchor", "anchor_not_allowed",
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
+    "bad_keyframes", "bad_order",
 )
 
 
@@ -467,6 +472,33 @@ def _track_key(rt: tuple[str, str]) -> tuple[int, int]:
     return ROLE_ORDER.index(role), (n if ROLES[role][0] == "A" else -n)
 
 
+def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
+    """A keyframe list is a sorted, non-empty list of {at, x, y, scale, rotate}, where `at` is
+    ticks from the clip's start and the transform values share the transform's ranges. `at` may
+    be negative or beyond the clip: the render clamps a keyframe track to the clip's span, so a
+    move that begins before the clip simply starts already in progress."""
+    if not isinstance(kfs, list) or not kfs:
+        c.bad("bad_keyframes", path, "keyframes must be a non-empty list")
+        return
+    if len(kfs) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} keyframes")
+        return
+    prev_at = None
+    for i, kf in enumerate(kfs):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, KEYFRAME_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        for k in ("x", "y"):
+            c.ratio(kf[k], _j(kp, k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+        c.ratio(kf["scale"], _j(kp, "scale"), SCALE_MIN, SCALE_MAX)
+        c.ratio(kf["rotate"], _j(kp, "rotate"), -ROTATE_MAX, ROTATE_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "keyframes must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
 def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict) -> None:
     if typ == "transition":
         if not c.keys(it, ip, TRANSITION_KEYS):
@@ -517,6 +549,8 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.ratio(tf[k], _j(ip, "props", "transform", k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
                 c.ratio(tf["scale"], _j(ip, "props", "transform", "scale"), SCALE_MIN, SCALE_MAX)
                 c.ratio(tf["rotate"], _j(ip, "props", "transform", "rotate"), -ROTATE_MAX, ROTATE_MAX)
+            if pr.get("keyframes") is not None:
+                _check_keyframes(c, pr["keyframes"], _j(ip, "props", "keyframes"))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
