@@ -548,7 +548,7 @@
               <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}${c.type === "clip" ? " · Alt-drag to slip · Alt+Shift-drag to slide" : ""}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
               </div></div>`).join("")}
               <div class="tl-marq" hidden></div>
@@ -824,6 +824,19 @@
       const it = find(edge.dataset.id);
       sel = edge.dataset.id;
       drag = { kind: "trim", edge: edge.dataset.edge, id: sel, at: it.at, dur: it.dur };
+    } else if (clip && clip.dataset.at && e.altKey && e.shiftKey && (find(clip.dataset.id) || {}).type === "clip") {
+      // Alt+Shift-drag slides: the clip keeps its media and moves between its neighbours, the
+      // one before grows to meet it and the one after gives up the same time.
+      const b = find(clip.dataset.id);
+      const pa = rollPair(b, "start"), pc = rollPair(b, "end");
+      if (!pa || !pc) { msg = "Slide needs a clip touching each side of this one."; paint(); return; }
+      const a = pa.a, c = pc.b, f = fpsOf();
+      sel = b.id; selKf = -1; selSet = new Set([b.id]); paintSel();
+      drag = { kind: "slide", a, b, c, x0: e.clientX, by: 0, moved: false,
+        ea: root.querySelector(`[data-id="${a.id}"]`), eb: clip, ec: root.querySelector(`[data-id="${c.id}"]`),
+        hi: Math.min(c.dur - pc.x - 1 / f, a.media_dur != null ? (a.media_dur - a.src_out) / (a.speed || 1) : c.dur),
+        lo: Math.max(-(a.dur - pa.x - 1 / f), -(c.src_in || 0) / (c.speed || 1)) };
+      [drag.ea, drag.eb, drag.ec].forEach((n) => n && n.classList.add("rolling"));
     } else if (clip && clip.dataset.at && e.altKey && (find(clip.dataset.id) || {}).type === "clip") {
       // Alt/Option-drag slips (Final Cut's slip, Resolve's trim-mode drag on a clip body):
       // the clip stays put, its source window slides under it. Limits come from the media,
@@ -954,6 +967,18 @@
       paintSel();
       return;
     }
+    if (drag.kind === "slide") {
+      const f = fpsOf();
+      drag.by = Math.max(drag.lo, Math.min(drag.hi, Math.round(((e.clientX - drag.x0) / pps) * f) / f));
+      drag.moved = drag.moved || Math.abs(e.clientX - drag.x0) > 3;
+      const { a, b, c } = drag, d2 = drag.by;
+      if (drag.ea) drag.ea.style.width = Math.max(2, (a.dur + d2) * pps) + "px";
+      if (drag.eb) drag.eb.style.left = (b.at + d2) * pps + "px";
+      if (drag.ec) { drag.ec.style.left = (c.at + d2) * pps + "px"; drag.ec.style.width = Math.max(2, (c.dur - d2) * pps) + "px"; }
+      const st = root.querySelector(".tl-status");
+      if (st) st.textContent = `Slide ${b.id} ${d2 >= 0 ? "+" : "−"}${tc(Math.abs(d2))} · ${a.id} ${tc(a.dur + d2)} · ${c.id} ${tc(c.dur - d2)}${d2 === drag.lo || d2 === drag.hi ? " · limit" : ""}`;
+      return;
+    }
     if (drag.kind === "roll") {
       // Frame grid, clamped live. The cut moves on screen: A's right edge and B's left edge
       // travel together, B's right edge stays put.
@@ -1048,6 +1073,12 @@
       trkH[d.id] = d.hNow;
       saveTrkH();
       paint();
+      return;
+    }
+    if (d && d.kind === "slide") {
+      [d.ea, d.eb, d.ec].forEach((n) => n && n.classList.remove("rolling"));
+      if (!d.moved || Math.abs(d.by) < 1e-9) { paint(); return; }
+      await commit({ op: "slide", item: d.b.id, by: Math.round(d.by * 1e6) / 1e6 });
       return;
     }
     if (d && d.kind === "roll") {
