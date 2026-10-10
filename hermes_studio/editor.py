@@ -62,6 +62,20 @@ def view(doc: dict) -> dict:
         for it in tr["items"]
         if it.get("text")
     }
+    def clip_speed(it: dict) -> float:
+        # props.speed is a reduced [num, den] pair; a missing or invalid value is 1.0.
+        raw = (it.get("props") or {}).get("speed")
+        try:
+            if isinstance(raw, (list, tuple)) and len(raw) == 2:
+                num, den = float(raw[0]), float(raw[1])
+                if den != 0 and num > 0:
+                    return num / den
+            if isinstance(raw, (int, float)) and raw > 0:
+                return float(raw)
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+        return 1.0
+
     tracks = []
     end = 0.0
     for tr in doc["tracks"]:
@@ -75,7 +89,9 @@ def view(doc: dict) -> dict:
                 span_a = next((i for i in tr["items"] if i.get("id") == a_id), None)
                 if span_a is None:
                     continue
-                at = span_a.get("at", 0) + (span_a["src"][1] - span_a["src"][0])
+                # The seam is where clip A ends *on the timeline*, which speed shortens.
+                span_a_dur = (span_a["src"][1] - span_a["src"][0]) / clip_speed(span_a)
+                at = span_a.get("at", 0) + span_a_dur - it.get("dur", 0)
                 items.append(
                     {
                         "id": it["id"],
@@ -88,8 +104,10 @@ def view(doc: dict) -> dict:
                     }
                 )
                 continue
+            speed = clip_speed(it) if it["type"] == "clip" else 1.0
             at = it.get("at", 0) / rate
-            dur = ((it["src"][1] - it["src"][0]) if it["type"] == "clip" else it.get("dur", 0)) / rate
+            # A clip occupies (source range) / speed ticks on the timeline; text keeps dur.
+            dur = ((it["src"][1] - it["src"][0]) / speed if it["type"] == "clip" else it.get("dur", 0)) / rate
             end = max(end, at + dur)
             label = text_at.get(it.get("at")) or it.get("text") or it["id"]
             if it["type"] == "clip" and not text_at.get(it.get("at")):
@@ -106,6 +124,7 @@ def view(doc: dict) -> dict:
             if it["type"] == "clip" and "src" in it:
                 row["src_in"] = round(it["src"][0] / rate, 3)
                 row["src_out"] = round(it["src"][1] / rate, 3)
+                row["speed"] = round(speed, 4)
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
@@ -291,6 +310,42 @@ def set_canvas(pid: str, width: int, height: int) -> dict:
     if not (1 <= w <= 16384 and 1 <= h <= 16384):
         raise EditorError("canvas must be 1 to 16384 on each side")
     return apply(pid, [{"op": "set_canvas", "width": w, "height": h}], f"Canvas {w}×{h}")
+
+
+def set_speed(pid: str, item_id: str, speed: float) -> dict:
+    """Set a clip's playback speed. The schema stores it as a reduced [num, den] pair and
+    allows 0.1x to 10x; anything outside that is refused before it reaches the op log.
+
+    Retiming a clip changes how long it occupies, which would break any cross-dissolve that
+    overlaps it (the schema requires the overlap to match exactly). Pro editors reset the
+    transition when you retime, so a hard cut is dropped in first -- the dissolve can be
+    re-applied at the new length afterwards."""
+    from fractions import Fraction
+
+    s = float(speed)
+    if not (0.1 <= s <= 10.0):
+        raise EditorError("speed must be between 0.1 and 10")
+    fr = Fraction(s).limit_denominator(1000)
+    pair = [fr.numerator, fr.denominator]
+
+    ops: list[dict] = []
+    # Any transition touching this clip is removed (dur 0 == a hard cut) before the retime.
+    for tr in _transitions_on(pid, item_id):
+        a_id, b_id = tr["between"]
+        ops.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
+    ops.append({"op": "set_props", "id": item_id, "props": {"speed": pair}})
+    return apply(pid, ops, f"Speed {s:g}×")
+
+
+def _transitions_on(pid: str, item_id: str) -> list[dict]:
+    """Every transition whose seam involves the given clip."""
+    doc = _log(_dir(pid)).doc
+    out = []
+    for tr in doc["tracks"]:
+        for it in tr["items"]:
+            if it.get("type") == "transition" and item_id in (it.get("between") or []):
+                out.append(it)
+    return out
 
 
 def lift(pid: str, item_id: str, *, ripple: bool = False) -> dict:

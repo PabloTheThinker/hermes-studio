@@ -772,6 +772,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "speed":
+                project = editor.set_speed(pid, str(body.get("id") or ""), float(body.get("speed") or 1))
             elif op == "transition":
                 project = editor.set_transition(
                     pid, str(body.get("a") or ""), str(body.get("b") or ""), float(body.get("seconds") or 0)

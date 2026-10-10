@@ -168,6 +168,7 @@
     for (let t = 0; t <= w + 0.01; t += step) ticks.push(`<i style="left:${t * pps}px">${esc(fmt(t))}</i>`);
     const it = find(sel);
     const nextNeighbor = it ? nextClip(it) : null;
+    const curSpeed = it && it.speed != null ? it.speed : 1;
     const rows = it
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
@@ -208,6 +209,7 @@
             </div>
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
           </aside>
@@ -563,6 +565,13 @@
       if (!nx) { msg = "No clip next to dissolve into."; paint(); return; }
       // A 0.75s dissolve is a sane default that reads on screen; undo restores the hard cut.
       await commit({ op: "transition", a: it.id, b: nx.id, seconds: 0.75 });
+      return;
+    }
+    if (name === "apply-speed") {
+      const sel2 = find(sel);
+      const pick = root.querySelector("[data-speed]");
+      if (!sel2 || !pick) return;
+      await commit({ op: "speed", id: sel2.id, speed: parseFloat(pick.value) });
       return;
     }
     if (name === "ripple") { ripple = !ripple; paint(); return; }

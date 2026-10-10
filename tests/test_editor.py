@@ -505,3 +505,34 @@ def test_render_honors_clip_speed(home):
         out = R.render_project(pid)
         assert out["duration"] == pytest.approx(expect, abs=0.05)
         assert file_dur(out) == pytest.approx(expect, abs=0.15)
+
+
+def test_set_speed_drops_a_transition_that_would_break(home):
+    """Retiming a clip resets any dissolve on its seam, because the overlap can't survive
+    a length change. The dissolve is dropped to a hard cut, not left to fail validation."""
+    pid = _two_clips(home, "spd_xf")
+    E.set_transition(pid, "aa", "bb", 1.0)
+    v = E.open_project(pid)
+    main = [t for t in v["tracks"] if t["role"] == "main"][0]["items"]
+    assert any(i["type"] == "transition" for i in main)
+
+    v = E.set_speed(pid, "aa", 2.0)
+    main = [t for t in v["tracks"] if t["role"] == "main"][0]["items"]
+    aa = next(i for i in main if i["id"] == "aa")
+    # aa's 8s source at 2x now occupies 4s, and the dissolve is gone (hard cut).
+    assert aa["dur"] == pytest.approx(4.0, abs=0.02)
+    assert not any(i["type"] == "transition" for i in main)
+
+
+def test_set_speed_refuses_out_of_range_and_undoes(home):
+    pid = _two_clips(home, "spd_range")
+    for bad in (0.05, 50.0):
+        with pytest.raises(E.EditorError):
+            E.set_speed(pid, "aa", bad)
+    # 2x is legal and undoable; aa's 8s source now occupies 4s.
+    v = E.set_speed(pid, "aa", 2.0)
+    aa = next(i for i in [t for t in v["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["dur"] == pytest.approx(4.0, abs=0.02)
+    back = E.undo(pid)
+    aa = next(i for i in [t for t in back["tracks"] if t["role"] == "main"][0]["items"] if i["id"] == "aa")
+    assert aa["dur"] == pytest.approx(8.0, abs=0.02)
