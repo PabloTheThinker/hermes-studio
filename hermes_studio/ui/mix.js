@@ -32,7 +32,7 @@
     const buffers = new Map(); // file -> AudioBuffer | "wait" | null (failed / too long)
     const strips = new Map(); // track id -> { gain, meter, data }
     let sources = [];
-    let running = false, t0 = 0, p0 = 0, scope = "";
+    let running = false, t0 = 0, p0 = 0, scope = "", rate = 1;
     let lastClock = -1, lastMove = 0; // the audio clock's last reading, and when it last moved
 
     function context() {
@@ -130,11 +130,14 @@
       running = false;
     }
 
-    // Schedule the whole mix from timeline second `play`.
-    function start(doc, play) {
+    // Schedule the whole mix from timeline second `play`, at `speed` (1, or 2 for a shuttle:
+    // pitched up, the way Final Cut plays a 2x shuttle). Buffer offsets and lengths stay in
+    // source seconds; only the wall-clock times divide by the speed.
+    function start(doc, play, speed) {
       stop();
       if (!context()) return false;
       mixer(doc);
+      rate = speed > 0 ? speed : 1;
       t0 = ctx.currentTime + LEAD;
       p0 = play;
       running = true;
@@ -146,21 +149,23 @@
         const span = c.src_out - c.src_in; // render plays the source span at real time
         if (c.at + span <= play) continue;
         const into = Math.max(0, play - c.at);
-        const when = t0 + Math.max(0, c.at - play);
-        const dur = span - into;
+        const when = t0 + Math.max(0, c.at - play) / rate;
+        const dur = span - into; // source seconds; the wall takes dur / rate
         const level = (c.volume == null ? 1 : c.volume) * (MIX[tr.role] || 1);
         const fi = Math.min(c.fade_in || 0, span), fo = Math.min(c.fade_out || 0, span);
         const env = (u) => level * Math.max(0, Math.min(1, fi > 0 ? u / fi : 1, fo > 0 ? (span - u) / fo : 1));
         const g = ctx.createGain();
+        const at = (u) => when + (u - into) / rate; // clip-local source time -> context time
         g.gain.setValueAtTime(env(into), when);
-        if (fi > 0 && into < fi) g.gain.linearRampToValueAtTime(env(fi), when + (fi - into));
+        if (fi > 0 && into < fi) g.gain.linearRampToValueAtTime(env(fi), at(fi));
         if (fo > 0) {
           const foStart = span - fo;
-          if (into < foStart) g.gain.setValueAtTime(env(foStart), when + (foStart - into));
-          g.gain.linearRampToValueAtTime(0, when + dur);
+          if (into < foStart) g.gain.setValueAtTime(env(foStart), at(foStart));
+          g.gain.linearRampToValueAtTime(0, at(span));
         }
         const src = ctx.createBufferSource();
         src.buffer = buf;
+        src.playbackRate.value = rate;
         src.connect(g).connect(strip(tr.id).gain);
         src.start(when, c.src_in + into, dur);
         sources.push(src);
@@ -183,7 +188,7 @@
     // The playhead, in timeline seconds, while the mix runs.
     function now() {
       if (!running || !ctx) return null;
-      return p0 + Math.max(0, ctx.currentTime - t0);
+      return p0 + rate * Math.max(0, ctx.currentTime - t0);
     }
 
     // Post-fader peak per audio track, in dBFS (-Infinity when silent).

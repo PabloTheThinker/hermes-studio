@@ -1140,3 +1140,12 @@ def test_desk_serves_sound_files_for_the_preview_mixer(desk):
         r = c.getresponse()
         r.read()
         assert r.status == 404, bad
+
+
+def test_view_carries_the_exact_frame_rate_for_frame_steps_and_timecode(home):
+    """The page steps one frame (arrows, K+J/L) and shows HH:MM:SS:FF from this. It stays a
+    [num, den] pair so 30000/1001 doesn't drift the way a rounded float would."""
+    pid = _mixer_cut("fps")
+    assert E.view(E._log(E._dir(pid)).doc)["fps"] == [30, 1]
+    d, _ = T.stamp_hash(T.new_timeline("ntsc", fps=(30000, 1001)))
+    assert E.view(d)["fps"] == [30000, 1001]

@@ -8,7 +8,7 @@
     const s = document.createElement("style");
     s.id = "tl-css";
     s.textContent = `
-      .tl{display:grid;grid-template-rows:52px minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
+      .tl{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:52px minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
       .tl-grip{cursor:row-resize;background:var(--line);position:relative;touch-action:none}
       .tl-grip::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:2px;border-radius:2px;background:var(--line-2)}
       .tl-grip:hover,.tl-grip.on{background:var(--amber)}
@@ -60,11 +60,12 @@
       .tl-act .what{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tl-act .who.undone,.tl-act .what.undone{opacity:.45;text-decoration:line-through}
       .tl-act .ver{font:500 11px var(--mono);color:var(--dim);white-space:nowrap}
-      .tl-sheet{min-height:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
+      .tl-sheet{min-height:0;min-width:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
       .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim)}
-      .tl-ruler i{position:absolute;top:4px;font-style:normal}
+      .tl-ruler i{position:absolute;top:0;bottom:0;padding:4px 0 0 4px;border-left:1px solid var(--line-2);font-style:normal;white-space:nowrap}
+      .tl-ruler b{position:absolute;bottom:0;width:1px;height:5px;background:var(--line-2)}
       .tl-stack{position:relative}
       .tl-trk{display:grid;grid-template-columns:var(--lab,164px) 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
       .tl-rz{position:absolute;left:0;bottom:-3px;width:var(--lab,164px);height:6px;cursor:ns-resize;z-index:4}
@@ -115,6 +116,9 @@
   // the audio clock and the picture follows it. Until then the old <video>-led path plays.
   const mix = window.HSMix ? window.HSMix.create() : null;
   let mixing = false;
+  // Transport speed, signed: 1 is normal play, 2/4/8 a forward shuttle, negative plays backwards
+  // (J/K/L). 1x and 2x forward play the real mix; faster and reverse are picture only.
+  let rate = 1, kHeld = false, lastSeek = 0;
   try {
     const saved = Number(localStorage.getItem("tl-stage-pct"));
     if (saved >= 24 && saved <= 86) stagePct = saved;
@@ -206,6 +210,27 @@
     return `<svg class="tl-wave" viewBox="0 0 ${cols} 100" preserveAspectRatio="none" aria-hidden="true"><path d="${d}Z"/>${red ? `<g class="hot">${red}</g>` : ""}</svg>`;
   }
 
+  // Frames and timecode from the project's own rate (view() sends fps as [num, den]).
+  function fpsOf() { const f = doc && doc.fps; const v = f && f[1] ? f[0] / f[1] : 30; return v > 0 ? v : 30; }
+  function frameOf(t) { return Math.floor(Math.max(0, t) * fpsOf() + 1e-6); }
+  // HH:MM:SS:FF, non-drop-frame on the nominal rate (29.97 counts as 30, as NDF does).
+  function tc(t) {
+    const base = Math.max(1, Math.round(fpsOf()));
+    const n = frameOf(t), s = Math.floor(n / base);
+    return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60, n % base].map((x) => String(x).padStart(2, "0")).join(":");
+  }
+  function stepFrames(n) {
+    if (playing) { stop(); paint(); }
+    play = Math.max(0, Math.min(doc.duration, (frameOf(play) + n) / fpsOf()));
+    head();
+  }
+  function showRate() {
+    const el = root && root.querySelector(".tl-rate");
+    if (!el) return;
+    el.hidden = !playing || rate === 1;
+    el.textContent = (rate < 0 ? "◀◀ " : "▶▶ ") + Math.abs(rate) + "×";
+  }
+
   function fmt(n) {
     n = Math.max(0, n);
     const s = Math.floor(n % 60);
@@ -261,9 +286,17 @@
     const cw = Number(size[0]) || 1920, ch = Number(size[1]) || 1080;
     const preset = cw === 1920 && ch === 1080 ? "desktop" : cw === 1080 && ch === 1920 ? "phone" : cw === ch ? "square" : "";
     const width = LAB + w * pps + 16;
+    // An adaptive ruler, like Resolve's: labelled ticks at the first step that keeps labels
+    // 72 px apart at this zoom, with unlabelled minor ticks between them.
     const ticks = [];
-    const step = pps >= 36 ? 1 : pps >= 16 ? 2 : 5;
-    for (let t = 0; t <= w + 0.01; t += step) ticks.push(`<i style="left:${t * pps}px">${esc(fmt(t))}</i>`);
+    const STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    const step = STEPS.find((s) => s * pps >= 72) || 600;
+    const minor = step / (step * pps / 5 >= 10 ? 5 : 2);
+    const lab = (t) => (step >= 1 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : fmt(t));
+    for (let k = 0, t = 0; t <= w + 1e-6; k++, t = k * minor) {
+      const major = Math.abs(t / step - Math.round(t / step)) < 1e-6;
+      ticks.push(major ? `<i style="left:${t * pps}px">${esc(lab(t))}</i>` : `<b style="left:${t * pps}px"></b>`);
+    }
     const it = find(sel);
     const nextNeighbor = it ? nextClip(it) : null;
     const curSpeed = it && it.speed != null ? it.speed : 1;
@@ -276,7 +309,7 @@
         <div class="tl-top">
           <b>Edit</b>
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
-          <span class="tl-clock">${esc(fmt(play))} / ${esc(fmt(w))}</span>
+          <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>
           <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
@@ -445,7 +478,7 @@
     const clock = root.querySelector(".tl-clock");
     const big = root.querySelector(".tl-frame .big");
     const bar = root.querySelector(".tl-bar");
-    if (clock) clock.textContent = fmt(play) + " / " + fmt(doc.duration);
+    if (clock) clock.textContent = tc(play) + " / " + tc(doc.duration);
     if (big) big.textContent = fmt(play);
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
     showFrame();
@@ -776,6 +809,8 @@
     if (raf) cancelAnimationFrame(raf);
     if (mix) mix.stop();
     mixing = false;
+    rate = 1;
+    showRate();
     meters(true);
     const v = root && root.querySelector(".tl-vid");
     if (v) v.pause();
@@ -859,7 +894,7 @@
       return;
     }
     v.hidden = false;
-    v.muted = true; // the sound comes from the mix
+    v.muted = true; // the sound comes from the mix (or the shuttle is silent)
     if (img) img.hidden = true;
     const sp = it.speed || 1;
     const want = () => { const c = mainClip(play) || it; return (c.src_in || 0) + Math.max(0, play - c.at) * (c.speed || 1); };
@@ -867,10 +902,19 @@
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
       v.addEventListener("loadedmetadata", () => { v.currentTime = want(); }, { once: true });
-    } else if (v.readyState >= 1 && Math.abs(v.currentTime - want()) > 0.15) {
-      v.currentTime = want();
+      return;
     }
-    if (v.playbackRate !== sp) v.playbackRate = sp;
+    if (rate < 0) {
+      // A <video> can't play backwards, so a reverse shuttle steps it: paused, one seek every
+      // 80 ms (about 12 pictures a second), which is what a reverse scrub looks like anyway.
+      if (!v.paused) v.pause();
+      const now = performance.now();
+      if (v.readyState >= 1 && now - lastSeek > 80) { lastSeek = now; v.currentTime = want(); }
+      return;
+    }
+    const r = Math.min(16, sp * rate);
+    if (v.readyState >= 1 && Math.abs(v.currentTime - want()) > 0.15 * Math.max(1, rate)) v.currentTime = want();
+    if (v.playbackRate !== r) v.playbackRate = r;
     if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }
   }
 
@@ -907,35 +951,55 @@
       else if (st && st.textContent === "Waking the sound output…") st.textContent = msg || "";
       const p = mix.now();
       if (p != null) play = p;
-    } else if (lastT) play += (t - lastT) / 1000;
+    } else if (lastT) play += ((t - lastT) / 1000) * rate;
     lastT = t;
     if (play >= doc.duration) { play = doc.duration; stop(); paint(); return; }
+    if (rate < 0 && play <= 0) { play = 0; stop(); paint(); return; }
     head();
-    if (mixing) { syncPicture(); meters(false); }
+    if (mixing || rate !== 1) syncPicture();
+    if (mixing) meters(false);
     const sc = root.querySelector(".tl-scroll");
     const x = LAB + play * pps;
     if (sc && (x < sc.scrollLeft + LAB || x > sc.scrollLeft + sc.clientWidth - 24)) sc.scrollLeft = Math.max(0, x - sc.clientWidth * 0.4);
     raf = requestAnimationFrame(loop);
   }
 
-  async function act(name) {
-    if (name === "play") {
-      if (playing) { stop(); paint(); return; }
-      if (play >= doc.duration) play = 0;
-      playing = true;
-      // unlock() has to run here, inside the click: browsers only start audio from a gesture.
-      if (mix && mix.unlock() && mix.ready(doc)) {
-        mixing = true;
-        mix.start(doc, play);
-        paint();
-        syncPicture(); // first video.play() also inside the gesture
-        lastT = 0;
-        raf = requestAnimationFrame(loop);
-        return;
-      }
+  // Start playback at a signed speed. Must run inside the gesture (click or key) that asked
+  // for it: browsers only start audio, and an unmuted <video>, from one.
+  function transport(r) {
+    stop();
+    rate = r;
+    if (r > 0 && play >= doc.duration - 0.01) play = 0;
+    if (r < 0 && play <= 0.01) play = doc.duration;
+    playing = true;
+    if ((r === 1 || r === 2) && mix && mix.unlock() && mix.ready(doc)) {
+      mixing = true;
+      mix.start(doc, play, r);
+      paint();
+      showRate();
+      syncPicture();
+      lastT = 0;
+      raf = requestAnimationFrame(loop);
+      return;
+    }
+    if (r === 1) {
       if (mix) msg = "Sound is still loading; playing the picture's own sound for now.";
       paint();
       if (!startFilm()) raf = requestAnimationFrame(loop);
+      return;
+    }
+    // A silent shuttle (4x / 8x, or backwards): the wall clock drives, the picture follows.
+    paint();
+    showRate();
+    syncPicture();
+    lastT = 0;
+    raf = requestAnimationFrame(loop);
+  }
+
+  async function act(name) {
+    if (name === "play") {
+      if (playing) { stop(); paint(); return; }
+      transport(1);
       return;
     }
     if (name === "fold") {
@@ -1106,11 +1170,29 @@
     if (e.target.closest("input, textarea")) return;
     const k = e.key.toLowerCase();
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
+    if (k === "j" || k === "l") {
+      // J/K/L shuttle, as in Final Cut, Resolve and Premiere: each press of the same key goes
+      // faster (1, 2, 4, 8x); the other key turns round at 1x; K stops; K held + J/L steps a frame.
+      e.preventDefault();
+      if (e.repeat) return;
+      const dir = k === "l" ? 1 : -1;
+      if (kHeld) { stepFrames(dir); return; }
+      const speeds = [1, 2, 4, 8];
+      const next = playing && Math.sign(rate) === dir ? dir * speeds[Math.min(speeds.length - 1, speeds.indexOf(Math.abs(rate)) + 1)] : dir;
+      transport(next);
+      return;
+    }
+    if (k === "k") {
+      e.preventDefault();
+      kHeld = true;
+      if (!e.repeat && playing) { stop(); paint(); }
+      return;
+    }
     if (k === " ") act("play");
     else if (k === "s") act("split");
     else if (k === "n") act("snap");
     else if (k === "backspace" || k === "delete") act("lift");
-    else if (k === "arrowleft" || k === "arrowright") { stop(); play = Math.max(0, Math.min(doc.duration, play + (k === "arrowright" ? 1 : -1) * (e.shiftKey ? 1 : 0.1))); head(); }
+    else if (k === "arrowleft" || k === "arrowright") stepFrames((k === "arrowright" ? 1 : -1) * (e.shiftKey ? Math.round(fpsOf()) : 1)); // a frame; Shift = a second
     else if (k === "-" || k === "=") act(k === "=" ? "zoom-in" : "zoom-out");
     else if (e.ctrlKey && k === "z") act(e.shiftKey ? "redo" : "undo");
   }
@@ -1175,10 +1257,12 @@
     root = null;
   }
   document.addEventListener("keydown", onKey);
+  document.addEventListener("keyup", (e) => { if (e.key && e.key.toLowerCase() === "k") kHeld = false; });
+  window.addEventListener("blur", () => { kHeld = false; });
   window.HSEdit = {
     open, leave,
     // Read-only view of the preview mixer, for checks and support.
-    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, levels: mix.levels(), waiting: mix.waiting() } : null),
+    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, levels: mix.levels(), waiting: mix.waiting() } : null),
     // The live audio context, so a check can suspend it to prove the stalled-clock fallback.
     mixContext: () => (mix ? mix.context : null),
   };

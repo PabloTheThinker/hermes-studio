@@ -27,7 +27,7 @@ class Param {
 }
 class Node { constructor() { this.out = []; } connect(n) { this.out.push(n); return n; } disconnect() {} }
 class Gain extends Node { constructor() { super(); this.gain = new Param(1); } }
-class Src extends Node { constructor() { super(); this.started = null; } start(w, o, d) { this.started = [+w.toFixed(4), +o.toFixed(4), +d.toFixed(4)]; } stop() {} }
+class Src extends Node { constructor() { super(); this.started = null; this.playbackRate = new Param(1); } start(w, o, d) { this.started = [+w.toFixed(4), +o.toFixed(4), +d.toFixed(4)]; } stop() {} }
 class Analyser extends Node { constructor() { super(); this.fftSize = 8; } getFloatTimeDomainData(a) { a.fill(0); } }
 class Comp extends Node { constructor() { super(); for (const k of ["threshold", "knee", "ratio", "attack", "release"]) this[k] = new Param(0); } }
 class AC {
@@ -45,15 +45,16 @@ vm.runInThisContext(fs.readFileSync(process.argv[2], "utf8"));
 
 const doc = JSON.parse(process.argv[3]);
 const play = Number(process.argv[4]);
+const speed = Number(process.argv[5] || 1);
 (async () => {
   const m = window.HSMix.create();
   await m.load(doc, "p");
   const ready = m.ready(doc);
-  m.start(doc, play);
+  m.start(doc, play, speed);
   const ctx = AC.last;
   const clips = ctx.sources.map((s) => {
     const clipGain = s.out[0], strip = clipGain.out[0];
-    return { start: s.started, env: clipGain.gain.events, strip: strip.gain.events };
+    return { start: s.started, rate: s.playbackRate.value, env: clipGain.gain.events, strip: strip.gain.events };
   });
   const now0 = m.now();
   ctx.currentTime += 1.5;
@@ -62,13 +63,13 @@ const play = Number(process.argv[4]);
 """
 
 
-def _run(tmp_path, doc: dict, play: float) -> dict:
+def _run(tmp_path, doc: dict, play: float, speed: float = 1) -> dict:
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not installed")
     h = tmp_path / "harness.js"
     h.write_text(HARNESS)
-    r = subprocess.run([node, str(h), str(MIX_JS), json.dumps(doc), str(play)], capture_output=True, text=True, timeout=30)
+    r = subprocess.run([node, str(h), str(MIX_JS), json.dumps(doc), str(play), str(speed)], capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
@@ -134,3 +135,19 @@ def test_track_strips_follow_mute_solo_and_gain(tmp_path, a1, a2, want):
     out = _run(tmp_path, _doc(a1=a1, a2=a2, voice=[_clip("a1", 0, 0, 4)], music=[_clip("m1", 0, 0, 4)]), 0)
     strips = [c["strip"][-1][1] for c in out["clips"]]
     assert tuple(strips) == want
+
+
+def test_a_2x_shuttle_halves_the_wall_times_but_not_the_source_offsets(tmp_path):
+    """J/K/L 2x: the clip still plays its own source span (offset and length in source
+    seconds) but twice as fast, so its start waits half as long and its fades take half as
+    long; the playhead runs at twice real time."""
+    music = [_clip("m1", 2, 0, 4, volume=1.0, fade_in=1, fade_out=2)]
+    out = _run(tmp_path, _doc(music=music), 0, 2)
+    (c,) = out["clips"]
+    when = round(10.06 + 2 / 2, 4)
+    assert c["rate"] == 2
+    assert c["start"] == [when, 0.0, 4.0]
+    w = R.MIX["music"]
+    r = lambda x: round(x, 4)  # noqa: E731
+    assert c["env"] == [["set", 0.0, when], ["ramp", w, r(when + 0.5)], ["set", w, r(when + 1)], ["ramp", 0.0, r(when + 2)]]
+    assert abs(out["now15"] - 2 * (1.5 - 0.06)) < 1e-6

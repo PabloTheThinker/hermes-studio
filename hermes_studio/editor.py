@@ -210,6 +210,9 @@ def view(doc: dict) -> dict:
         "hash": doc["hash"],
         "duration": round(end, 3) or 1,
         "size": list(doc.get("size") or [1920, 1080]),
+        # The project's frame rate as [num, den], so the page can step one frame and show
+        # timecode (30000/1001 stays exact; a float would drift over an hour).
+        "fps": list(doc.get("fps") or [30, 1]),
         "tracks": tracks,
     }
 
