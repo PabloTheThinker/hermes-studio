@@ -490,6 +490,70 @@ def op_shift_items(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "shift_items", "ids": list(a["ids"]), "by": -a["by"]}]
 
 
+def _anchored_to(d: dict, iid: str) -> list[dict]:
+    """Items anywhere in the doc whose anchor points at ``iid``. They keep their place as an
+    absolute ``at`` when the target goes away, so deleting an anchor target must pin them."""
+    return [x for tr in d["tracks"] for x in tr["items"] if (x.get("anchor") or {}).get("to") == iid]
+
+
+def op_move_items(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move several items together by the same amount (a group drag). One undo step for the
+    whole group. ``ids`` keep their order; the shift is relative, so nothing collides that
+    didn't already."""
+    ids = a["ids"]
+    if not ids:
+        raise _OpError("bad_arg", "ids must not be empty", "ids")
+    if len(set(ids)) != len(ids):
+        raise _OpError("bad_arg", "ids must not repeat an id", "ids")
+    by = _need_ticks(a, "by", signed=True)  # a group drag can move items backwards
+    olds = []
+    for iid in ids:
+        _, _, it = _find(ctx.doc, iid)
+        if "at" not in it:
+            raise _OpError("bad_arg", f"{iid!r} is anchored and can't be moved; use set_anchor", "ids")
+        olds.append(it["at"])
+    _shift(ctx.doc, ids, by)
+    return [{"op": "move_items", "ids": list(ids), "by": -by}]
+
+
+def op_delete_items(ctx: _Ctx, a: dict) -> list[dict]:
+    """Delete several items as one step. Transitions touching a deleted item go with it; items
+    anchored to a deleted item keep their place as an absolute ``at``. With ``ripple``, later
+    items on each track close the holes, in time order so one pass can't overtake another."""
+    ids = a["ids"]
+    ripple = _need_bool(a, "ripple")
+    if not ids:
+        raise _OpError("bad_arg", "ids must not be empty", "ids")
+    if len(set(ids)) != len(ids):
+        raise _OpError("bad_arg", "ids must not repeat an id", "ids")
+    inv: list[dict] = []
+    for iid in ids:
+        tr, _, it = _find(ctx.doc, iid)
+        if it["type"] == "transition":
+            if ripple:
+                raise _OpError("bad_arg", "a transition can't be ripple-deleted", "ripple")
+            inv = op_delete_item(ctx, {"id": iid}) + inv
+            continue
+        start, dur = _start(ctx.doc, it), _dur(it)
+        for x in _anchored_to(ctx.doc, it["id"]):
+            inv += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
+        gone = sorted(
+            ((i, x) for i, x in enumerate(tr["items"])
+             if x["id"] == iid or (x["type"] == "transition" and iid in x["between"])),
+            key=lambda p: p[0], reverse=True,
+        )
+        for i, x in gone:
+            del tr["items"][i]
+            inv.append({"op": "insert_item", "track": tr["id"], "index": i, "item": x})
+        if ripple and tr["role"] != "text":
+            later = _later(ctx.doc, tr, start + dur, iid)
+            if later:
+                _shift(ctx.doc, later, -dur)
+                inv.append({"op": "shift_items", "ids": later, "by": dur})
+    inv.reverse()  # put the log back the way it was, earliest first
+    return inv
+
+
 def op_move_clip(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     if "at" not in it:
@@ -645,10 +709,8 @@ def op_delete_clip(ctx: _Ctx, a: dict) -> list[dict]:
         return op_delete_item(ctx, {"id": it["id"]})
     start, dur = _start(ctx.doc, it), _dur(it)
     inv_anchor: list[dict] = []
-    for t2 in ctx.doc["tracks"]:
-        for x in t2["items"]:
-            if x.get("anchor", {}).get("to") == it["id"]:
-                inv_anchor += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
+    for x in _anchored_to(ctx.doc, it["id"]):
+        inv_anchor += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
     gone = sorted(
         (
             (i, x)
@@ -841,6 +903,8 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id", "color"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
     "set_marker": (op_set_marker, frozenset({"id"}), frozenset({"at", "label", "color"})),
+    "move_items": (op_move_items, frozenset({"ids", "by"}), frozenset()),
+    "delete_items": (op_delete_items, frozenset({"ids"}), frozenset({"ripple"})),
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fields": (op_set_fields, frozenset({"id"}), frozenset({"set", "unset"})),

@@ -794,6 +794,10 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.move(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "move_items":
+                project = editor.move_items(pid, body.get("ids") or [], _num(body, "by", 0.0))
+            elif op == "delete_items":
+                project = editor.delete_items(pid, body.get("ids") or [], ripple=bool(body.get("ripple")))
             elif op == "speed":
                 project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
             elif op == "look":

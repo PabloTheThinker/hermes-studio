@@ -658,6 +658,40 @@ def lift(pid: str, item_id: str, *, ripple: bool = False) -> dict:
     return apply(pid, [{"op": "delete_clip", "id": item_id, "ripple": bool(ripple)}], f"Lift {item_id}")
 
 
+def _known_ids(pid: str, ids: list, *, what: str = "item") -> list[str]:
+    """Check a group of ids exists and is a list of distinct id strings before any op runs."""
+    if not isinstance(ids, list) or not ids:
+        raise EditorError(f"{what} ids must be a non-empty list")
+    out = []
+    for iid in ids:
+        if not isinstance(iid, str):
+            raise EditorError(f"every {what} id must be a string")
+        if iid in out:
+            raise EditorError(f"{iid!r} is listed twice")
+        out.append(iid)
+    have = {it["id"] for tr in _log(_dir(pid)).doc["tracks"] for it in tr["items"]}
+    missing = [i for i in out if i not in have]
+    if missing:
+        raise EditorError(f"no such {what}: {', '.join(missing)}")
+    return out
+
+
+def move_items(pid: str, ids: list[str], by_seconds: float) -> dict:
+    """Move several items together by one offset (a group drag): one undo step for the group."""
+    out = _known_ids(pid, ids)
+    n = len(out)
+    return apply(pid, [{"op": "move_items", "ids": out, "by": T.seconds_to_ticks(by_seconds)}],
+                 f"Move {n} item{'s' if n > 1 else ''} {by_seconds:+.2f}s")
+
+
+def delete_items(pid: str, ids: list[str], *, ripple: bool = False) -> dict:
+    """Delete several items as one step. With ``ripple``, later items close the holes."""
+    out = _known_ids(pid, ids)
+    n = len(out)
+    return apply(pid, [{"op": "delete_items", "ids": out, "ripple": bool(ripple)}],
+                 f"{'Ripple' if ripple else 'Lift'} {n} item{'s' if n > 1 else ''}")
+
+
 def reset(pid: str = "demo") -> dict:
     folder = _dir(pid)
     if folder.exists():

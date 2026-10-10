@@ -1370,3 +1370,97 @@ def test_desk_marker_ops(desk):
     assert st == 400
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "marker_del", "id": mid})
     assert st == 200 and res["project"]["markers"] == []
+
+
+# ---------------------------------------------------------------- multi-clip selection
+
+
+def _ids(pid):
+    return [i["id"] for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"]]
+
+
+def _spans(pid):
+    return {i["id"]: [i["at"], i["at"] + i["dur"]] for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"]}
+
+
+def test_move_items_moves_a_group_together_and_undoes_as_one_step(home):
+    """_mixer_cut: V1=c1 (0-4s), A1=a1 (0-2s), A2=m2 (2-4s). Moving a1 and m2 together keeps
+    their lengths and each one's offset, and costs a single undo step."""
+    pid = _mixer_cut("grp")
+    before = _spans(pid)
+    E.move_items(pid, ["a1", "m2"], 1.0)
+    after = _spans(pid)
+    for i in ("a1", "m2"):
+        # view() reports `at` in seconds, so a 1.0 s move shifts it by exactly 1.0 s
+        assert abs(after[i][0] - before[i][0] - 1.0) < 1e-9
+        assert after[i][1] - after[i][0] == before[i][1] - before[i][0]
+    assert _log_versions(pid) == 1  # one entry for the whole group
+    E.undo(pid)
+    assert _spans(pid) == before
+
+
+def _log_versions(pid):
+    return E._log(E._dir(pid)).version
+
+
+def test_move_items_rejects_bad_groups(home):
+    pid = _mixer_cut("grp2")
+    for bad in ([], "a1", [1, 2], ["a1", "a1"], ["a1", "nope"]):
+        with pytest.raises(E.EditorError):
+            E.move_items(pid, bad, 1.0)
+    # an anchored text item cannot move on its own timeline (ids/tracks/clip validation)
+    # Use a missing item so the group op still rejects.
+    with pytest.raises(E.EditorError):
+        E.move_items(pid, ["does-not-exist"], 1.0)
+
+
+def test_delete_items_lifts_or_ripples_a_group_as_one_step(home):
+    pid = _mixer_cut("grp3")
+    before = _spans(pid)
+    E.delete_items(pid, ["a1", "c1"])
+    assert _log_versions(pid) == 1
+    after = _spans(pid)
+    assert "a1" not in after and "c1" not in after
+    # a lift leaves the hole: the music clip on A2 stays where it was
+    assert after["m2"][0] == before["m2"][0]
+    E.undo(pid)
+    assert _spans(pid) == before
+    # ripple closes holes on the SAME track only. a1 is on A1 and c1 on V1, so nothing on
+    # either track follows them; m2 is on A2 and never moves either way. To see ripple actually
+    # pull a neighbour, delete c1 (0-4s on V1): V1 has no later item, so put one there first.
+    E.split(pid, "c1", 2.0)
+    pieces = [i["id"] for i in E.view(E._log(E._dir(pid)).doc)["tracks"][1]["items"]]
+    E.delete_items(pid, [pieces[0]], ripple=True)  # lift the first 2s of V1
+    after = _spans(pid)
+    assert pieces[1] in after and abs(after[pieces[1]][0] - 0.0) < 1e-9  # the second half slid to 0
+    E.undo(pid)
+    assert abs(_spans(pid)[pieces[1]][0] - 2.0) < 1e-9  # and back to 2s
+
+
+def test_delete_items_takes_transitions_that_touch_a_deleted_clip(home):
+    pid = _mixer_cut("grp4")
+    E.split(pid, "c1", 2.0)  # c1 -> two pieces, adjacent at 2s
+    pieces = [i["id"] for i in E.view(E._log(E._dir(pid)).doc)["tracks"][1]["items"]]
+    # Clips may only overlap where a transition justifies it, so the pull-back and the
+    # cross-dissolve have to land in ONE apply (the validator checks the whole result).
+    half = T.seconds_to_ticks(0.5)
+    E.apply(pid, [{"op": "move_items", "ids": [pieces[1]], "by": -half},
+                  {"op": "add_transition", "between": pieces, "dur": half}], "dissolve")
+    tr = [t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "V1"][0]
+    assert any(i["type"] == "transition" for i in tr["items"])
+    E.delete_items(pid, [pieces[0]])
+    tr = [t for t in E._log(E._dir(pid)).doc["tracks"] if t["id"] == "V1"][0]
+    assert pieces[0] not in [i["id"] for i in tr["items"]]
+    assert not any(i["type"] == "transition" for i in tr["items"])  # the seam went with it
+
+
+def test_desk_group_ops(desk):
+    pid = _mixer_cut("dgrp")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "move_items", "ids": ["a1", "m2"], "by": 0.5})
+    assert st == 200
+    moved = {i["id"]: i["at"] for t in res["project"]["tracks"] for i in t["items"] if i["id"] in ("a1", "m2")}
+    assert abs(moved["a1"] - 0.5) < 1e-9 and abs(moved["m2"] - 2.5) < 1e-9
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "delete_items", "ids": ["a1"], "ripple": True})
+    assert st == 200 and "a1" not in [i["id"] for t in res["project"]["tracks"] for i in t["items"]]
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "move_items", "ids": [], "by": 1})
+    assert st == 400 and "non-empty" in res["error"]
