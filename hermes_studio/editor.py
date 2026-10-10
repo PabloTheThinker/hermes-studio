@@ -611,15 +611,41 @@ def split(pid: str, item_id: str, at_seconds: float) -> dict:
 
 
 def _latest(log: O.Oplog, *, redo: bool) -> str:
+    """The entry the next undo or redo acts on, with the stack rules every editor uses.
+
+    The op log can undo any entry, including an undo (that is what a redo is) or a redo. So an
+    entry is a *do* or an *undo* by its chain: a fresh edit is a do; undoing a do is an undo;
+    undoing an undo (a redo) is a do again. Entries something else has undone are skipped.
+
+    Undo takes the newest live do (a fresh edit or a redo). Redo takes the newest live undo,
+    walking back past redos, but stops at a fresh edit: a new edit after an undo clears the
+    redo stack. (It used to treat every entry with ``undoes`` as redoable, so a second redo
+    "redid" the first redo -- undoing it -- and an undo after a redo skipped the redone step
+    and undid an older edit.)
+    """
     entries = log.history_list(0)
+    by_id = {e["op_id"]: e for e in entries}
     undone = {oid for e in entries for oid in (e.get("undoes") or [])}
+    kind: dict[str, str] = {}
+
+    def kind_of(e: dict) -> str:
+        oid = e["op_id"]
+        if oid not in kind:
+            targets = [by_id[t] for t in (e.get("undoes") or []) if t in by_id]
+            kind[oid] = "do" if not targets else ("undo" if kind_of(targets[0]) == "do" else "do")
+        return kind[oid]
+
     for e in reversed(entries):
         if e["op_id"] in undone:
             continue
-        if redo and e.get("undoes"):
+        k = kind_of(e)
+        if not redo and k == "do":
             return e["op_id"]
-        if not redo and not e.get("undoes"):
-            return e["op_id"]
+        if redo:
+            if k == "undo":
+                return e["op_id"]
+            if not e.get("undoes"):
+                break  # a fresh edit: nothing left to redo
     raise EditorError("nothing to redo" if redo else "nothing to undo")
 
 

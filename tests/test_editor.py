@@ -1242,3 +1242,42 @@ def test_gain_keys_round_trip_validate_and_undo(home):
     E.set_gain_keys(pid, "a1", None)
     a1 = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "a1")
     assert a1["gain_keys"] is None
+
+
+def test_undo_and_redo_walk_the_stack_like_every_editor(home):
+    """Three edits; undo, undo, redo, redo must land back on the last edit. Redo used to undo
+    its own redo (0.5 -> 0.25 -> 0.5), and an undo after a redo skipped the redone step."""
+    pid = _mixer_cut("stack")
+
+    def vol():
+        return next(i["volume"] for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "a1")
+
+    for v in (0.5, 0.25, 0.125):
+        E.set_volume(pid, "a1", v)
+    seen = []
+    for step in ("undo", "undo", "redo", "redo"):
+        getattr(E, step)(pid)
+        seen.append(vol())
+    assert seen == [0.25, 0.5, 0.25, 0.125]
+    with pytest.raises(E.EditorError, match="nothing to redo"):
+        E.redo(pid)
+    # Undo after a redo takes back the redone step, not an older edit; then redo again.
+    E.undo(pid)
+    assert vol() == 0.25
+    E.undo(pid)
+    assert vol() == 0.5
+    E.redo(pid)
+    assert vol() == 0.25
+    # A fresh edit after an undo clears the redo stack...
+    E.undo(pid)
+    E.set_volume(pid, "a1", 0.75)
+    with pytest.raises(E.EditorError, match="nothing to redo"):
+        E.redo(pid)
+    # ...and undo still walks all the way back to the start.
+    seen = []
+    for _ in range(2):
+        E.undo(pid)
+        seen.append(vol())
+    assert seen == [0.5, 1]
+    with pytest.raises(E.EditorError, match="nothing to undo"):
+        E.undo(pid)
