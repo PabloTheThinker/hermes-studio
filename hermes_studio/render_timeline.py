@@ -718,7 +718,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     return ";".join(fc), vout
 
 
-def _encode(plan: dict, graph: str, vout: str, out_path: Path) -> list[str]:
+def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "outa", seconds: float | None = None) -> list[str]:
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin"]
     for inp in plan["inputs"]:
         kind = inp["role"]
@@ -734,9 +734,9 @@ def _encode(plan: dict, graph: str, vout: str, out_path: Path) -> list[str]:
         "-map",
         f"[{vout}]",
         "-map",
-        "[outa]",
+        f"[{aout}]",
         "-t",
-        f"{_t2s(plan['end_tick'], plan['rate']):.3f}",
+        f"{seconds if seconds is not None else _t2s(plan['end_tick'], plan['rate']):.3f}",
         "-r",
         f"{plan['fps']:.3f}",
         "-c:v",
@@ -760,21 +760,48 @@ def _encode(plan: dict, graph: str, vout: str, out_path: Path) -> list[str]:
     return cmd
 
 
-def render_project(pid: str, out_path: Path | None = None) -> dict:
-    """Render a project to a file. The file lands in the project folder by default."""
+def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, float] | None:
+    """An In/Out range in timeline seconds, checked against the cut. None = the whole cut."""
+    if start is None and end is None:
+        return None
+    total = _t2s(plan["end_tick"], plan["rate"])
+    s = 0.0 if start is None else float(start)
+    e = total if end is None else float(end)
+    if not (s == s and e == e) or s < 0 or e > total + 1e-6 or e - s < 1.0 / max(plan["fps"], 1.0):
+        raise RenderError(f"the range must sit inside the cut (0 to {total:.3f}s) and last at least a frame")
+    return s, min(e, total)
+
+
+def render_project(pid: str, out_path: Path | None = None, *, start: float | None = None, end: float | None = None) -> dict:
+    """Render a project to a file. The file lands in the project folder by default.
+
+    ``start``/``end`` (timeline seconds, the page's In and Out marks) render only that range.
+    The trim is the very last step -- after captions, the mix, the limiter and loudnorm -- so a
+    range is frame-for-frame and level-for-level the same as that stretch of a full render,
+    rather than a section levelled on its own.
+    """
     from hermes_studio import editor as E
 
     folder = E._dir(pid)
     if not (folder / "base.json").exists():
         raise EditorError("no such project")
     plan = _build_plan(E._log(folder).doc, folder)
+    rng = _range(plan, start, end)
     if shutil.which("ffmpeg") is None:
         raise RenderError("ffmpeg is not installed")
     ass = _build_ass(plan, folder / "cache")
     graph, vout = _build_graph(plan, ass)
+    aout, seconds = "outa", None
+    if rng:
+        s, e = rng
+        graph += (
+            f";[{vout}]trim=start={s:.6f}:end={e:.6f},setpts=PTS-STARTPTS[rngv]"
+            f";[outa]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[rnga]"
+        )
+        vout, aout, seconds = "rngv", "rnga", e - s
     dest = out_path or (folder / f"{pid}-render.mp4")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(_encode(plan, graph, vout, dest))
+    _run(_encode(plan, graph, vout, dest, aout=aout, seconds=seconds))
     if not dest.is_file() or dest.stat().st_size < 1024:
         raise RenderError("the render produced no file")
     return {
@@ -782,7 +809,8 @@ def render_project(pid: str, out_path: Path | None = None) -> dict:
         "path": str(dest),
         "name": dest.name,
         "size": [plan["width"], plan["height"]],
-        "duration": round(_t2s(plan["end_tick"], plan["rate"]), 3),
+        "duration": round(seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"]), 3),
+        "range": [round(rng[0], 3), round(rng[1], 3)] if rng else None,
         "bytes": dest.stat().st_size,
         "captions": bool(ass),
     }

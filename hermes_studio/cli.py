@@ -276,6 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
     rn = sub.add_parser("render", help="render an Edit page timeline to a real video file")
     rn.add_argument("id", help="project id (the Edit page url has it)")
     rn.add_argument("-o", "--out", default="", help="output path (defaults into the project folder)")
+    rn.add_argument("--in", dest="start", type=float, default=None, help="render from this second (the In mark)")
+    rn.add_argument("--out-at", dest="end", type=float, default=None, help="render up to this second (the Out mark)")
     _common(rn)
 
     nm = sub.add_parser("name", help="AI titles for every clip in a run (local Ollama first), or rename one clip")
@@ -599,11 +601,12 @@ def cmd_render(a: argparse.Namespace, o: Out) -> int:
 
     out = Path(a.out).expanduser() if a.out else None
     try:
-        res = render_project(a.id, out)
+        res = render_project(a.id, out, start=a.start, end=a.end)
     except (RenderError, EditorError) as exc:
         return o.error(HermesStudioError(str(exc), code="failed"))
     o.emit(res)
-    o.say(o.green("✓ ") + f"rendered {res['name']}  {res['size'][0]}×{res['size'][1]}  {res['duration']}s")
+    rng = f"  range {res['range'][0]}–{res['range'][1]}s" if res.get("range") else ""
+    o.say(o.green("✓ ") + f"rendered {res['name']}  {res['size'][0]}×{res['size'][1]}  {res['duration']}s{rng}")
     return 0
 
 

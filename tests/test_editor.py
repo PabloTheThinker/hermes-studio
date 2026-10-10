@@ -1149,3 +1149,54 @@ def test_view_carries_the_exact_frame_rate_for_frame_steps_and_timecode(home):
     assert E.view(E._log(E._dir(pid)).doc)["fps"] == [30, 1]
     d, _ = T.stamp_hash(T.new_timeline("ntsc", fps=(30000, 1001)))
     assert E.view(d)["fps"] == [30000, 1001]
+
+
+def _probe(path: str) -> dict:
+    import subprocess
+
+    r = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+                        "-show_entries", "stream=nb_read_frames:format=duration", "-of", "json", path],
+                       capture_output=True, text=True, check=True)
+    d = json.loads(r.stdout)
+    return {"duration": float(d["format"]["duration"]), "frames": int(d["streams"][0]["nb_read_frames"])}
+
+
+def test_render_an_in_out_range_is_that_stretch_of_the_full_render(home):
+    """In/Out renders the marked range only. The trim runs after the mix and loudness, so the
+    range sounds exactly like the same stretch of a full render. Voice (0-2s) and music (2-4s)
+    sit ~9 dB apart, so a range that landed in the wrong place would read the wrong level."""
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("rng")
+    full = R.render_project(pid)["path"]
+    voice_full, music_full = _window_db(full, 1.6, 1.9), _window_db(full, 2.2, 2.8)
+    assert voice_full - music_full > 6  # the two are tellable apart
+
+    import shutil
+
+    shutil.copy(full, E._dir(pid) / "full.mp4")
+    res = R.render_project(pid, start=1.5, end=3.0)
+    assert res["range"] == [1.5, 3.0] and abs(res["duration"] - 1.5) < 1e-6
+    p = _probe(res["path"])
+    assert abs(p["duration"] - 1.5) < 0.05 and p["frames"] == 45  # 1.5 s at 30 fps, frame-exact
+    assert abs(_window_db(res["path"], 0.1, 0.4) - voice_full) < 0.5  # 1.6-1.9 of the cut
+    assert abs(_window_db(res["path"], 0.7, 1.3) - music_full) < 0.5  # 2.2-2.8 of the cut
+
+
+def test_render_refuses_a_range_outside_the_cut(home):
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("rng2")
+    for start, end in ((-1, 2), (1, 9), (3, 2), (2, 2), (2, 2.01)):
+        with pytest.raises(R.RenderError):
+            R.render_project(pid, start=start, end=end)
+    assert R.render_project(pid, start=3.0)["duration"] == 1.0  # In alone: to the end
+    assert R.render_project(pid, end=0.5)["duration"] == 0.5  # Out alone: from the start
+
+
+def test_desk_render_takes_the_in_and_out_marks(desk):
+    pid = _mixer_cut("drng")
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "render", "in": 1, "out": 2.5})
+    assert st == 200 and res["render"]["range"] == [1.0, 2.5]
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "render", "in": 3, "out": 1})
+    assert st == 400 and "range" in res["error"]

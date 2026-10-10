@@ -66,6 +66,12 @@
       .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim)}
       .tl-ruler i{position:absolute;top:0;bottom:0;padding:4px 0 0 4px;border-left:1px solid var(--line-2);font-style:normal;white-space:nowrap}
       .tl-ruler b{position:absolute;bottom:0;width:1px;height:5px;background:var(--line-2)}
+      .tl-rng{position:absolute;top:0;bottom:0;background:rgba(255,200,61,.22);pointer-events:none}
+      .tl-mk{position:absolute;top:0;bottom:0;width:7px;border:2px solid var(--amber);pointer-events:none;box-sizing:border-box}
+      .tl-mk.in{border-right:0;margin-left:0}
+      .tl-mk.out{border-left:0;margin-left:-7px}
+      .tl-rngv{position:absolute;top:0;bottom:0;background:rgba(255,200,61,.05);border-left:1px dashed rgba(255,200,61,.55);border-right:1px dashed rgba(255,200,61,.55);pointer-events:none;z-index:1}
+      .tl-rngpill{background:rgba(255,200,61,.16);color:var(--amber)}
       .tl-stack{position:relative}
       .tl-trk{display:grid;grid-template-columns:var(--lab,164px) 1fr;align-items:center;height:var(--row,var(--trk,48px));position:relative}
       .tl-rz{position:absolute;left:0;bottom:-3px;width:var(--lab,164px);height:6px;cursor:ns-resize;z-index:4}
@@ -119,6 +125,32 @@
   // Transport speed, signed: 1 is normal play, 2/4/8 a forward shuttle, negative plays backwards
   // (J/K/L). 1x and 2x forward play the real mix; faster and reverse are picture only.
   let rate = 1, kHeld = false, lastSeek = 0;
+  // In/Out marks (I / O), kept per project in the browser: marking a range isn't an edit, so it
+  // stays out of the op log, like Resolve's timeline marks. stopAt ends a "/" range play.
+  let inOut = { in: null, out: null }, stopAt = null;
+  function loadMarks(id) {
+    try {
+      const m = JSON.parse(localStorage.getItem("tl-marks:" + id) || "{}");
+      return { in: Number.isFinite(m.in) ? m.in : null, out: Number.isFinite(m.out) ? m.out : null };
+    } catch (e) { return { in: null, out: null }; }
+  }
+  function saveMarks() { try { localStorage.setItem("tl-marks:" + pid, JSON.stringify(inOut)); } catch (e) { /* private mode */ } }
+  // The marked range in seconds, [in, out]; one mark alone runs to the start or the end.
+  function rangeOf() {
+    if (!doc || (inOut.in == null && inOut.out == null)) return null;
+    const a = inOut.in == null ? 0 : Math.min(inOut.in, doc.duration);
+    const b = inOut.out == null ? doc.duration : Math.min(inOut.out, doc.duration);
+    return b > a ? [a, b] : null;
+  }
+  function setMark(which, t) {
+    const v = Math.max(0, Math.min(doc.duration, frameOf(t) / fpsOf())); // on the frame grid
+    inOut[which] = v;
+    // A mark set past its partner clears the partner (Premiere's rule), never an inverted range.
+    if (which === "in" && inOut.out != null && inOut.out <= v) inOut.out = null;
+    if (which === "out" && inOut.in != null && inOut.in >= v) inOut.in = null;
+    saveMarks();
+    paint();
+  }
   try {
     const saved = Number(localStorage.getItem("tl-stage-pct"));
     if (saved >= 24 && saved <= 86) stagePct = saved;
@@ -258,6 +290,9 @@
   function marks() {
     const out = [0, doc.duration];
     for (const tr of doc.tracks) for (const it of tr.items) out.push(it.at, it.at + it.dur);
+    // In and Out are snap points too, as in Resolve: trims and moves land on the marked range.
+    if (inOut.in != null) out.push(inOut.in);
+    if (inOut.out != null) out.push(inOut.out);
     return out;
   }
   function snap(t) {
@@ -298,6 +333,7 @@
       ticks.push(major ? `<i style="left:${t * pps}px">${esc(lab(t))}</i>` : `<b style="left:${t * pps}px"></b>`);
     }
     const it = find(sel);
+    const rg = rangeOf();
     const nextNeighbor = it ? nextClip(it) : null;
     const curSpeed = it && it.speed != null ? it.speed : 1;
     const curTf = it && it.transform ? it.transform : { x: 0, y: 0, scale: 1, rotate: 0 };
@@ -309,12 +345,12 @@
         <div class="tl-top">
           <b>Edit</b>
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
-          <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>
+          <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
           <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
-          <button type="button" class="tl-go" data-act="render">Render</button>
+          <button type="button" class="tl-go" data-act="render" title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
         <div class="tl-stage">
@@ -369,9 +405,10 @@
           </div>
           <div class="tl-scroll">
             ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : tab === "act" ? `<div class="tl-act">${hist.length ? hist.map((h) => `<div class="row"><span class="who ${h.kind === "agent" ? "agent" : ""} ${h.undone ? "undone" : ""}">${esc(h.actor)}</span><span class="what ${h.undone ? "undone" : ""}">${esc(h.summary)}</span><span class="ver">v${esc(h.to)}</span></div>`).join("") : `<span style="color:var(--dim)">No changes yet. Trim, split or lift and each step lands here.</span>`}</div>` : `
-            <div class="tl-ruler" style="width:${width - LAB}px">${ticks.join("")}</div>
+            <div class="tl-ruler" style="width:${width - LAB}px">${rg ? `<span class="tl-rng" style="left:${rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></span>` : ""}${ticks.join("")}${inOut.in != null && rg ? `<span class="tl-mk in" style="left:${rg[0] * pps}px" title="In ${esc(tc(rg[0]))}"></span>` : ""}${inOut.out != null && rg ? `<span class="tl-mk out" style="left:${rg[1] * pps}px" title="Out ${esc(tc(rg[1]))}"></span>` : ""}</div>
             <div class="tl-stack" style="width:${width}px">
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
+              ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px"` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}">${wave(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
@@ -810,6 +847,7 @@
     if (mix) mix.stop();
     mixing = false;
     rate = 1;
+    stopAt = null;
     showRate();
     meters(true);
     const v = root && root.querySelector(".tl-vid");
@@ -847,6 +885,7 @@
       const piece = pieceAt(v.dataset.file, v.currentTime);
       if (piece) {
         play = piece.at + (v.currentTime - (piece.src_in || 0));
+        if (stopAt != null && play >= stopAt) { play = stopAt; stop(); paint(); return; }
         head();
         return;
       }
@@ -955,6 +994,7 @@
     lastT = t;
     if (play >= doc.duration) { play = doc.duration; stop(); paint(); return; }
     if (rate < 0 && play <= 0) { play = 0; stop(); paint(); return; }
+    if (stopAt != null && rate > 0 && play >= stopAt - 1e-6) { play = stopAt; stop(); paint(); return; }
     head();
     if (mixing || rate !== 1) syncPicture();
     if (mixing) meters(false);
@@ -1128,11 +1168,14 @@
       msg = "Rendering… this takes a moment.";
       paint();
       try {
-        const res = await api({ op: "render" });
+        const rg = rangeOf();
+        const res = await api(rg ? { op: "render", in: rg[0], out: rg[1] } : { op: "render" });
         doc = res.project;
         const r = res.render || {};
-        msg = `Rendered ${r.name || "file"} — ${r.size ? r.size[0] + "×" + r.size[1] : ""} ${r.duration || ""}s`;
-        renderOut = { name: r.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render" };
+        const what = r.range ? `the range ${tc(r.range[0])}–${tc(r.range[1])}` : r.name || "file";
+        msg = `Rendered ${what} — ${r.size ? r.size[0] + "×" + r.size[1] : ""} ${r.duration || ""}s`;
+        // Cache-bust: the file keeps one name, so a browser could hand back the previous render.
+        renderOut = { name: r.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
       } catch (e) {
         msg = e.message;
       }
@@ -1170,6 +1213,33 @@
     if (e.target.closest("input, textarea")) return;
     const k = e.key.toLowerCase();
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
+    // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
+    const code = e.code || "";
+    if (code === "KeyI" || code === "KeyO") {
+      e.preventDefault();
+      const which = code === "KeyI" ? "in" : "out";
+      if (e.altKey) { inOut[which] = null; saveMarks(); paint(); return; } // Alt+I / Alt+O clear one
+      if (e.shiftKey) { // Shift+I / Shift+O go to the mark
+        if (inOut[which] == null) return;
+        if (playing) { stop(); paint(); }
+        play = Math.min(inOut[which], doc.duration);
+        head();
+        return;
+      }
+      setMark(which, play);
+      return;
+    }
+    if (code === "KeyX" && e.altKey) { e.preventDefault(); inOut = { in: null, out: null }; saveMarks(); paint(); return; }
+    if (k === "/") {
+      // Play In to Out, then stop at Out.
+      e.preventDefault();
+      const rg = rangeOf();
+      if (!rg) { msg = "Mark an In (I) and an Out (O) first, then / plays between them."; paint(); return; }
+      play = rg[0];
+      transport(1);
+      stopAt = rg[1];
+      return;
+    }
     if (k === "j" || k === "l") {
       // J/K/L shuttle, as in Final Cut, Resolve and Premiere: each press of the same key goes
       // faster (1, 2, 4, 8x); the other key turns round at 1x; K stops; K held + J/L steps a frame.
@@ -1242,6 +1312,7 @@
       play = first ? first.at + Math.min(1, first.dur / 2) : 0;
       msg = data.project.summary || "";
       if (mix) mix.load(doc, pid);
+      inOut = loadMarks(pid);
       await loadWords();
       await loadHist();
       paint();
@@ -1262,7 +1333,7 @@
   window.HSEdit = {
     open, leave,
     // Read-only view of the preview mixer, for checks and support.
-    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, levels: mix.levels(), waiting: mix.waiting() } : null),
+    mixState: () => (mix ? { ...mix.state(), mixing, playing, play, rate, marks: { ...inOut }, stopAt, levels: mix.levels(), waiting: mix.waiting() } : null),
     // The live audio context, so a check can suspend it to prove the stalled-clock fallback.
     mixContext: () => (mix ? mix.context : null),
   };

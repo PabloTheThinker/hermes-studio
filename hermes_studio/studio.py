@@ -840,8 +840,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             elif op == "render":
                 from hermes_studio import render_timeline as R
 
+                # In/Out from the page's marks: render only that range. Absent = the whole cut.
+                start = _num(body, "in", -1.0) if body.get("in") is not None else None
+                end = _num(body, "out", -1.0) if body.get("out") is not None else None
                 try:
-                    out = R.render_project(pid)
+                    out = R.render_project(pid, start=start, end=end)
                 except R.RenderError as exc:
                     return _json(self, 400, {"ok": False, "error": str(exc)})
                 return _json(self, 200, {"ok": True, "render": out, "project": editor.open_project(pid)})
