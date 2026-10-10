@@ -1098,3 +1098,19 @@ def test_desk_track_op_sets_the_mixer_strip(desk):
     assert a2["solo"] is True and a2["gain"] == 0.0  # gain 0 is silence, not "unset"
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "track", "track": "V1", "mute": True})
     assert st == 400
+
+
+def test_splitting_a_clip_never_changes_how_loud_the_render_is(home):
+    """The mix used to divide each stream's weight by the sum over ALL streams, so every split
+    made the cut 6 dB quieter once a hand-set volume switched loudnorm off."""
+    from hermes_studio import render_timeline as R
+
+    pid = _mixer_cut("sp")
+    E.set_volume(pid, "a1", 0.5)
+    whole = _window_db(R.render_project(pid)["path"], 0.2, 1.8)
+    E.split(pid, "a1", 0.7)
+    two = [i["id"] for t in E.view(E._log(E._dir(pid)).doc)["tracks"] if t["id"] == "A1" for i in t["items"]]
+    assert len(two) == 2
+    E.split(pid, two[1], 1.4)
+    after = _window_db(R.render_project(pid)["path"], 0.2, 1.8)
+    assert abs(after - whole) < 0.5, (whole, after)

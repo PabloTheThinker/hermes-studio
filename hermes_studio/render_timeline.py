@@ -690,10 +690,13 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         fc.append(f"anullsrc=r=48000:cl=stereo:d={total:.3f}[outa]")
     else:
         # Role weight sets the balance between voice and music; a clip's own volume was
-        # already applied as an absolute gain per stream above.
+        # already applied as an absolute gain per stream above. The weights are absolute
+        # (voice 1.0, music 0.35). They used to be divided by their sum over EVERY stream, and
+        # clips on a track rarely overlap, so each split made the whole cut 6 dB quieter
+        # once loudnorm stood aside (one clip -23.2 dB, two -29.2, four -35.3). The limiter
+        # below catches the rare case where voice and music peaks stack past full scale.
         weights = [MIX.get(role, 1.0) for _lab, role, _vol in a_ready]
-        scale = 1.0 / max(1e-6, sum(weights))
-        wstr = " ".join(f"{wgt * scale:.4f}" for wgt in weights)
+        wstr = " ".join(f"{wgt:.4f}" for wgt in weights)
         # loudnorm is a broadcast auto-leveler that pulls the whole mix to -14 LUFS; it would
         # erase any level the user set by hand. So only auto-level when every clip is at its
         # default volume -- otherwise the authored mix is respected, with a limiter to keep
