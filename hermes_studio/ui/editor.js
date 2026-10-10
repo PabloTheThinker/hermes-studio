@@ -49,6 +49,19 @@
       .tl-scope nav{display:flex;gap:2px;padding:4px;border-top:1px solid var(--line)}
       .tl-scope nav button{flex:1;padding:3px 0;font:500 10px var(--mono);letter-spacing:.06em}
       .tl-scope .tl-sread{font:500 10px var(--mono);color:var(--dim);padding:0 6px 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .tl-colour{flex:none;margin:6px 0 10px;padding:8px 6px 6px;border:1px solid var(--line);border-radius:6px}
+      .tl-colour h4{margin:0 0 6px;font:600 10px var(--sans);letter-spacing:.18em;text-transform:uppercase;color:var(--dim);display:flex;justify-content:space-between;align-items:center}
+      .tl-colour h4 button{font:500 10px var(--mono);padding:2px 6px;letter-spacing:.04em;text-transform:none}
+      .tl-wheels{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+      .tl-wheel{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0}
+      .tl-wring{position:relative;width:100%;max-width:70px;aspect-ratio:1;border-radius:50%;cursor:crosshair;touch-action:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6)}
+      .tl-wring::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;margin:-2.5px;border-radius:50%;background:rgba(242,239,232,.35)}
+      .tl-puck{position:absolute;width:11px;height:11px;margin:-5.5px 0 0 -5.5px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px rgba(0,0,0,.65),0 0 0 3px rgba(242,239,232,.35);pointer-events:none;z-index:1}
+      .tl-wheel span{font:600 9px var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+      .tl-wheel input[type=range]{width:100%;margin:0}
+      .tl-wheel b{font:500 10px var(--mono);color:var(--ink)}
+      .tl-wsat{display:flex;gap:6px;align-items:center;margin-top:6px;font:500 10px var(--mono);color:var(--dim)}
+      .tl-wsat input{flex:1;margin:0}
       .tl-insp h3{margin:0 0 8px;font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
       .tl-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:8px 0;font-size:13px}
       .tl-row span{color:var(--dim)} .tl-row b{font-weight:500;font-family:var(--mono);font-size:12px}
@@ -237,6 +250,106 @@
   const DB_FLOOR = -48; // below this a fader reads as off (gain 0)
   function toDb(g) { return g > 0 ? 20 * Math.log10(g) : -Infinity; }
   function fromDb(db) { return db <= DB_FLOOR ? 0 : Math.min(4, Math.pow(10, db / 20)); }
+  // ---- colour wheels (wheels.js) ------------------------------------------------------
+  // Lift / Gamma / Gain: a puck for the colour balance (same plane as the vectorscope) and a
+  // master slider for the level, then saturation. A drag grades the preview live from
+  // wheels.js (pinned equal to grade.py by a test); releasing commits one "grade" op.
+  let wheel = null; // { id, st } while the inspector shows a clip
+  const WM = { lift: [-0.5, 0.5, 0.005], gamma: [0.2, 3, 0.01], gain: [0, 2, 0.01] };
+  const wfmt = (kind, m) => (kind === "lift" ? (m >= 0 ? "+" : "−") + Math.abs(m).toFixed(2) : m.toFixed(2));
+  function colourSection(it) {
+    if (!wheel || wheel.id !== it.id || !wheel.live) {
+      // base: the committed grade as the op would send it, so a commit that changes nothing
+      // (a click on a slider, a puck put back where it was) is skipped instead of logged.
+      const st = window.HSWheels.fromGrade(it.grade);
+      wheel = { id: it.id, st, live: false, base: gradeKeyOf(window.HSWheels.toGrade(st)) };
+    }
+    const st = wheel.st, ring = window.HSWheels.ringStops();
+    const one = (kind, label) => {
+      const w = st[kind], [lo, hi, step] = WM[kind];
+      return `<div class="tl-wheel" data-wheel="${kind}"><div class="tl-wring" data-wring="${kind}" title="${label}: drag to balance the colour · double-click to centre"
+        style="background:radial-gradient(circle,rgba(14,15,17,.92) 0 22%,rgba(14,15,17,.45) 62%,rgba(14,15,17,.1) 70.5%,transparent 71%),conic-gradient(${ring})">
+        <i class="tl-puck" style="left:${(50 + w.x * 50).toFixed(2)}%;top:${(50 - w.y * 50).toFixed(2)}%"></i></div>
+        <span>${label}</span><input type="range" data-wm="${kind}" min="${lo}" max="${hi}" step="${step}" value="${w.m.toFixed(3)}" aria-label="${label} level"><b data-wv="${kind}">${wfmt(kind, w.m)}</b></div>`;
+    };
+    return `<div class="tl-colour"><h4>Colour <button type="button" data-act="grade-reset" title="Back to no grade">Reset</button></h4>
+      <div class="tl-wheels">${one("lift", "Lift")}${one("gamma", "Gamma")}${one("gain", "Gain")}</div>
+      <label class="tl-wsat">Sat <input type="range" data-wsat min="0" max="2" step="0.01" value="${st.sat.toFixed(2)}" aria-label="Saturation"><b data-wv="sat">${st.sat.toFixed(2)}</b></label></div>`;
+  }
+  // Grade the preview from the wheels without a round trip (the drag is still going).
+  function liveGrade() {
+    const it = wheel && find(wheel.id);
+    if (!it) return;
+    const g = window.HSWheels.toGrade(wheel.st);
+    const neutral = window.HSWheels.isNeutral(g);
+    it.grade = neutral ? null : g;
+    it.grade_preview = neutral ? null : window.HSWheels.preview(g);
+    gradeKey = "*"; // force showGrade to rebuild the filter
+    showGrade();
+    updateScope(true);
+    for (const kind of ["lift", "gamma", "gain"]) {
+      const b = root.querySelector(`[data-wv="${kind}"]`); if (b) b.textContent = wfmt(kind, wheel.st[kind].m);
+      const p = root.querySelector(`[data-wring="${kind}"] .tl-puck`);
+      if (p) { p.style.left = (50 + wheel.st[kind].x * 50).toFixed(2) + "%"; p.style.top = (50 - wheel.st[kind].y * 50).toFixed(2) + "%"; }
+    }
+    const sb = root.querySelector('[data-wv="sat"]'); if (sb) sb.textContent = wheel.st.sat.toFixed(2);
+  }
+  const r4 = (v) => Math.round(v * 1e4) / 1e4;
+  function gradeKeyOf(g) { return JSON.stringify([g.lift.map(r4), g.gamma.map(r4), g.gain.map(r4), r4(g.sat)]); }
+  let gradeT = 0;
+  // Slider and keyboard changes wait a moment, so a run of arrow presses is one undo step.
+  function commitGradeSoon() { clearTimeout(gradeT); gradeT = setTimeout(commitGrade, 400); }
+  async function commitGrade() {
+    clearTimeout(gradeT);
+    if (!wheel) return;
+    const g = window.HSWheels.toGrade(wheel.st);
+    if (gradeKeyOf(g) === wheel.base) { wheel.live = false; return; } // nothing changed
+    wheel.live = false;
+    await commit({ op: "grade", id: wheel.id, lift: g.lift.map(r4), gamma: g.gamma.map(r4), gain: g.gain.map(r4), sat: r4(g.sat) });
+  }
+  function wireWheels() {
+    if (!root || !wheel) return;
+    root.querySelectorAll("[data-wring]").forEach((ring) => {
+      const kind = ring.dataset.wring;
+      const at = (e) => {
+        const r = ring.getBoundingClientRect();
+        let x = ((e.clientX - r.left) / r.width) * 2 - 1, y = -(((e.clientY - r.top) / r.height) * 2 - 1);
+        const d = Math.hypot(x, y);
+        if (d > 1) { x /= d; y /= d; }
+        wheel.st[kind].x = x; wheel.st[kind].y = y;
+      };
+      let lastTap = 0;
+      ring.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        const now = performance.now();
+        if (now - lastTap < 350) { // double-click: centre this wheel's balance
+          lastTap = 0; wheel.st[kind].x = 0; wheel.st[kind].y = 0; wheel.live = true; liveGrade(); commitGrade(); return;
+        }
+        lastTap = now;
+        try { ring.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+        wheel.live = true; wheel.drag = kind;
+        at(e); liveGrade();
+      });
+      ring.addEventListener("pointermove", (e) => { if (wheel && wheel.drag === kind) { at(e); liveGrade(); } });
+      const end = () => { if (wheel && wheel.drag === kind) { wheel.drag = null; commitGrade(); } };
+      ring.addEventListener("pointerup", end);
+      ring.addEventListener("pointercancel", end);
+    });
+    root.querySelectorAll("[data-wm]").forEach((sl) => {
+      const kind = sl.dataset.wm;
+      sl.addEventListener("input", () => { wheel.live = true; wheel.st[kind].m = parseFloat(sl.value); liveGrade(); });
+      sl.addEventListener("change", () => commitGradeSoon());
+      sl.addEventListener("dblclick", () => { wheel.st[kind].m = kind === "lift" ? 0 : 1; wheel.live = true; liveGrade(); commitGrade(); });
+    });
+    const sat = root.querySelector("[data-wsat]");
+    if (sat) {
+      sat.addEventListener("input", () => { wheel.live = true; wheel.st.sat = parseFloat(sat.value); liveGrade(); });
+      sat.addEventListener("change", () => commitGradeSoon());
+      sat.addEventListener("dblclick", () => { wheel.st.sat = 1; wheel.live = true; liveGrade(); commitGrade(); });
+    }
+  }
+
   function mkSection(mk) {
     // The marker under the playhead (Resolve's marker list, inline): rename it, colour it,
     // delete it. Empty when there's none.
@@ -525,6 +638,7 @@
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Look</span><span style="display:flex;gap:4px;align-items:center"><select data-look style="flex:1"><option value="" ${it.look ? "" : "selected"}>None</option>${["warm","cool","punch","mono","film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select><button type="button" data-act="apply-look">Set</button></span></div>` : ""}
+            ${it && it.type === "clip" && window.HSWheels ? colourSection(it) : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
@@ -626,6 +740,7 @@
       paint();
     }));
     if (pic) pic.addEventListener("load", () => updateScope(true));
+    wireWheels();
     updateScope(true);
     applySplit();
     sizeFrame();
@@ -1576,6 +1691,13 @@
       const pick = root.querySelector("[data-speed]");
       if (!sel2 || !pick) return;
       await commit({ op: "speed", id: sel2.id, speed: parseFloat(pick.value) });
+      return;
+    }
+    if (name === "grade-reset") {
+      const s2 = find(sel);
+      if (!s2 || s2.type !== "clip") return;
+      wheel = null;
+      await commit({ op: "grade", id: s2.id });
       return;
     }
     if (name === "apply-look") {
