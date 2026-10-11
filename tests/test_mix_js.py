@@ -31,6 +31,10 @@ class Gain extends Node { constructor() { super(); this.gain = new Param(1); } }
 class Src extends Node { constructor() { super(); this.started = null; this.playbackRate = new Param(1); } start(w, o, d) { this.started = [+w.toFixed(4), +o.toFixed(4), +d.toFixed(4)]; } stop() {} }
 class Analyser extends Node { constructor() { super(); this.fftSize = 8; } getFloatTimeDomainData(a) { a.fill(0); } }
 class Comp extends Node { constructor() { super(); for (const k of ["threshold", "knee", "ratio", "attack", "release"]) this[k] = new Param(0); } }
+function fakeBuf(ch, n, sr, blank) {
+  const data = [...Array(ch)].map(() => Float32Array.from({ length: n }, (_, i) => (blank ? 0 : i)));
+  return { numberOfChannels: ch, length: n, sampleRate: sr, duration: n / sr, getChannelData: (c) => data[c] };
+}
 class AC {
   constructor() { this.currentTime = 10; this.state = "running"; this.destination = new Node(); this.sources = []; AC.last = this; }
   createGain() { return new Gain(); }
@@ -38,7 +42,8 @@ class AC {
   createAnalyser() { return new Analyser(); }
   createDynamicsCompressor() { return new Comp(); }
   resume() {}
-  decodeAudioData() { return Promise.resolve({ duration: 30 }); }
+  decodeAudioData() { return Promise.resolve(fakeBuf(1, 3000, 100)); }  // 30 s at 100 Hz, sample i = i
+  createBuffer(ch, n, sr) { return fakeBuf(ch, n, sr, true); }
 }
 global.window = { AudioContext: AC };
 global.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
@@ -58,7 +63,7 @@ const speed = Number(process.argv[5] || 1);
     const clipGain = s.out[0];
     let node = clipGain.out[0], envelope = null;
     if (!(node.out[0] instanceof Analyser)) { envelope = node.gain.events; node = node.out[0]; }
-    return { start: s.started, rate: +s.playbackRate.value.toFixed(4), rates: s.playbackRate.events, env: clipGain.gain.events, envelope, strip: node.gain.events };
+    return { first: s.buffer && s.buffer.getChannelData ? s.buffer.getChannelData(0)[0] : null, start: s.started, rate: +s.playbackRate.value.toFixed(4), rates: s.playbackRate.events, env: clipGain.gain.events, envelope, strip: node.gain.events };
   });
   const now0 = m.now();
   ctx.currentTime += 1.5;
@@ -270,3 +275,31 @@ def test_a_ramped_sound_clip_started_mid_ramp_picks_up_the_right_rate(tmp_path):
     s = T.TICK_RATE
     item = {"type": "clip", "src": [0, 8 * s], "props": {"speed_keys": [{"at": 0, "speed": [1, 2]}, {"at": 4 * s, "speed": [2, 1]}]}}
     assert T.source_offset(item, 2 * s) / s == pytest.approx(src, abs=1e-6)
+
+
+def test_a_reversed_sound_clip_plays_a_reversed_buffer_from_its_out_point(tmp_path):
+    """Source 5..9 reversed, played from 1 s into the clip: the first sound heard is source 8 s
+    (9 - 1), which in the reversed copy of a 30 s file sits at 30 - 9 + 1 = 22 s."""
+    c = _clip("a1", 0, 5, 9)
+    c["reverse"] = True
+    out = _run(tmp_path, _doc(voice=[c]), 1)
+    (x,) = out["clips"]
+    assert x["start"] == [10.06, 22.0, 3.0]
+    assert x["first"] == 2999  # the reversed copy: sample 0 is the file's last sample
+
+
+def test_srctime_reads_a_reversed_clip_from_its_out_point(tmp_path):
+    from hermes_studio import timeline as T
+
+    s = T.TICK_RATE
+    item = {"type": "clip", "src": [5 * s, 9 * s], "props": {"speed": [2, 1], "reverse": True}}
+    clip = {"src_in": 5, "src_out": 9, "speed": 2.0, "reverse": True, "dur": 2.0}
+    ts = [0.0, 0.5, 1.0, 1.5]
+    h = tmp_path / "t.js"
+    h.write_text(MAP_HARNESS.replace("window.HSMix.srcAt(c, t)", "window.HSMix.srcTime(c, t)"))
+    r = subprocess.run([shutil.which("node") or "node", str(h), str(MIX_JS), json.dumps(clip), json.dumps(ts)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    js = json.loads(r.stdout)["src"]
+    py = [(item["src"][0] + T.source_offset(item, int(t * s))) / s for t in ts]
+    assert js == pytest.approx(py, abs=2e-3)
+    assert js[0] == pytest.approx(9.0, abs=2e-3) and js[2] == pytest.approx(7.0, abs=2e-3)

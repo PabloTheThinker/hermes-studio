@@ -2263,3 +2263,107 @@ def test_a_fresh_demo_can_play_before_any_frame_is_asked_for(home):
     dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(p)],
                                capture_output=True, text=True).stdout)
     assert dur >= 119.9  # as long as the media entry says
+
+
+def _numbered_av(home, pid, seconds=8.0):
+    """A film-shaped project whose picture brightness IS its frame number (30 fps) and whose sound
+    is a 440 Hz tone only in the first second, so direction can be measured on both."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+         f"nullsrc=s=64x64:r=30:d={seconds},geq=lum='N':cb=128:cr=128",
+         "-f", "lavfi", "-i", f"aevalsrc='if(lt(t,1),0.5*sin(2*PI*440*t),0)':s=48000:d={seconds}",
+         "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", "-c:a", "pcm_s16le", "-shortest",
+         str(folder / "media" / "n.mov")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/n.mov", "dur": int(seconds * s), "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "v1", "type": "clip", "media": "m1", "src": [0, int(seconds * s)], "at": 0, "fade_in": 0, "fade_out": 0}]
+    by["A1"]["items"] = [{"id": "a1", "type": "clip", "media": "m1", "src": [0, int(seconds * s)], "at": 0, "fade_in": 0, "fade_out": 0}]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    E._save_current(folder, _O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    return pid
+
+
+def _frames_and_tone(path):
+    import numpy as np
+
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-vf", "scale=64:64", "-f", "rawvideo",
+                          "-pix_fmt", "yuv444p", "-"], capture_output=True, check=True).stdout
+    y = np.frombuffer(raw, np.uint8).reshape(-1, 3, 64, 64)[:, 0]
+    pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-f", "s16le", "-ac", "1", "-ar", "8000", "-"],
+                         capture_output=True, check=True).stdout
+    a = np.frombuffer(pcm, np.int16).astype(float)
+    sec = [float(np.sqrt((a[i * 8000:(i + 1) * 8000] ** 2).mean())) if len(a) >= (i + 1) * 8000 else 0.0 for i in range(len(a) // 8000)]
+    return y[:, 20:44, 20:44].mean(axis=(1, 2)), sec
+
+
+def test_reverse_plays_the_window_backwards_frame_for_frame_with_its_sound(home):
+    """Source frames 0..239 (brightness = frame number) reversed: output frame k is source 239-k,
+    across the 4 s chunk joins, and the tone that was in the first second is now in the last."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+
+    pid = _numbered_av(home, "revA")
+    fwd, fwd_tone = _frames_and_tone(R.render_project(pid)["path"])
+    E.set_reverse(pid, "v1", True)
+    assert _props_of(pid, "a1").get("reverse") is True  # the sound reverses with it
+    lum, tone = _frames_and_tone(R.render_project(pid)["path"])
+    assert len(lum) == len(fwd) == 240
+    # Frame for frame the forward render played backwards (the same pipeline, so the render's
+    # TV-range squeeze of the darkest frames cancels out), across the 4 s chunk join.
+    assert np.abs(lum - fwd[::-1]).max() <= 1.5, np.abs(lum - fwd[::-1]).max()
+    # And in absolute terms, wherever the level isn't range-clipped: output k = source 239-k.
+    want = np.arange(239, -1, -1)
+    mid = (want >= 16) & (want <= 235)
+    assert np.abs(lum - want)[mid].max() <= 1.5
+    assert fwd_tone[0] > 20 * max(fwd_tone[-1], 1.0)
+    assert tone[-1] > 20 * max(tone[0], 1.0)  # the tone moved from the first second to the last
+    E.set_reverse(pid, "v1", False)
+    assert _props_of(pid, "v1").get("reverse") is None
+
+
+def test_reverse_keeps_the_length_and_the_dissolve(home):
+    E.create("demo")
+    E.set_transition("demo", "c1", "c2", 0.5)
+    before = _v1("demo")
+    E.set_reverse("demo", "c1", True)
+    assert _v1("demo") == before  # nothing moved, the dissolve's still there
+    assert any(i.get("type") == "transition" for t in E._log(E._dir("demo")).doc["tracks"] for i in t["items"])
+    doc = E._log(E._dir("demo")).doc
+    # Paused frame on a reversed clip: the first timeline frame shows the window's LAST source frame.
+    assert E.source_time(doc, 0.0)[1] == pytest.approx(8.0, abs=1e-6)
+    assert E.source_time(doc, 2.0)[1] == pytest.approx(6.0, abs=1e-6)
+
+
+def test_reverse_then_speed_is_still_frame_exact(home):
+    """Reverse at 2x: 4 s long, output frame k shows source 239 - 2k."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+
+    pid = _numbered_av(home, "revB")
+    E.set_reverse(pid, "v1", True)
+    E.set_speed(pid, "v1", 2.0)
+    out = R.render_project(pid)
+    lum, _ = _frames_and_tone(out["path"])
+    assert len(lum) == 120
+    want = 239 - 2 * np.arange(len(lum))
+    mid = (want >= 16) & (want <= 235)
+    assert np.abs(lum - want)[mid].max() <= 2.0, np.abs(lum - want)[mid].max()
+
+
+def test_the_validator_takes_reverse_as_true_or_nothing(home):
+    E.create("demo")
+    with pytest.raises(E.EditorError):
+        E.apply("demo", [{"op": "set_props", "id": "c1", "props": {"reverse": "yes"}}], "bad")

@@ -187,6 +187,7 @@
       .tl-xfg button:hover{background:rgba(222,171,66,.16)}
       .tl-xfg button.on{background:var(--amber);color:var(--amber-ink);border-color:var(--amber)}
       .tl-xfg button[data-xfoff]{width:100%;color:var(--dim)}
+      .tl-rt{position:absolute;top:2px;right:6px;z-index:3;font:600 9px var(--mono);letter-spacing:.02em;color:var(--amber-ink);background:var(--amber);border-radius:2px;padding:0 4px;line-height:13px;pointer-events:none}
       .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4);cursor:pointer}
       .tl-kf:hover{filter:brightness(1.3)}
       .tl-kf.on{background:#fff;box-shadow:0 0 0 2px var(--amber);width:10px;height:10px;margin-left:-5px}
@@ -1108,6 +1109,13 @@
     return `<svg class="tl-wave" viewBox="0 0 ${cols} 100" preserveAspectRatio="none" aria-hidden="true"><path d="${d}Z"/>${red ? `<g class="hot">${red}</g>` : ""}</svg>`;
   }
 
+  // Resolve shows a retimed clip's speed on the clip itself; reverse is a backwards arrow.
+  function retimeBadge(c) {
+    if (c.type !== "clip") return "";
+    const sp = c.speed_keys ? "ramp" : c.speed && Math.abs(c.speed - 1) > 1e-6 ? `${+c.speed.toFixed(2)}×` : "";
+    const txt = (c.reverse ? "◀" + (sp ? " " : "") : "") + sp;
+    return txt ? `<b class="tl-rt" title="${c.reverse ? "Reversed" : ""}${c.reverse && sp ? " · " : ""}${sp ? "Speed " + sp : ""}">${esc(txt)}</b>` : "";
+  }
   // Frames and timecode from the project's own rate (view() sends fps as [num, den]).
   function fpsOf() { const f = doc && doc.fps; const v = f && f[1] ? f[0] / f[1] : 30; return v > 0 ? v : 30; }
   function frameOf(t) { return Math.floor(Math.max(0, t) * fpsOf() + 1e-6); }
@@ -1315,7 +1323,7 @@
             ${mkSection(mkHere())}
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button><button type="button" data-act="reverse" class="${it.reverse ? "on" : ""}" aria-pressed="${it.reverse ? "true" : "false"}" title="Play the clip backwards (its sound too)">${it.reverse ? "◀ Reversed" : "Reverse"}</button></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-speedcurve"><canvas data-speedcurve height="120" aria-label="Speed ramp: click to add a speed key, drag to move, double-click to remove. A flat line is normal speed."></canvas></div>${it.speed_keys ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.speed_keys.length} speed keys</span> <button type="button" data-act="clear-speed-ramp">Clear ramp</button></div>` : ""}` : ""}
             ${it && it.type === "clip" && window.HSWheels ? colourSection(it) : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
@@ -1350,7 +1358,7 @@
               <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
-                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}${c.type === "clip" ? " · Alt-drag to slip · Alt+Shift-drag to slide" : ""}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
+                ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}${c.type === "clip" ? " · Alt-drag to slip · Alt+Shift-drag to slide" : ""}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${retimeBadge(c)}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf${xfDrag && xfDrag.id === c.id ? " dragging" : ""}" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" data-kind="${esc(c.kind || "fade")}" style="left:${c.at * pps}px" title="${esc(xfLabel(c.kind || "fade"))} ${esc(c.dur.toFixed(1))}s · click to change the kind · drag an end to resize · Alt-click to remove"><i>◐</i><b>${esc(xfLabel(c.kind || "fade"))}</b><span>${esc(c.dur.toFixed(1))}s</span><i class="tl-xfe a" data-xfedge="a"></i><i class="tl-xfe b" data-xfedge="b"></i></button>`).join("")}
               </div></div>`).join("")}
               <div class="tl-marq" hidden></div>
@@ -2150,6 +2158,7 @@
   }
 
   function stop() {
+    filmOn = false;
     playing = false;
     lastT = 0;
     if (raf) cancelAnimationFrame(raf);
@@ -2214,12 +2223,13 @@
     const v = root.querySelector(".tl-vid");
     const it = mainClip(play);
     if (!v || !it || !it.file) return false;
+    filmOn = true;
     v.hidden = false;
     v.muted = false;
     previewMix(v);
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
-    const want = (it.src_in || 0) + window.HSMix.srcAt(it, play - it.at);
+    const want = window.HSMix.srcTime(it, play - it.at);
     if (v.dataset.file !== it.file) {
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
@@ -2253,15 +2263,16 @@
     if (img) img.hidden = true;
     const sp = it.speed || 1;
     // The one time map (constant speed or a ramp), shared with the mixer and the render.
-    const want = () => { const c = mainClip(play) || it; return (c.src_in || 0) + window.HSMix.srcAt(c, play - c.at); };
+    const want = () => { const c = mainClip(play) || it; return window.HSMix.srcTime(c, play - c.at); };
     if (v.dataset.file !== it.file) {
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
       v.addEventListener("loadedmetadata", () => { v.currentTime = want(); }, { once: true });
       return;
     }
-    if (rate < 0) {
-      // A <video> can't play backwards, so a reverse shuttle steps it: paused, one seek every
+    const c1 = mainClip(play) || it;
+    if (rate < 0 || c1.reverse) {
+      // A <video> can't play backwards, so a reverse shuttle (or a reversed clip) steps it: paused, one seek every
       // 80 ms (about 12 pictures a second), which is what a reverse scrub looks like anyway.
       if (!v.paused) v.pause();
       const now = performance.now();
@@ -2290,6 +2301,7 @@
     });
   }
 
+  let filmOn = false; // the <video> is the clock (startFilm); otherwise the wall clock or the mix
   function loop(t) {
     if (!playing) return;
     if (mixing) {
@@ -2314,7 +2326,7 @@
     if (rate < 0 && play <= 0) { play = 0; stop(); paint(); return; }
     if (stopAt != null && rate > 0 && play >= stopAt - 1e-6) { play = stopAt; stop(); paint(); return; }
     head();
-    if (mixing || rate !== 1) syncPicture();
+    if (mixing || rate !== 1 || !filmOn) syncPicture();
     if (mixing) meters(false);
     const sc = root.querySelector(".tl-scroll");
     const x = LAB + play * pps;
@@ -2340,7 +2352,8 @@
       raf = requestAnimationFrame(loop);
       return;
     }
-    if (r === 1) {
+    const revMain = ((doc.tracks.find((x) => x.role === "main") || {}).items || []).some((i) => i.reverse);
+    if (r === 1 && !revMain) {
       if (mix) msg = "Sound is still loading; playing the picture's own sound for now.";
       paint();
       if (!startFilm()) raf = requestAnimationFrame(loop);
@@ -2377,6 +2390,12 @@
     if (name === "clear-speed-ramp") {
       const s3 = find(sel);
       if (s3 && s3.speed_keys) await commit({ op: "speed_keys", id: sel, keys: null });
+      return;
+    }
+    if (name === "reverse") {
+      const it = find(sel);
+      if (!it || it.type !== "clip") return;
+      await commit({ op: "reverse", id: it.id, on: !it.reverse });
       return;
     }
     if (name === "apply-speed") {

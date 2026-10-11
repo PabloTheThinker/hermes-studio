@@ -263,6 +263,7 @@ def view(doc: dict) -> dict:
                 row["grade"] = _GR.view(_g)
                 row["grade_preview"] = _GR.preview(_g)
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
+                row["reverse"] = props.get("reverse") is True
                 skv = props.get("speed_keys")
                 row["speed_keys"] = (
                     [[round(k["at"] / rate, 4), round(_pair_to_float(k["speed"]), 4)] for k in skv]
@@ -682,12 +683,14 @@ def _retime(pid: str, item_id: str, clip_props: dict, sound_props: dict, label: 
     linked = set(_linked_sound(pid, item_id))
 
     ops: list[dict] = []
-    for tr in _transitions_on(pid, item_id):
-        ops.append({"op": "set_transition", "between": list(tr["between"]), "dur": 0})
+    delta = new_len - old_len
+    if delta:
+        # A new length breaks a dissolve's overlap; a same-length retime (reverse) keeps it.
+        for tr in _transitions_on(pid, item_id):
+            ops.append({"op": "set_transition", "between": list(tr["between"]), "dur": 0})
     ops.append({"op": "set_props", "id": item_id, "props": clip_props})
     for sid in linked:
         ops.append({"op": "set_props", "id": sid, "props": sound_props})
-    delta = new_len - old_len
     if delta:
         later = [
             it["id"]
@@ -719,6 +722,14 @@ def set_speed(pid: str, item_id: str, speed: float) -> dict:
 
     # The sound plays at the same speed; a constant speed on the picture clears any ramp on it.
     return _retime(pid, item_id, {"speed": pair}, {"speed": pair, "speed_keys": None}, f"Speed {s:g}×")
+
+
+def set_reverse(pid: str, item_id: str, on: bool) -> dict:
+    """Play a clip backwards (Final Cut's Reverse Clip, Resolve's Reverse Segment), or forwards
+    again. Its sound reverses with it; the length is unchanged, so nothing ripples. Speed and a
+    ramp still apply, in played time. One undo step."""
+    flag = True if on else None
+    return _retime(pid, item_id, {"reverse": flag}, {"reverse": flag}, "Reverse" if on else "Forward")
 
 
 def set_look(pid: str, item_id: str, look: str | None) -> dict:

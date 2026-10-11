@@ -68,7 +68,7 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
 # It multiplies props.volume, so the volume stays the clip's overall trim.
@@ -83,7 +83,7 @@ SPEEDKEY_KEYS = {"at", "speed"}
 # the clip's constant props.speed for the render (the schema treats a clip as either constant or
 # ramped, never both meaningfully).
 
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
 GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
@@ -724,6 +724,9 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
             if pr.get("speed_keys") is not None:
                 _check_speed_keys(c, pr["speed_keys"], _j(ip, "props", "speed_keys"))
+            # Reverse is stored as True or not at all (None), so a forward clip hashes as before.
+            if pr.get("reverse") is not None and pr["reverse"] is not True:
+                c.bad("wrong_type", _j(ip, "props", "reverse"), "reverse must be true or null")
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
@@ -801,7 +804,12 @@ def source_offset(item: dict, into: int) -> int:
     else:
         sp = (item.get("props") or {}).get("speed", [1, 1])
         off = int(Fraction(into) * Fraction(sp[0], sp[1]))
-    return max(0, min(span - 1, off))
+    off = max(0, min(span - 1, off))
+    if (item.get("props") or {}).get("reverse") is True:
+        # Played backwards: the speed map runs in PLAYED time, then the source window is read
+        # from its out point down.
+        off = span - 1 - off
+    return off
 
 
 def item_duration(item: dict) -> int:

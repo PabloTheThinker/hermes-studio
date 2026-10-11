@@ -305,6 +305,68 @@ def _gain_keys(it: dict, rate: int) -> list[dict] | None:
 TB = 1000000.0  # internal 'seconds' unit for a speed-ramp setpts expression
 
 
+REVERSE_CHUNK_S = 4.0  # seconds per reversed piece: ffmpeg's reverse filter buffers every frame
+
+
+def _has_audio(path: Path) -> bool:
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+    return bool(r.stdout.strip())
+
+
+def _reversed_source(folder: Path, path: Path, i0: int, o1: int, rate: int) -> Path:
+    """The source window [i0, o1) played backwards, as a cached file the render then treats as an
+    ordinary forward clip (so speed, ramps, grade and fades apply to it unchanged).
+
+    ffmpeg's ``reverse``/``areverse`` hold the whole input in memory -- about 2.8 GB for 30 s of
+    1080p -- so the window is cut into REVERSE_CHUNK_S pieces from the END, each reversed on its
+    own, and joined in that order. Sound is reversed with it (PCM, so the pieces join without
+    codec priming gaps). Keyed by the file's size and mtime plus the window, under
+    <project>/cache/reverse."""
+    import hashlib
+
+    st = path.stat()
+    key = hashlib.sha1(f"{path.name}|{st.st_size}|{st.st_mtime_ns}|{i0}|{o1}|{rate}|rev2".encode()).hexdigest()[:16]
+    out = folder / "cache" / "reverse" / f"{key}.mov"
+    if out.is_file() and out.stat().st_size > 0:
+        return out
+    out.parent.mkdir(parents=True, exist_ok=True)
+    a, b = i0 / rate, o1 / rate
+    audio = _has_audio(path)
+    work = out.parent / f".{key}.parts"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir()
+    try:
+        parts, hi, n = [], b, 0
+        while hi - a > 1e-6:
+            lo = max(a, hi - REVERSE_CHUNK_S)
+            part = work / f"{n:04d}.mov"
+            # -ss AND -t on the INPUT: reverse reads to end of stream, so an output -t let it
+            # buffer the rest of the file and kept the wrong frames (every piece came out as
+            # the file's last seconds).
+            cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{lo:.6f}", "-t", f"{hi - lo:.6f}",
+                   "-i", str(path), "-map", "0:v:0", "-vf", "reverse"]
+            if audio:
+                cmd += ["-map", "0:a:0", "-af", "areverse", "-c:a", "pcm_s16le", "-ar", "48000"]
+            cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "10", "-pix_fmt", "yuv420p", str(part)]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            if r.returncode != 0 or not part.is_file():
+                raise RenderError("could not reverse the clip: " + (r.stderr or "").strip()[-300:])
+            parts.append(part)
+            hi, n = lo, n + 1
+        lst = work / "list.txt"
+        lst.write_text("".join(f"file '{p.name}'\n" for p in parts))
+        tmp = out.with_name(f".{key}.tmp.mov")
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(lst),
+                            "-c", "copy", str(tmp)], capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0 or not tmp.is_file():
+            raise RenderError("could not join the reversed clip: " + (r.stderr or "").strip()[-300:])
+        tmp.replace(out)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
 def _atempo(tempo: float) -> str:
     """The atempo filter chain that plays at ``tempo``. atempo accepts 0.5 to 100, so a tempo
     below 0.5 (a clip slower than half speed) chains halves until the rest fits: 0.1x is
@@ -432,6 +494,11 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         path = resolve_media(folder, rel)
         if not path.is_file():
             raise RenderError(f"picture file is missing: {path.name}")
+        if (it.get("props") or {}).get("reverse") is True:
+            # Reversed: render from the backwards copy of the window, which is a forward clip.
+            path = _reversed_source(folder, path, i0, o1, rate)
+            rel = "reverse/" + path.name
+            i0, o1 = 0, o1 - i0
         if cursor < it["at"]:
             inputs.append({"role": "gap", "at": cursor, "end": it["at"]})
         cursor = it["at"] + tl_dur
@@ -493,6 +560,10 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             path = resolve_media(folder, rel)
             if not path.is_file():
                 raise RenderError(f"sound file is missing: {path.name}")
+            if (it.get("props") or {}).get("reverse") is True:
+                path = _reversed_source(folder, path, i0, o1, rate)
+                rel = "reverse/" + path.name
+                i0, o1 = 0, o1 - i0
             idx = seen.get(rel)
             if idx is None:
                 idx = len(inputs)

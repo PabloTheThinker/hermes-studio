@@ -95,6 +95,12 @@
     }
     return pts[pts.length - 1][1];
   }
+  // The SOURCE second shown at clip-timeline second `into`: srcAt is the offset in PLAYED order,
+  // so a reversed clip reads it back from its out point (timeline.source_offset, same rule).
+  function srcTime(c, into) {
+    const p = srcAt(c, into);
+    return c.reverse ? Math.max(c.src_in || 0, (c.src_out || 0) - p - 1e-3) : (c.src_in || 0) + p;
+  }
   // Timeline length of a clip (the view already sends it; this is the fallback).
   function lenOf(c) {
     if (c.dur != null) return c.dur;
@@ -218,6 +224,19 @@
       running = false;
     }
 
+    const rev = new Map(); // file -> reversed AudioBuffer, built on first use
+    function reversed(file, buf) {
+      if (rev.has(file)) return rev.get(file);
+      if (!buf.getChannelData || !ctx.createBuffer) return null;
+      const out = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+      for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+        const a = buf.getChannelData(ch), b = out.getChannelData(ch);
+        for (let i = 0, n = a.length; i < n; i++) b[i] = a[n - 1 - i];
+      }
+      rev.set(file, out);
+      return out;
+    }
+
     // Schedule the whole mix from timeline second `play`, at `speed` (1, or 2 for a shuttle:
     // pitched up, the way Final Cut plays a 2x shuttle). Buffer offsets and lengths stay in
     // source seconds; only the wall-clock times divide by the speed.
@@ -232,8 +251,18 @@
       lastClock = ctx.currentTime;
       lastMove = performance.now();
       for (const [tr, c] of clips(doc)) {
-        const buf = buffers.get(c.file);
+        let buf = buffers.get(c.file);
         if (!buf || buf === "wait") continue;
+        // A reversed clip plays a reversed copy of the decoded file (Web Audio can't run a
+        // buffer backwards). Position x in the file is D - x in the copy, so the played offset
+        // p (from the clip's out point) sits at D - src_out + p.
+        let base = c.src_in;
+        if (c.reverse) {
+          const rb = reversed(c.file, buf);
+          if (!rb) continue;
+          base = buf.duration - c.src_out;
+          buf = rb;
+        }
         // Fades, the volume envelope and the schedule are in clip TIMELINE seconds (the render
         // fades after atempo); only the buffer offset and length are in source seconds.
         const span = c.src_out - c.src_in;
@@ -283,7 +312,7 @@
         }
         src.connect(g);
         tail.connect(strip(tr.id).gain);
-        src.start(when, c.src_in + off, dur);
+        src.start(when, base + off, dur);
         sources.push(src);
       }
       return true;
@@ -327,5 +356,5 @@
       get running() { return running; }, get context() { return ctx; } };
   }
 
-  window.HSMix = { create, MIX, envAt, srcAt, tlAt, speedAt, keyTimes, lenOf };
+  window.HSMix = { create, MIX, envAt, srcAt, srcTime, tlAt, speedAt, keyTimes, lenOf };
 })();
