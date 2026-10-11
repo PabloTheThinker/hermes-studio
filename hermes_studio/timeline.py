@@ -49,20 +49,62 @@ ATTRIBUTION_KEYS = frozenset({"actor", "author", "created_by", "modified_by", "u
 TOP_KEYS = {"schema_version", "id", "version", "tick_rate", "fps", "size", "media", "tracks", "markers"}
 TOP_OPTIONAL = {"hash"}
 MEDIA_KEYS = {"path", "dur", "fps"}
-MEDIA_OPTIONAL = {"proxy"}
+MEDIA_OPTIONAL = {"proxy", "name", "audio"}  # name: the bin label; audio: the file has sound
 TRACK_KEYS = {"id", "role", "items"}
+# Audio tracks only: the track's mixer strip. mute/solo are booleans, gain a [num, den] ratio
+# 0..4 like a clip's volume. Defaults (false, false, [1, 1]) are dropped by normalize(), so a
+# track that never touched its mixer hashes exactly as it did before these fields existed.
+TRACK_OPTIONAL = {"mute", "solo", "gain", "pan", "duck"}
+# pan: stereo balance [num, den] in -1..1 (Web Audio's StereoPanner rule, both players).
+# duck: on a music track, dB the music dips wherever a voice clip sounds (0..DUCK_MAX_DB).
+TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1], "pan": [0, 1], "duck": 0}
+DUCK_MAX_DB = 30
+DUCK_RAMP_S = 0.3  # the dip fades in this long before a voice clip and out this long after
 CLIP_KEYS = {"id", "type", "media", "src", "fade_in", "fade_out"}
 TEXT_KEYS = {"id", "type", "dur", "text", "style", "fade_in", "fade_out"}
+# title: a designed title (titles.py) -- drawn to an image instead of burned in as a caption.
 TIMED_OPTIONAL = {"at", "anchor", "split_from"}
 CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
+TEXT_OPTIONAL = TIMED_OPTIONAL | {"title"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
+# A marker's colour: OpenTimelineIO's marker colours bar black and white, so a round trip keeps
+# it. Blue is the default (Resolve's) and is never stored, so an uncoloured marker hashes as before.
+MARKER_OPTIONAL = {"color"}
+MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
+MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold"}
+# A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
+# start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
+# It multiplies props.volume, so the volume stays the clip's overall trim.
+GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None}
+TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
+KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
+SPEEDKEY_KEYS = {"at", "speed"}
+# A speed ramp: a sorted, non-empty list of {at, speed}, `at` in ticks from the clip's start and
+# `speed` a reduced [num, den] pair in SPEED_MIN..SPEED_MAX. Between keys the speed ramps
+# linearly; before the first and after the last key it holds that key's speed. A ramp replaces
+# the clip's constant props.speed for the render (the schema treats a clip as either constant or
+# ramped, never both meaningfully).
+
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None}
+# Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
+GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
+# The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
+# added since is hashed only when set, so a new optional prop never changes an old doc's hash.
+HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
 VOLUME_MAX = Fraction(4)
 SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
+# Transform ranges: position is a fraction of the canvas (so it can move a frame's width),
+# scale is a positive multiplier, rotate is any angle in degrees.
+TRANSFORM_POS_MAX = Fraction(4)
+SCALE_MIN, SCALE_MAX = Fraction(1, 100), Fraction(100)
+ROTATE_MAX = Fraction(3600)
+# A clip may carry at most this many keyframes; enough for a smooth move without letting a
+# bad write balloon the doc.
+MAX_KEYFRAMES = 64
 NOT_HASHED = ("version", "hash")
 
 # Every rule id the validator can report (docs/timeline.md describes each).
@@ -74,6 +116,8 @@ RULES = (
     "non_integer_duration", "fade_too_long", "at_and_anchor", "anchor_not_allowed",
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
+    "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
+    "bad_hold", "bad_title", "duck_music_only",
 )
 
 
@@ -129,6 +173,10 @@ _HINTS = {
     "overlap": "Clips on main and voice tracks may only overlap through an xfade transition.",
     "anchor_not_allowed": "Only text items and clips on music tracks can be anchored.",
     "track_order": "List tracks as text, main, voice, music (text highest number first, audio lowest first).",
+    "track_audio_only": "mute, solo, gain, pan and duck belong to voice and music tracks; text and the main track have none.",
+    "duck_music_only": "Only a music track ducks (under the voice): duck is whole dB, 0..30.",
+    "bad_hold": "A freeze frame can't also ramp or reverse.",
+    "bad_title": "A title's layers must be exactly what titles.make() builds from its own fields.",
 }
 
 
@@ -377,6 +425,10 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             c.ratio(m["fps"], _j(p, "fps"), Fraction(0), lo_open=True)
         if m.get("proxy") is not None:
             c.string(m["proxy"], _j(p, "proxy"))
+        if m.get("name") is not None:
+            c.string(m["name"], _j(p, "name"))
+        if m.get("audio") is not None and not isinstance(m["audio"], bool):
+            c.bad("wrong_type", _j(p, "audio"), "audio must be true or false")
 
     tracks = doc["tracks"]
     if not isinstance(tracks, list):
@@ -386,7 +438,7 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     seen: list[tuple[str, str]] = []
     for ti, tr in enumerate(tracks):
         tp = _j("", "tracks", ti)
-        if not c.keys(tr, tp, TRACK_KEYS):
+        if not c.keys(tr, tp, TRACK_KEYS, TRACK_OPTIONAL):
             continue
         role, tid = tr["role"], tr["id"]
         if not isinstance(role, str) or role not in ROLES:
@@ -403,6 +455,21 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             continue
         claim(tid, tp)
         seen.append((role, tid))
+        for k in sorted(TRACK_OPTIONAL & set(tr)):
+            if role not in ("voice", "music"):
+                c.bad("track_audio_only", _j(tp, k), f"a {role} track has no '{k}'")
+            elif k in ("mute", "solo"):
+                if not isinstance(tr[k], bool):
+                    c.bad("wrong_type", _j(tp, k), f"'{k}' must be true or false")
+            elif k == "pan":
+                c.ratio(tr[k], _j(tp, k), Fraction(-1), Fraction(1))
+            elif k == "duck":
+                if role != "music":
+                    c.bad("duck_music_only", _j(tp, k), "only a music track ducks (under the voice)")
+                elif not isinstance(tr[k], int) or isinstance(tr[k], bool) or not 0 <= tr[k] <= DUCK_MAX_DB:
+                    c.bad("out_of_range", _j(tp, k), f"duck is whole dB, 0..{DUCK_MAX_DB}")
+            else:
+                c.ratio(tr[k], _j(tp, k), Fraction(0), VOLUME_MAX)
         if not isinstance(tr["items"], list):
             c.bad("wrong_type", _j(tp, "items"), "must be a list")
             continue
@@ -439,12 +506,14 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     for mi, mk in enumerate(markers):
         mp = _j("", "markers", mi)
         c.cur = mk.get("id") if isinstance(mk, dict) and isinstance(mk.get("id"), str) else None
-        if not c.keys(mk, mp, MARKER_KEYS):
+        if not c.keys(mk, mp, MARKER_KEYS, MARKER_OPTIONAL):
             continue
         if c.ident(mk["id"], _j(mp, "id")):
             claim(mk["id"], mp)
         c.ticks(mk["at"], _j(mp, "at"))
         c.string(mk["label"], _j(mp, "label"), empty=True)
+        if "color" in mk and mk["color"] not in MARKER_COLORS[1:]:
+            c.bad("out_of_range", _j(mp, "color"), f"color must be one of {', '.join(MARKER_COLORS[1:])} (blue is the default: leave it out)")
     c.cur = None
 
     if not c.problems:
@@ -461,18 +530,175 @@ def _track_key(rt: tuple[str, str]) -> tuple[int, int]:
     return ROLE_ORDER.index(role), (n if ROLES[role][0] == "A" else -n)
 
 
+def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
+    """A keyframe list is a sorted, non-empty list of {at, x, y, scale, rotate}, where `at` is
+    ticks from the clip's start and the transform values share the transform's ranges. `at` may
+    be negative or beyond the clip: the render clamps a keyframe track to the clip's span, so a
+    move that begins before the clip simply starts already in progress."""
+    if not isinstance(kfs, list) or not kfs:
+        c.bad("bad_keyframes", path, "keyframes must be a non-empty list")
+        return
+    if len(kfs) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} keyframes")
+        return
+    prev_at = None
+    for i, kf in enumerate(kfs):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, KEYFRAME_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        for k in ("x", "y"):
+            c.ratio(kf[k], _j(kp, k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+        c.ratio(kf["scale"], _j(kp, "scale"), SCALE_MIN, SCALE_MAX)
+        c.ratio(kf["rotate"], _j(kp, "rotate"), -ROTATE_MAX, ROTATE_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "keyframes must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
+def _check_speed_keys(c: _Checker, keys: Any, path: str) -> None:
+    """A speed ramp: a sorted, non-empty list of {at, speed} (same rule ids as keyframes). `at`
+    is ticks from the clip's start; the render clamps a ramp to the clip's span, so a ramp that
+    begins before the clip simply starts already in progress."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_speed_keys", path, "speed_keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} speed keys")
+        return
+    prev_at = None
+    for i, kf in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, SPEEDKEY_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        c.ratio(kf["speed"], _j(kp, "speed"), SPEED_MIN, SPEED_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "speed keys must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
+def _ramp_parse(keys: Any) -> list[tuple[float, float]] | None:
+    """Stored ramp keys -> sorted [(at seconds, speed)], or None if absent or malformed (the
+    validator reports malformed keys separately)."""
+    if not isinstance(keys, list) or len(keys) < 2:
+        return None
+    pts = []
+    for k in keys:
+        if not (isinstance(k, dict) and _is_int(k.get("at"))):
+            return None
+        sp = k.get("speed")
+        if not (isinstance(sp, (list, tuple)) and len(sp) == 2):
+            return None
+        try:
+            sv = sp[0] / sp[1]
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+        if sv <= 0:
+            return None
+        pts.append((k["at"] / TICK_RATE, sv))
+    pts.sort()
+    return pts
+
+
+def _ramp_I(pts: list[tuple[float, float]], x: float) -> float:
+    """Output seconds for the first ``x`` seconds of played source: the integral of 1/speed.
+    Between keys the speed is linear in source time (a natural log); before the first key and
+    after the last the end speed holds."""
+    import math
+
+    x = max(0.0, x)
+    if x <= pts[0][0]:
+        return x / pts[0][1]
+    total = pts[0][0] / pts[0][1]
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
+        if tb <= ta:
+            continue
+        hi = min(x, tb)
+        if hi > ta:
+            k = (sb - sa) / (tb - ta)
+            total += (hi - ta) / sa if abs(k) < 1e-12 else (math.log(sa + k * (hi - ta)) - math.log(sa)) / k
+        if x <= tb:
+            return total
+    return total + (x - pts[-1][0]) / pts[-1][1]
+
+
+def _ramp_speed(pts: list[tuple[float, float]], x: float) -> float:
+    if x <= pts[0][0]:
+        return pts[0][1]
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
+        if x <= tb:
+            return sa + (sb - sa) * (x - ta) / (tb - ta) if tb > ta else sb
+    return pts[-1][1]
+
+
+def _ramp_dur_ticks(keys: Any, src_ticks: int, start: int = 0) -> int | None:
+    """Timeline length in whole ticks of a source window played through a speed ramp, the window
+    starting ``start`` ticks into the ramp (a split piece reads the ramp from where it was cut).
+    Computed from a SHARED origin -- round(I(start+span)) - round(I(start)) -- so two pieces of
+    a split ramp always meet exactly and add up to the whole. None if the keys are malformed."""
+    pts = _ramp_parse(keys)
+    if pts is None:
+        return None
+    a = max(0, start)
+    return max(0, int(round(_ramp_I(pts, (a + src_ticks) / TICK_RATE) * TICK_RATE))
+               - int(round(_ramp_I(pts, a / TICK_RATE) * TICK_RATE)))
+
+
+def ramp_curve(item: dict) -> list[tuple[float, float]] | None:
+    """The clip's ramp as [(at seconds, speed)] on its OWN window [0, span] in played order -- the
+    stored curve read from ``ramp_at`` and clipped, with a key at each end. The render, the view
+    and the time map all use this, so a split piece plays exactly its part of the original."""
+    props = item.get("props") or {}
+    pts = _ramp_parse(props.get("speed_keys"))
+    if pts is None:
+        return None
+    a = (props.get("ramp_at") or 0) / TICK_RATE
+    span = (item["src"][1] - item["src"][0]) / TICK_RATE
+    inner = [(t - a, v) for t, v in pts if a + 1e-9 < t < a + span - 1e-9]
+    return [(0.0, _ramp_speed(pts, a))] + inner + [(span, _ramp_speed(pts, a + span))]
+
+
+def _check_gain_keys(c: _Checker, keys: Any, path: str) -> None:
+    """A volume envelope: a sorted, non-empty list of {at, gain} (same rule ids as keyframes)."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_keyframes", path, "gain_keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} gain keys")
+        return
+    prev_at = None
+    for i, k in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(k, kp, GAIN_KEY_KEYS):
+            continue
+        ok_at = c.ticks(k["at"], _j(kp, "at"), signed=True)
+        c.ratio(k["gain"], _j(kp, "gain"), Fraction(0), VOLUME_MAX)
+        if ok_at and _is_int(k["at"]):
+            if prev_at is not None and k["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "gain keys must be in strictly increasing time order")
+            prev_at = k["at"]
+
+
 def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict) -> None:
     if typ == "transition":
         if not c.keys(it, ip, TRANSITION_KEYS):
             return
-        if it["kind"] != "xfade":
-            c.bad("bad_transition", _j(ip, "kind"), "the only transition kind is 'xfade'")
+        from . import transitions as _XT
+        if not isinstance(it["kind"], str) or not it["kind"]:
+            c.bad("bad_transition", _j(ip, "kind"), "kind must be a transition name")
+        elif it["kind"] == "xfade":  # a project written before kinds: it was always a cross-dissolve
+            it["kind"] = "fade"
+        elif it["kind"] not in _XT.kinds():
+            c.bad("bad_transition", _j(ip, "kind"), f"unknown transition kind {it['kind']!r}")
         c.ticks(it["dur"], _j(ip, "dur"), positive=True)
         b = it["between"]
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b) and b[0] != b[1]):
             c.bad("bad_transition", _j(ip, "between"), "between must be two different clip ids")
         return
-    if not c.keys(it, ip, CLIP_KEYS if typ == "clip" else TEXT_KEYS, CLIP_OPTIONAL if typ == "clip" else TIMED_OPTIONAL):
+    if not c.keys(it, ip, CLIP_KEYS if typ == "clip" else TEXT_KEYS, CLIP_OPTIONAL if typ == "clip" else TEXT_OPTIONAL):
         return
     if ("at" in it) == ("anchor" in it):
         c.bad("at_and_anchor", ip, "give exactly one of 'at' or 'anchor'")
@@ -491,6 +717,12 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         c.string(it["style"], _j(ip, "style"))
         if c.ticks(it["dur"], _j(ip, "dur"), positive=True):
             dur = it["dur"]
+        if "title" in it:
+            from hermes_studio import titles as _TT
+
+            why = _TT.problem(it["title"])
+            if why:
+                c.bad("bad_title", _j(ip, "title"), why)
     else:
         speed: Fraction | None = Fraction(1)
         if "props" in it and c.keys(it["props"], _j(ip, "props"), set(), PROP_KEYS):
@@ -505,6 +737,67 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.bad("out_of_range", _j(ip, "props", "crop"), "crop must be a non-empty box inside the frame")
             if pr.get("look") is not None:
                 c.string(pr["look"], _j(ip, "props", "look"))
+            if pr.get("grade") is not None and c.keys(pr["grade"], _j(ip, "props", "grade"), set(), GRADE_KEYS):
+                from hermes_studio import grade as _G
+
+                gr = pr["grade"]
+                for k in ("lift", "gamma", "gain"):
+                    if k not in gr:
+                        continue
+                    if not (isinstance(gr[k], list) and len(gr[k]) == 3):
+                        c.bad("wrong_type", _j(ip, "props", "grade", k), f"{k} must be [r, g, b]")
+                        continue
+                    lo, hi = _G.RANGES[k]
+                    for n, v in enumerate(gr[k]):
+                        c.ratio(v, _j(ip, "props", "grade", k, n), lo, hi, lo_open=(k == "gamma" and lo == 0))
+                if "sat" in gr:
+                    c.ratio(gr["sat"], _j(ip, "props", "grade", "sat"), *_G.SAT)
+                for k in ("temp", "tint"):
+                    if k in gr:
+                        c.ratio(gr[k], _j(ip, "props", "grade", k), *_G.WB)
+                if "curves" in gr and c.keys(gr["curves"], _j(ip, "props", "grade", "curves"), set(), set(_G.CURVE_KEYS)):
+                    for ck, pts in gr["curves"].items():
+                        cp = _j(ip, "props", "grade", "curves", ck)
+                        if not (isinstance(pts, list) and 2 <= len(pts) <= _G.CURVE_MAX):
+                            c.bad("wrong_type", cp, f"a curve is 2 to {_G.CURVE_MAX} [x, y] points")
+                            continue
+                        xs = []
+                        for n, pt in enumerate(pts):
+                            if not (isinstance(pt, list) and len(pt) == 2):
+                                c.bad("wrong_type", _j(cp, n), "a curve point is [x, y]")
+                                xs = None
+                                break
+                            x = c.ratio(pt[0], _j(cp, n, 0), Fraction(0), Fraction(1))
+                            c.ratio(pt[1], _j(cp, n, 1), Fraction(0), Fraction(1))
+                            xs.append(x)
+                        if xs and None not in xs and (xs[0] != 0 or xs[-1] != 1 or any(b <= a for a, b in zip(xs, xs[1:], strict=False))):
+                            c.bad("out_of_range", cp, "curve points must rise in x from 0 to 1")
+            if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
+                tf = pr["transform"]
+                for k in ("x", "y"):
+                    c.ratio(tf[k], _j(ip, "props", "transform", k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+                c.ratio(tf["scale"], _j(ip, "props", "transform", "scale"), SCALE_MIN, SCALE_MAX)
+                c.ratio(tf["rotate"], _j(ip, "props", "transform", "rotate"), -ROTATE_MAX, ROTATE_MAX)
+            if pr.get("keyframes") is not None:
+                _check_keyframes(c, pr["keyframes"], _j(ip, "props", "keyframes"))
+            if pr.get("gain_keys") is not None:
+                _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
+            if pr.get("speed_keys") is not None:
+                _check_speed_keys(c, pr["speed_keys"], _j(ip, "props", "speed_keys"))
+            if pr.get("hold") is not None:
+                # A freeze frame: one source frame held for `hold` ticks on the timeline.
+                if not (_is_int(pr["hold"]) and 0 < pr["hold"] <= MAX_TICKS):
+                    c.bad("wrong_type", _j(ip, "props", "hold"), "hold must be whole ticks > 0")
+                elif pr.get("speed_keys") is not None or pr.get("reverse") is not None:
+                    c.bad("bad_hold", _j(ip, "props", "hold"), "a freeze frame can't also ramp or reverse")
+            if pr.get("ramp_at") is not None:
+                if not (_is_int(pr["ramp_at"]) and pr["ramp_at"] >= 0):
+                    c.bad("wrong_type", _j(ip, "props", "ramp_at"), "ramp_at must be whole ticks >= 0")
+                elif pr.get("speed_keys") is None:
+                    c.bad("bad_speed_keys", _j(ip, "props", "ramp_at"), "ramp_at needs a speed ramp")
+            # Reverse is stored as True or not at all (None), so a forward clip hashes as before.
+            if pr.get("reverse") is not None and pr["reverse"] is not True:
+                c.bad("wrong_type", _j(ip, "props", "reverse"), "reverse must be true or null")
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
@@ -516,6 +809,21 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 c.bad("empty_range", _j(ip, "src"), "src in must be before src out")
             elif _is_int(mdur) and src[1] > mdur:
                 c.bad("src_out_of_media", _j(ip, "src"), "src out is past the end of the media")
+            elif _is_int((it.get("props") or {}).get("hold")) and it["props"]["hold"] > 0:
+                dur = it["props"]["hold"]  # a freeze frame is as long as its hold
+            elif (it.get("props") or {}).get("speed_keys") is not None:
+                # A speed ramp: the timeline length is the integral of 1/speed over the source
+                # window (render_timeline computes the same integral). Rounded to a whole
+                # tick; a ramp's length is inherently approximate at frame boundaries.
+                rd = _ramp_dur_ticks(it["props"]["speed_keys"], src[1] - src[0], (it.get("props") or {}).get("ramp_at") or 0)
+                if rd is None:
+                    pass  # malformed keys already reported by _check_speed_keys
+                elif rd <= 0:
+                    c.bad("bad_speed_keys", _j(ip, "props", "speed_keys"), "the speed ramp gives the clip no length")
+                elif rd > MAX_TICKS:
+                    c.bad("out_of_range", _j(ip, "src"), f"the speed ramp makes the clip longer than {MAX_TICKS} ticks")
+                else:
+                    dur = rd
             elif speed is not None:
                 d = Fraction(src[1] - src[0]) / speed
                 if d.denominator != 1:
@@ -531,10 +839,66 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         c.bad("fade_too_long", ip, "fade_in + fade_out must not exceed the item's duration")
 
 
+def played_offset(item: dict, into: int) -> int:
+    """Source ticks in PLAYED order (from the start of what is seen) for a point ``into`` ticks
+    after the clip starts on the timeline: the inverse of the length rule. Constant speed
+    multiplies; a ramp inverts the integral of 1/speed piece by piece (between keys the speed
+    is linear, so the inverse is an exponential). Clamped to the window."""
+    import math
+
+    span = item["src"][1] - item["src"][0]
+    into = max(0, into)
+    if (item.get("props") or {}).get("hold"):
+        return 0  # a freeze frame shows its one source frame the whole time
+    pts = ramp_curve(item)
+    if pts:
+        u = into / TICK_RATE
+        t = None
+        acc = 0.0
+        for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
+            d = tb - ta
+            if d <= 0:
+                continue
+            k = (sb - sa) / d
+            seg = d / sa if abs(k) < 1e-12 else (math.log(sb) - math.log(sa)) / k
+            if u < acc + seg:
+                w = u - acc
+                t = ta + (w * sa if abs(k) < 1e-12 else sa * (math.exp(k * w) - 1.0) / k)
+                break
+            acc += seg
+        if t is None:
+            t = pts[-1][0] + (u - acc) * pts[-1][1]
+        off = int(round(t * TICK_RATE))
+    else:
+        sp = (item.get("props") or {}).get("speed", [1, 1])
+        off = int(Fraction(into) * Fraction(sp[0], sp[1]))
+    return max(0, min(span - 1, off))
+
+
+def source_offset(item: dict, into: int) -> int:
+    """Source ticks from src in for a point ``into`` ticks into the clip on the timeline: the
+    played offset, read from the out point down when the clip is reversed. The preview, the
+    frame cache and the page all ask this, so a paused frame is the frame the render shows."""
+    off = played_offset(item, into)
+    if (item.get("props") or {}).get("reverse") is True:
+        off = item["src"][1] - item["src"][0] - 1 - off
+    return off
+
+
 def item_duration(item: dict) -> int:
     """Timeline duration in ticks of a valid clip, text or transition item."""
     if item["type"] in ("text", "transition"):
         return item["dur"]
+    hold = (item.get("props") or {}).get("hold")
+    if isinstance(hold, int) and not isinstance(hold, bool) and hold > 0:
+        return hold  # a freeze frame: its length is the hold, whatever its one-frame source
+    # A speed ramp replaces the constant speed: the length is the integral of 1/speed. This is
+    # the ONE length rule -- overlap checks, ripple, anchors, view and render all read it. (It
+    # used to ignore ramps, so a slowing ramp could run a clip over the next one unrefused.)
+    props = item.get("props") or {}
+    rd = _ramp_dur_ticks(props.get("speed_keys"), item["src"][1] - item["src"][0], props.get("ramp_at") or 0)
+    if rd is not None and rd > 0:
+        return rd
     sp = item.get("props", {}).get("speed", [1, 1])
     return int(Fraction(item["src"][1] - item["src"][0]) * Fraction(sp[1], sp[0]))
 
@@ -650,6 +1014,9 @@ def normalize(doc: dict) -> dict:
     d = copy.deepcopy(doc)
     when = resolve(d)
     for tr in d["tracks"]:
+        for k, v in TRACK_DEFAULTS.items():
+            if k in tr and tr[k] == v:
+                del tr[k]
         for it in tr["items"]:
             if it["type"] == "clip":
                 it["props"] = {**DEFAULT_PROPS, **it.get("props", {})}
@@ -660,6 +1027,14 @@ def normalize(doc: dict) -> dict:
 
 def _canonical_bytes(doc: dict) -> bytes:
     body = {k: v for k, v in normalize(doc).items() if k not in NOT_HASHED}
+    # Props added after hs.timeline/1 was frozen only count toward the hash when they are set.
+    # Otherwise adding an optional prop (transform, keyframes, ...) re-hashes every saved doc and
+    # every op log written before it stops replaying -- which is exactly what happened when
+    # transform landed.
+    for tr in body["tracks"]:
+        for it in tr["items"]:
+            if it["type"] == "clip":
+                it["props"] = {k: v for k, v in it["props"].items() if k in HASHED_V1_PROPS or v is not None}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
@@ -691,8 +1066,12 @@ def stamp_hash(doc: dict) -> tuple[dict, str]:
     return d, h
 
 
-def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1080, 1920)) -> dict:
-    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music."""
+def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1920, 1080)) -> dict:
+    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music.
+
+    The default canvas is 1920x1080 (Sir, 2026-10-10): the desk is worked on a desktop, so a
+    new cut should open widescreen and let the person choose Phone or Square when they mean it.
+    """
     return {
         "schema_version": SCHEMA_VERSION, "id": project_id, "version": 0, "tick_rate": TICK_RATE,
         "fps": list(fps), "size": list(size), "media": {},
@@ -749,7 +1128,10 @@ def to_otio(doc: dict):
                 lanes.append([it])
         for ln, lane in enumerate(lanes or [[]]):
             ot = otio.schema.Track(name=track["id"] if ln == 0 else f"{track['id']}.{ln}", kind=kind)
-            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln}
+            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln,
+                                  **{k: track[k] for k in sorted(TRACK_OPTIONAL) if k in track}}
+            if ln == 0 and track.get("mute"):
+                ot.enabled = False  # what an OTIO reader understands as a muted track
             pos = 0
             for it in lane:
                 s, e = when[it["id"]]
@@ -781,7 +1163,8 @@ def to_otio(doc: dict):
                 pos = e - trim
             tl.tracks.append(ot)
     for mk in doc["markers"]:
-        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0))
+        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0),
+                               color=mk.get("color", MARKER_DEFAULT_COLOR).upper())
         m.metadata[_META] = {"id": mk["id"]}
         tl.tracks.markers.append(m)
     return tl
@@ -819,7 +1202,8 @@ def from_otio(tl) -> dict:
     for ot in tl.tracks:
         tm = _plain(ot.metadata[_META])
         if tm["lane"] == 0:
-            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": []})
+            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": [],
+                                  **{k: tm[k] for k in sorted(TRACK_OPTIONAL) if k in tm}})
         out = doc["tracks"][-1]["items"]
         pos = 0
         for child in ot:
@@ -859,6 +1243,9 @@ def from_otio(tl) -> dict:
     for mk in tl.tracks.markers:
         doc["markers"].append({"id": _plain(mk.metadata[_META])["id"], "at": _ticks(mk.marked_range.start_time),
                                "label": mk.name})
+        color = str(mk.color or "").lower()
+        if color in MARKER_COLORS[1:]:
+            doc["markers"][-1]["color"] = color
     return normalize(validate_or_raise(doc))
 
 
@@ -868,3 +1255,49 @@ def write_otio(doc: dict, path: str) -> str:
 
     otio.adapters.write_to_file(to_otio(doc), str(path))
     return str(path)
+
+
+def duck_envelope(doc: dict, track: dict) -> list[tuple[float, float]] | None:
+    """The music track's ducking as gain points [(timeline seconds, gain)], linear between them
+    and 1 outside, or None when it doesn't duck. The one rule both players use (the render as a
+    volume expression, the page as gain automation), like Premiere's auto-duck keyframes:
+
+    the music dips by ``duck`` dB over every stretch where a clip on an audible voice track
+    sounds, reaching the dip DUCK_RAMP_S before the voice starts and rising over DUCK_RAMP_S
+    after it ends. Stretches closer than two ramps merge, so the music never bobs up between
+    two lines. A file known to have no sound (media ``audio`` false) doesn't duck anything.
+    """
+    db = track.get("duck") or 0
+    if track.get("role") != "music" or not db:
+        return None
+    rate = doc.get("tick_rate") or TICK_RATE
+    tracks = [t for t in doc["tracks"] if t.get("role") in ("voice", "music")]
+    solo = any(t.get("solo") for t in tracks)
+    media = doc.get("media") or {}
+    spans = []
+    for t in tracks:
+        if t.get("role") != "voice" or t.get("mute") or (solo and not t.get("solo")):
+            continue
+        if _rational(t.get("gain", [1, 1])) == 0:
+            continue
+        for it in t["items"]:
+            if it.get("type") != "clip" or "at" not in it:
+                continue
+            if (media.get(it.get("media") or "") or {}).get("audio") is False:
+                continue
+            a = it["at"] / rate
+            spans.append([a, a + item_duration(it) / rate])
+    if not spans:
+        return None
+    spans.sort()
+    merged = [spans[0]]
+    for a, b in spans[1:]:
+        if a - DUCK_RAMP_S <= merged[-1][1] + DUCK_RAMP_S:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    g = round(10 ** (-db / 20), 6)
+    pts: list[tuple[float, float]] = []
+    for a, b in merged:
+        pts += [(round(a - DUCK_RAMP_S, 6), 1.0), (round(a, 6), g), (round(b, 6), g), (round(b + DUCK_RAMP_S, 6), 1.0)]
+    return pts
