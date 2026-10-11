@@ -903,7 +903,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             elif op == "title_edit":
                 project = editor.edit_title(pid, str(body.get("id") or ""), template=body.get("template"), text=body.get("text"),
                                             sub=body.get("sub"), accent=body.get("accent"), anim_in=body.get("in"),
-                                            anim_out=body.get("out"))
+                                            anim_out=body.get("out"), x=body.get("x"), y=body.get("y"),
+                                            scale=body.get("scale"), font=body.get("font"), box=body.get("box"))
             elif op == "place":
                 at = body.get("at")
                 project = editor.place(pid, str(body.get("media") or ""), _num(body, "src_in", 0.0),

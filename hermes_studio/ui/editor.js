@@ -32,6 +32,11 @@
       .tl-titles img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;will-change:transform,opacity}
       .tl-tsec{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
       .tl-tsec input[type=text]{flex:1;min-width:0}
+      .tl-tsec input[type=range]{flex:1;min-width:0}
+      .tl-tval{font:500 12px var(--mono);color:var(--ink);margin:0 6px;white-space:nowrap}
+      .tl-tchk{display:flex;gap:6px;align-items:center;color:var(--mute);font-size:12px}
+      .tl-thint{color:var(--dim);font-size:11px;margin:2px 0 8px}
+      .tl-frame.titlemove{cursor:move}
       .tl-stage.withbin{grid-template-columns:210px minmax(0,1fr) 280px}
       .tl-bin{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
       .tl-binhd{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
@@ -837,6 +842,8 @@
   const TITLE_SLIDE = 0.06;
   const TITLE_TEMPLATES = [["lower-third", "Lower third"], ["title", "Title"], ["end-card", "End card"]];
   const TITLE_ANIMS = [["fade", "Fade"], ["slide-up", "Slide up"], ["slide-left", "Slide left"], ["none", "Cut"]];
+  const TITLE_FONTS = [["archivo", "Archivo"], ["opensans", "Open Sans"], ["playfair", "Playfair Italic"], ["mono", "JetBrains Mono"], ["caveat", "Caveat (hand)"]];
+  let titleDrag = null; // {id, x0, y0, bx, by, nx, ny, moved} while a title is dragged in the viewer
   function titleItems() {
     const out = [];
     for (const tr of (doc && doc.tracks) || []) if (tr.role === "text") for (const i of tr.items) if (i.title) out.push(i);
@@ -871,8 +878,12 @@
       if (img.dataset.k !== i.title.key) { img.dataset.k = i.title.key; img.src = url; }
       img.hidden = false;
       img.style.opacity = String(st.alpha);
-      img.style.transform = `translate(${(st.dx * 100).toFixed(4)}%, ${(st.dy * 100).toFixed(4)}%)`;
+      let dx = st.dx, dy = st.dy;
+      if (titleDrag && titleDrag.id === i.id) { dx += titleDrag.nx - titleDrag.bx; dy += titleDrag.ny - titleDrag.by; }
+      img.style.transform = `translate(${(dx * 100).toFixed(4)}%, ${(dy * 100).toFixed(4)}%)`;
     }
+    const fr = box.closest(".tl-frame");
+    if (fr) fr.classList.toggle("titlemove", !!dragTarget());
     box.querySelectorAll("img[data-title]").forEach((im) => { if (!titleItems().some((i) => i.id === im.dataset.title)) im.remove(); });
     void live;
   }
@@ -886,13 +897,64 @@
     const f = root.querySelector("[data-ttext]");
     if (f) { f.focus(); f.select(); }
   }
+  // The title a press on the viewer moves: the selected one if it is on screen, else the only
+  // one on screen (Final Cut's on-screen controls work on what you see).
+  function dragTarget() {
+    if (srcMode || picking || !doc) return null;
+    const vis = titleItems().filter((i) => titleState(i, play));
+    const s0 = vis.find((i) => i.id === sel);
+    return s0 || (vis.length === 1 ? vis[0] : null);
+  }
+  function wireTitleDrag() {
+    const fr = root && root.querySelector(".tl-frame");
+    const box = root && root.querySelector(".tl-titles");
+    if (!fr || !box) return;
+    fr.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || playing) return;
+      const it = dragTarget();
+      if (!it) return;
+      e.preventDefault();
+      fr.setPointerCapture(e.pointerId);
+      const T = it.title;
+      titleDrag = { id: it.id, x0: e.clientX, y0: e.clientY, bx: T.x || 0, by: T.y || 0, nx: T.x || 0, ny: T.y || 0, moved: false };
+      if (sel !== it.id) { sel = it.id; }
+    });
+    fr.addEventListener("pointermove", (e) => {
+      if (!titleDrag) return;
+      const r = box.getBoundingClientRect();
+      const clampP = (v) => Math.max(-0.5, Math.min(0.5, v));
+      let nx = clampP(titleDrag.bx + (e.clientX - titleDrag.x0) / r.width);
+      let ny = clampP(titleDrag.by + (e.clientY - titleDrag.y0) / r.height);
+      if (!e.altKey) { if (Math.abs(nx) < 0.01) nx = 0; if (Math.abs(ny) < 0.01) ny = 0; } // snap home
+      titleDrag.nx = Math.round(nx * 10000) / 10000;
+      titleDrag.ny = Math.round(ny * 10000) / 10000;
+      if (Math.abs(e.clientX - titleDrag.x0) + Math.abs(e.clientY - titleDrag.y0) > 2) titleDrag.moved = true;
+      showTitles();
+    });
+    const end = async () => {
+      if (!titleDrag) return;
+      const d = titleDrag;
+      if (!d.moved || (d.nx === d.bx && d.ny === d.by)) { titleDrag = null; paint(); return; }
+      await commit({ op: "title_edit", id: d.id, x: d.nx, y: d.ny });
+      titleDrag = null;
+      showTitles();
+    };
+    fr.addEventListener("pointerup", end);
+    fr.addEventListener("pointercancel", () => { titleDrag = null; showTitles(); });
+  }
   function titleSection(it) {
     const T = it.title;
+    const pct = (v) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round((v || 0) * 1000) / 10) + "%";
     const opt = (list, v) => list.map(([k, l]) => `<option value="${k}" ${k === v ? "selected" : ""}>${esc(l)}</option>`).join("");
     return `<div class="tl-tsec">
       <div class="tl-row"><span>Template</span><select data-ttpl>${opt(TITLE_TEMPLATES, T.template)}</select></div>
       <div class="tl-row"><span>Title</span><input data-ttext type="text" maxlength="200" value="${esc(T.text)}"></div>
       <div class="tl-row"><span>Second line</span><input data-tsub type="text" maxlength="200" value="${esc(T.sub || "")}" placeholder="optional"></div>
+      <div class="tl-row"><span>Font</span><select data-tfont>${opt(TITLE_FONTS, T.font || "archivo")}</select></div>
+      <div class="tl-row"><span>Size</span><input data-tscale type="range" min="50" max="200" step="5" value="${Math.round((T.scale || 1) * 100)}"><b class="tl-tval">${Math.round((T.scale || 1) * 100)}%</b></div>
+      <div class="tl-row"><span>Panel</span><label class="tl-tchk"><input data-tbox type="checkbox" ${T.box ? "checked" : ""}> dark panel behind the words</label></div>
+      <div class="tl-row"><span>Position</span><b class="tl-tval">x ${pct(T.x)} · y ${pct(T.y)}</b>${T.x || T.y ? `<button type="button" data-treset>Reset</button>` : ""}</div>
+      <p class="tl-thint">Drag the title in the viewer to move it (it snaps home; Alt to stop the snap).</p>
       <div class="tl-row"><span>Accent</span><input data-tacc type="color" value="${esc((T.accent || "#ffc83d").slice(0, 7))}"></div>
       <div class="tl-row"><span>In</span><select data-tin>${opt(TITLE_ANIMS, T.in)}</select></div>
       <div class="tl-row"><span>Out</span><select data-tout>${opt(TITLE_ANIMS, T.out)}</select></div>
@@ -907,6 +969,11 @@
     on("[data-tin]", "change", (el) => send({ in: el.value }));
     on("[data-tout]", "change", (el) => send({ out: el.value }));
     on("[data-tacc]", "change", (el) => send({ accent: el.value }));
+    on("[data-tfont]", "change", (el) => send({ font: el.value }));
+    on("[data-tbox]", "change", (el) => send({ box: el.checked }));
+    on("[data-tscale]", "input", (el) => { const b = el.parentElement.querySelector(".tl-tval"); if (b) b.textContent = el.value + "%"; });
+    on("[data-tscale]", "change", (el) => send({ scale: Number(el.value) / 100 }));
+    on("[data-treset]", "click", () => send({ x: 0, y: 0 }));
     // Words commit when the box is left or Enter is pressed (not per keystroke: each is an undo step).
     for (const [selr, key] of [["[data-ttext]", "text"], ["[data-tsub]", "sub"]]) {
       const el = root.querySelector(selr);
@@ -1580,7 +1647,7 @@
   // The inspector controls a person drives from the keyboard. paint() rebuilds the DOM, so the
   // focused one is noted before and focused again after: otherwise a commit made by the first
   // arrow press on a menu or slider dropped focus and the next presses went nowhere.
-  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc"];
+  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
   function paint() {
     if (!root || !doc) return;
     const ae = document.activeElement;
@@ -1713,6 +1780,7 @@
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
     wireBin();
     wireTitle();
+    wireTitleDrag();
     showTitles();
     // Volume is a live slider: update the readout as it drags, and commit on release.
     const vol = root.querySelector("[data-vol]");

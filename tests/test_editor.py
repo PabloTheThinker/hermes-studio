@@ -2824,3 +2824,63 @@ def test_the_paused_frame_is_the_exact_frame_not_the_nearest_fifth(home):
         got = np.asarray(Image.open(io.BytesIO(jpg)).convert("L")).astype(float)[20:44, 20:44].mean()
         want = (7 * n) % 210 * 255 / 219  # TV-range Y -> the still's full-range grey
         assert abs(got - want) <= 3, (n, got, want)
+
+
+def test_a_moved_scaled_restyled_title_still_renders_as_the_preview(home):
+    """Position, size, font and box all live in the one PNG, so the export still equals the
+    preview; moving it right by 10% moves its ink right by 192 px on 1920."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+    from hermes_studio import titles as TT
+
+    pid = _title_cut(home, "ttD")
+    E.add_title(pid, "lower-third", 1.0, text="Pablo Navarro", sub="Systems Thinker", dur=4.0)
+    doc = E._log(E._dir(pid)).doc
+    it = next(i for t in doc["tracks"] for i in t["items"] if isinstance(i.get("title"), dict))
+    p0 = TT.png(it["title"], E._dir(pid) / "cache")
+    E.edit_title(pid, it["id"], x=0.1, y=-0.2, scale=1.4, font="playfair", box=False)
+    it2 = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == it["id"])
+    assert {k: it2["title"].get(k) for k in ("x", "y", "scale", "font", "box")} == {"x": 0.1, "y": -0.2, "scale": 1.4, "font": "playfair", "box": False}
+    p1 = TT.png(it2["title"], E._dir(pid) / "cache")
+    out = R.render_project(pid)["path"]
+    d = np.abs(_frame_rgb(out, 3.0) - _composite(p1))
+    assert np.median(d) < 2 and np.percentile(d, 99) < 12
+    # Moving only x: the ink's left edge moves by exactly 0.1 * 1920.
+    E.edit_title(pid, it["id"], y=0, scale=1, font="archivo", box=True, x=0.1)
+    it3 = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == it["id"])
+    from PIL import Image
+
+    def left(pth):
+        a = np.asarray(Image.open(pth))[..., 3]
+        return int(np.nonzero(a.max(axis=0))[0][0])
+
+    p3 = TT.png(it3["title"], E._dir(pid) / "cache")
+    # the band starts at x=0 and is cut by the canvas edge; compare the accent bar instead
+    def bar(pth):
+        a = np.asarray(Image.open(pth).convert("RGBA")).astype(int)
+        amber = (a[..., 0] > 200) & (a[..., 1] > 150) & (a[..., 2] < 120) & (a[..., 3] > 200)
+        return int(np.nonzero(amber.any(axis=0))[0][0])
+
+    assert bar(p3) - bar(p0) == 192
+    assert left(p0) == 0
+    # Clamps and refusals
+    E.edit_title(pid, it["id"], x=9, scale=50)
+    t4 = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == it["id"])["title"]
+    assert t4["x"] == 0.5 and t4["scale"] == 2.0
+    with pytest.raises(E.EditorError):
+        E.edit_title(pid, it["id"], font="comic-sans")
+    v = E.view(E._log(E._dir(pid)).doc)
+    row = next(i for t in v["tracks"] for i in t["items"] if i.get("title"))
+    assert row["title"]["x"] == 0.5 and row["title"]["font"] == "archivo" and row["title"]["box"] is True
+
+
+def test_title_edits_name_what_changed_in_the_history(home):
+    pid = _title_cut(home, "ttE")
+    E.add_title(pid, "lower-third", 1.0, text="Name", dur=2.0)
+    iid = next(i["id"] for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i.get("title"))
+    E.edit_title(pid, iid, x=0.1)
+    E.edit_title(pid, iid, font="mono", scale=1.2)
+    E.edit_title(pid, iid, text="New name")
+    got = [e["summary"] for e in E.history(pid)][-3:]
+    assert got == ["Move title: Name", "Title size + font: Name", "Title words: New name"], got

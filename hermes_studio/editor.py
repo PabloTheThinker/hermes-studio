@@ -253,6 +253,7 @@ def view(doc: dict) -> dict:
                 t = it["title"]
                 row["title"] = {"template": t["template"], "text": t["text"], "sub": t.get("sub", ""), "accent": t.get("accent"),
                                 "in": t.get("in", "fade"), "out": t.get("out", "fade"), "key": _TT.key(t),
+                                **{k: v for k, v in _TT.fields(t).items() if k in ("x", "y", "scale", "font", "box")},
                                 "fade_in": round((it.get("fade_in") or 0) / rate, 3), "fade_out": round((it.get("fade_out") or 0) / rate, 3)}
                 row["label"] = t["text"]
             if it["type"] == "clip" and "src" in it:
@@ -1054,18 +1055,27 @@ def edit_title(pid: str, item_id: str, **changes) -> dict:
     if not isinstance(t, dict):
         raise EditorError("that item isn't a title")
     w, h = (doc.get("size") or [1920, 1080])
-    fields = {"template": t["template"], "text": t["text"], "sub": t.get("sub", ""), "accent": t.get("accent"),
-              "anim_in": t.get("in", "fade"), "anim_out": t.get("out", "fade")}
-    for k in ("template", "text", "sub", "accent", "anim_in", "anim_out"):
+    fields = TT.fields(t)
+    template = changes.get("template") or t["template"]
+    if template != t["template"] and changes.get("box") is None:
+        fields["box"] = None  # a new template brings its own panel default
+    for k in ("text", "sub", "accent", "anim_in", "anim_out", "x", "y", "scale", "font", "box"):
         if changes.get(k) is not None:
             fields[k] = changes[k]
     try:
-        new = TT.make(fields.pop("template"), int(w), int(h), **fields)
+        new = TT.make(template, int(w), int(h), **fields)
     except ValueError as exc:
         raise EditorError(str(exc)) from exc
     if not new["text"]:
         raise EditorError("a title needs some words")
-    return apply(pid, [{"op": "edit_text", "id": item_id, "text": new["text"], "title": new}], f"Title {new['text'][:40]}")
+    # Say what changed, so the history reads like an edit list ("Move title", "Title font").
+    was, now = TT.fields(t), TT.fields(new)
+    changed = [k for k in now if now[k] != was[k]] + (["template"] if new["template"] != t["template"] else [])
+    names = {"x": "Move", "y": "Move", "scale": "Size", "font": "Font", "box": "Panel", "accent": "Colour",
+             "anim_in": "Motion", "anim_out": "Motion", "text": "Words", "sub": "Words", "template": "Template"}
+    what = sorted({names[k] for k in changed}, key=list(names.values()).index) or ["Title"]
+    label = ("Move title" if what == ["Move"] else f"Title {' + '.join(w.lower() for w in what)}") + f": {new['text'][:32]}"
+    return apply(pid, [{"op": "edit_text", "id": item_id, "text": new["text"], "title": new}], label)
 
 
 def title_png(pid: str, item_id: str) -> bytes:
