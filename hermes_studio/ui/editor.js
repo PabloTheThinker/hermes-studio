@@ -62,6 +62,14 @@
       .tl-wheel b{font:500 10px var(--mono);color:var(--ink)}
       .tl-wsat{display:flex;gap:6px;align-items:center;margin-top:6px;font:500 10px var(--mono);color:var(--dim)}
       .tl-curves{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+      .tl-wbal{display:grid;grid-template-columns:auto 1fr 28px;gap:3px 6px;align-items:center;margin:0 0 8px;font:500 10px var(--mono);color:var(--dim)}
+      .tl-wbal input[type=range]{margin:0;-webkit-appearance:none;appearance:none;height:6px;border-radius:3px}
+      .tl-wbal input[data-wb=temp]{background:linear-gradient(90deg,#4f8dff,#d9d9d9 50%,#ffae42)}
+      .tl-wbal input[data-wb=tint]{background:linear-gradient(90deg,#43c75a,#d9d9d9 50%,#d24bd2)}
+      .tl-wbal input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:11px;height:11px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px rgba(0,0,0,.6)}
+      .tl-wbal b{color:var(--ink);text-align:right}
+      .tl-wbal button{grid-column:1/-1;padding:3px 0;font:500 10px var(--mono)}
+      .tl-frame.picking,.tl-frame.picking *{cursor:crosshair!important}
       .tl-curves nav{display:flex;gap:2px;margin-bottom:4px}
       .tl-curves nav button{flex:1;padding:2px 0;font:600 10px var(--mono)}
       .tl-curves nav button.flat{flex:1.6;font-weight:500;color:var(--dim)}
@@ -280,6 +288,10 @@
         <span>${label}</span><input type="range" data-wm="${kind}" min="${lo}" max="${hi}" step="${step}" value="${w.m.toFixed(3)}" aria-label="${label} level"><b data-wv="${kind}">${wfmt(kind, w.m)}</b></div>`;
     };
     return `<div class="tl-colour"><h4>Colour <button type="button" data-act="grade-reset" title="Back to no grade">Reset</button></h4>
+      <div class="tl-wbal">
+        <span>Temp</span><input type="range" data-wb="temp" min="-100" max="100" step="1" value="${Math.round(st.temp)}" aria-label="Temperature" title="Cooler ← → warmer · double-click for 0"><b data-wv="temp">${Math.round(st.temp)}</b>
+        <span>Tint</span><input type="range" data-wb="tint" min="-100" max="100" step="1" value="${Math.round(st.tint)}" aria-label="Tint" title="Greener ← → more magenta · double-click for 0"><b data-wv="tint">${Math.round(st.tint)}</b>
+        <button type="button" data-wbpick title="Then click something in the picture that should be grey or white">Pick grey</button></div>
       <div class="tl-wheels">${one("lift", "Lift")}${one("gamma", "Gamma")}${one("gain", "Gain")}</div>
       <label class="tl-wsat">Sat <input type="range" data-wsat min="0" max="2" step="0.01" value="${st.sat.toFixed(2)}" aria-label="Saturation"><b data-wv="sat">${st.sat.toFixed(2)}</b></label>
       <label class="tl-wsat">Look <select data-glook style="flex:1" aria-label="Look" title="A starting grade: the wheels show it and can take it further">
@@ -400,6 +412,72 @@
     drawCurves();
   }
 
+  // ---- white balance: temp / tint sliders and the eyedropper ----------------------------
+  // Pick grey arms the eyedropper; the next click on the picture samples the clip's own pixels
+  // there (5x5, before any grade: the still is drawn with no filter) and the server solves the
+  // temp/tint that make that spot grey (grade.neutralise). Esc or a second click on the button
+  // disarms it. Paused only: the sample has to be the frame you are looking at.
+  let picking = false;
+  function armPick(on) {
+    picking = on;
+    const fr = root && root.querySelector(".tl-frame");
+    if (fr) fr.classList.toggle("picking", on);
+    const b = root && root.querySelector("[data-wbpick]");
+    if (b) b.classList.toggle("on", on);
+    const st = root && root.querySelector(".tl-status");
+    if (st && on) st.textContent = "Click something in the picture that should be grey or white. Esc cancels.";
+  }
+  function samplePicture(e) {
+    const img = root.querySelector(".tl-pic");
+    if (!img || img.hidden || !img.complete || !img.naturalWidth) return null;
+    // The still is drawn with object-fit: contain, so map the click into the image's own pixels.
+    const r = img.getBoundingClientRect(), nw = img.naturalWidth, nh = img.naturalHeight;
+    const s = Math.min(r.width / nw, r.height / nh), dw = nw * s, dh = nh * s;
+    const ix = (e.clientX - r.left - (r.width - dw) / 2) / s, iy = (e.clientY - r.top - (r.height - dh) / 2) / s;
+    if (ix < 0 || iy < 0 || ix >= nw || iy >= nh) return null; // the letterbox, not picture
+    const c = document.createElement("canvas");
+    c.width = nw; c.height = nh;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0); // no filter: the clip's own pixels, before the grade
+    const x0 = Math.max(0, Math.min(nw - 5, Math.round(ix) - 2)), y0 = Math.max(0, Math.min(nh - 5, Math.round(iy) - 2));
+    const d = ctx.getImageData(x0, y0, 5, 5).data;
+    const sum = [0, 0, 0];
+    for (let i = 0; i < d.length; i += 4) { sum[0] += d[i]; sum[1] += d[i + 1]; sum[2] += d[i + 2]; }
+    return sum.map((v) => Math.round((v / 25) * 10) / 10);
+  }
+  function wireBalance() {
+    if (!root || !wheel) return;
+    for (const k of ["temp", "tint"]) {
+      const sl = root.querySelector(`[data-wb="${k}"]`);
+      if (!sl) continue;
+      sl.addEventListener("input", () => {
+        wheel.live = true; wheel.st[k] = parseFloat(sl.value);
+        const b = root.querySelector(`[data-wv="${k}"]`); if (b) b.textContent = Math.round(wheel.st[k]);
+        liveGrade();
+      });
+      sl.addEventListener("change", () => commitGradeSoon());
+      sl.addEventListener("dblclick", () => { wheel.st[k] = 0; wheel.live = true; liveGrade(); commitGrade(); });
+    }
+    const pick = root.querySelector("[data-wbpick]");
+    if (pick) pick.addEventListener("click", () => {
+      if (picking) { armPick(false); return; }
+      if (playing) { stop(); }
+      viewGraded();
+      armPick(true);
+    });
+    const fr = root.querySelector(".tl-frame");
+    if (fr) fr.addEventListener("pointerdown", async (e) => {
+      if (!picking || e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const rgb = samplePicture(e);
+      armPick(false);
+      if (!rgb) { msg = "That was outside the picture. Pick grey again and click inside it."; paint(); return; }
+      wheel = null;
+      await commit({ op: "balance", id: sel, rgb });
+    });
+    if (picking) armPick(true); // survives a repaint
+  }
+
   // You grade what you see (Resolve's rule: the current clip is the one on the viewer). If the
   // playhead is on another clip when a wheel, slider or look is touched, bring it into the clip
   // being graded first, so the preview and the scopes show the change. Paused only.
@@ -431,7 +509,7 @@
     const sb = root.querySelector('[data-wv="sat"]'); if (sb) sb.textContent = wheel.st.sat.toFixed(2);
   }
   const r4 = (v) => Math.round(v * 1e4) / 1e4;
-  function gradeKeyOf(g) { return JSON.stringify([g.lift.map(r4), g.gamma.map(r4), g.gain.map(r4), r4(g.sat)]); }
+  function gradeKeyOf(g) { return JSON.stringify([g.lift.map(r4), g.gamma.map(r4), g.gain.map(r4), r4(g.sat), r4(g.temp || 0), r4(g.tint || 0)]); }
   let gradeT = 0;
   // Slider and keyboard changes wait a moment, so a run of arrow presses is one undo step.
   function commitGradeSoon() { clearTimeout(gradeT); gradeT = setTimeout(commitGrade, 400); }
@@ -441,7 +519,7 @@
     const g = window.HSWheels.toGrade(wheel.st);
     if (gradeKeyOf(g) === wheel.base) { wheel.live = false; return; } // nothing changed
     wheel.live = false;
-    await commit({ op: "grade", id: wheel.id, lift: g.lift.map(r4), gamma: g.gamma.map(r4), gain: g.gain.map(r4), sat: r4(g.sat) });
+    await commit({ op: "grade", id: wheel.id, lift: g.lift.map(r4), gamma: g.gamma.map(r4), gain: g.gain.map(r4), sat: r4(g.sat), temp: r4(g.temp), tint: r4(g.tint) });
   }
   function wireWheels() {
     if (!root || !wheel) return;
@@ -895,6 +973,7 @@
     if (pic) pic.addEventListener("load", () => updateScope(true));
     wireWheels();
     wireCurves();
+    wireBalance();
     updateScope(true);
     applySplit();
     sizeFrame();
@@ -2015,6 +2094,7 @@
     // Any focused control keeps its own keys: a <select> takes the arrows, a range takes them
     // too, a text box takes letters. (A <select> used to lose its arrows to the timeline.)
     if (e.target.closest("input, textarea, select, [contenteditable]")) return;
+    if (picking && e.key === "Escape") { e.preventDefault(); armPick(false); paint(); return; }
     const k = e.key.toLowerCase();
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
     // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
