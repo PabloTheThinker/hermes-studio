@@ -401,6 +401,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             if not job:
                 return _json(self, 404, {"ok": False, "error": "not found"})
             return _json(self, 200, {"ok": True, "job": asdict(job)})
+        if path == "/api/transitions":
+            # What this ffmpeg can do, grouped the way the pro editors group them, so the page
+            # never offers a kind the render would refuse.
+            from hermes_studio import transitions as _XT
+
+            return _json(self, 200, {"ok": True, "groups": _XT.catalog(), "source": "ffmpeg" if _XT.ffmpeg_kinds() else "builtin"})
         if path == "/api/tools":
             from hermes_studio.tools import catalogue
 

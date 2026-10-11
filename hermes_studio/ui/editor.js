@@ -164,6 +164,22 @@
       .tl-xf{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;align-items:center;gap:3px;height:16px;padding:0 6px;border-radius:99px;background:var(--amber);color:var(--amber-ink);font:700 9px var(--sans);letter-spacing:.04em;text-transform:uppercase;cursor:pointer;border:0;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
       .tl-xf:hover{filter:brightness(1.12)}
       .tl-xf i{font-style:normal;font-size:10px}
+      .tl-xf b{font-weight:700;letter-spacing:.02em}
+      .tl-xf span{font-weight:600;opacity:.75;font-variant-numeric:tabular-nums}
+      .tl-xf.dragging{box-shadow:0 0 0 2px var(--ink)}
+      .tl-xfe{position:absolute;top:-3px;width:7px;height:calc(100% + 6px);cursor:ew-resize}
+      .tl-xfe.a{left:-3px;border-radius:3px 0 0 3px}
+      .tl-xfe.b{right:-3px;border-radius:0 3px 3px 0}
+      .tl-xfe:hover{background:var(--ink)}
+      body.xfdrag,body.xfdrag *{cursor:ew-resize!important}
+      .tl-xfpick{position:fixed;z-index:60;width:230px;max-height:min(60vh,420px);overflow:auto;padding:6px;border-radius:8px;background:#141516;border:1px solid var(--line);box-shadow:0 12px 40px rgba(0,0,0,.6)}
+      .tl-xfg{display:flex;flex-wrap:wrap;gap:3px;padding:3px 0;border-top:1px solid var(--line)}
+      .tl-xfg:first-child{border-top:0}
+      .tl-xfg>b{width:100%;font:600 9px var(--mono);color:var(--dim);text-transform:uppercase;letter-spacing:.08em;padding:2px 2px 1px}
+      .tl-xfg button{padding:3px 7px;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--ink);font:500 11px var(--sans);cursor:pointer}
+      .tl-xfg button:hover{background:rgba(222,171,66,.16)}
+      .tl-xfg button.on{background:var(--amber);color:var(--amber-ink);border-color:var(--amber)}
+      .tl-xfg button[data-xfoff]{width:100%;color:var(--dim)}
       .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4);cursor:pointer}
       .tl-kf:hover{filter:brightness(1.3)}
       .tl-kf.on{background:#fff;box-shadow:0 0 0 2px var(--amber);width:10px;height:10px;margin-left:-5px}
@@ -299,6 +315,128 @@
       <div class="tl-curves"><nav>${[["m", "Master"], ["r", "R"], ["g", "G"], ["b", "B"]].map(([k, l]) => `<button type="button" data-ctab="${k}" class="${curveTab === k ? "on" : ""}" title="${k === "m" ? "Master curve: all three channels" : l + " channel curve"}${st.curves[k] ? " (shaped)" : ""}">${l}${st.curves[k] ? "•" : ""}</button>`).join("")}<button type="button" class="flat" data-cflat title="Make this curve a straight line again">Flat</button></nav>
         <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div></div>`;
   }
+  // ---- transitions: kind picker and drag-to-resize on the badge -----------------------
+  // The badge on the timeline names the transition it is (Cross Fade, Wipe Right, ...). Click
+  // opens a small picker grouped like Resolve/Final Cut; dragging its ends changes the length
+  // (same live preview as a clip trim); plain Alt+click removes it. The kind list comes from
+  // /api/transitions, read from this ffmpeg, so the page never offers one the render can't do.
+  let XCAT = null;
+  async function loadXcat() {
+    if (XCAT) return XCAT;
+    try {
+      const r = await fetch("/api/transitions").then((x) => x.json());
+      XCAT = (r.groups || []).map((g) => ({ group: g.group, kinds: g.kinds }));
+    } catch (err) {
+      XCAT = [{ group: "Dissolve", kinds: [{ id: "fade", label: "Cross Fade" }] }];
+    }
+    return XCAT;
+  }
+  const xfLabel = (k) => {
+    for (const g of XCAT || []) for (const it of g.kinds) if (it.id === k) return it.label;
+    return k === "fade" ? "Cross Fade" : (k || "").replace(/^./, (c) => c.toUpperCase());
+  };
+  let xfDrag = null, xfPick = null;
+
+  function xfClosePick() {
+    if (!xfPick) return;
+    const el = root && root.querySelector(`[data-xfpick="${xfPick}"]`);
+    if (el) el.remove();
+    xfPick = null;
+    document.removeEventListener("pointerdown", xfOutside, true);
+  }
+  function xfOutside(e) {
+    if (xfPick && !(e.target.closest && e.target.closest("[data-xfpick]"))) xfClosePick();
+  }
+  async function xfOpenPick(id, between, kind) {
+    xfClosePick();
+    const badge = root.querySelector(`[data-xf="${id}"]`);
+    if (!badge) return;
+    const cat = await loadXcat();
+    xfPick = id;
+    const el = document.createElement("div");
+    el.className = "tl-xfpick";
+    el.dataset.xfpick = id;
+    el.innerHTML = `${cat.map((g) => `<div class="tl-xfg"><b>${esc(g.group)}</b>${g.kinds.map((k) => `<button type="button" data-xfkind="${esc(k.id)}" class="${k.id === kind ? "on" : ""}">${esc(k.label)}</button>`).join("")}</div>`).join("")}
+      <div class="tl-xfg"><button type="button" data-xfoff title="Back to a hard cut">Remove transition</button></div>`;
+    const r = badge.getBoundingClientRect();
+    el.style.left = Math.max(8, Math.min(window.innerWidth - 240, r.left + r.width / 2 - 120)) + "px";
+    el.style.top = r.bottom + 6 + "px";
+    document.body.appendChild(el);
+    el.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-xfkind], [data-xfoff]");
+      if (!b) return;
+      e.stopPropagation();
+      const pair = String(badge.dataset.between || "").split(",");
+      xfClosePick();
+      if (pair.length !== 2) return;
+      if (b.dataset.xfkind) {
+        await commit({ op: "transition", a: pair[0], b: pair[1], seconds: parseFloat(badge.dataset.dur), kind: b.dataset.xfkind });
+      } else {
+        await commit({ op: "transition", a: pair[0], b: pair[1], seconds: 0 });
+      }
+    });
+    document.addEventListener("pointerdown", xfOutside, true);
+  }
+
+  // Dragging a badge's end changes the dissolve length, live, like a trim.
+  function xfPointerDown(e) {
+    const h = e.target.closest("[data-xfedge]");
+    if (h && e.button === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      const badge = h.closest("[data-xf]");
+      if (!badge) return;
+      xfDrag = { id: badge.dataset.xf, between: badge.dataset.between.split(","), from: e.clientX, dur: parseFloat(badge.dataset.dur) };
+      badge.classList.add("dragging");
+      document.body.classList.add("xfdrag");
+      try { h.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
+      return;
+    }
+    if (e.target.closest("[data-xf]")) return; // the badge's own click handler runs
+  }
+  function xfPointerMove(e) {
+    if (!xfDrag) return;
+    const badge = root.querySelector(`[data-xf="${xfDrag.id}"]`);
+    const rd = badge && badge.querySelector("span"); // the duration readout, not the kind name
+    const sec = Math.max(0.1, Math.min(10, xfDrag.dur + (e.clientX - xfDrag.from) / pps));
+    if (rd) rd.textContent = sec.toFixed(1) + "s";
+    if (badge) badge.title = `${xfLabel(badge.dataset.kind)} ${sec.toFixed(1)}s`;
+    xfDrag.sec = sec;
+  }
+  async function xfPointerUp() {
+    if (!xfDrag) return;
+    const { id, between, sec } = xfDrag;
+    xfDrag = null;
+    document.body.classList.remove("xfdrag");
+    const badge = root && root.querySelector(`[data-xf="${id}"]`);
+    if (badge) badge.classList.remove("dragging");
+    if (sec == null) return; // a click, not a drag: nothing changed
+    await commit({ op: "transition", a: between[0], b: between[1], seconds: sec, kind: badge && badge.dataset.kind });
+  }
+  function wireTransitions() {
+    if (!root) return;
+    root.querySelectorAll("[data-xf]").forEach((badge) => {
+      badge.addEventListener("click", async (e) => {
+        if (e.altKey) { // Alt+click: straight back to a hard cut
+          const pair = String(badge.dataset.between || "").split(",");
+          if (pair.length === 2) { e.stopPropagation(); await commit({ op: "transition", a: pair[0], b: pair[1], seconds: 0 }); }
+          return;
+        }
+        e.stopPropagation();
+        await xfOpenPick(badge.dataset.xf, badge.dataset.between, badge.dataset.kind);
+      });
+    });
+    const lanes = root.querySelectorAll(".tl-lane");
+    lanes.forEach((lane) => {
+      lane.addEventListener("pointerdown", xfPointerDown);
+      lane.addEventListener("pointermove", xfPointerMove);
+      lane.addEventListener("pointerup", xfPointerUp);
+      lane.addEventListener("pointercancel", xfPointerUp);
+    });
+    // Esc closes the picker (the global key handler runs first; this is the fallback).
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") xfClosePick(); });
+  }
+
   // ---- custom curves -----------------------------------------------------------------
   // Master / R / G / B, like Resolve's Custom Curves. Click to add a point, drag to move it,
   // double-click to remove it; the ends move up and down only. A drag grades the preview and
@@ -902,7 +1040,7 @@
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
               ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}${c.type === "clip" ? " · Alt-drag to slip · Alt+Shift-drag to slide" : ""}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
-                ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" style="left:${c.at * pps}px" title="Dissolve ${esc(c.dur.toFixed(1))}s — click to remove"><i>◐</i>${esc(c.dur.toFixed(1))}s</button>`).join("")}
+                ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf${xfDrag && xfDrag.id === c.id ? " dragging" : ""}" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" data-kind="${esc(c.kind || "fade")}" style="left:${c.at * pps}px" title="${esc(xfLabel(c.kind || "fade"))} ${esc(c.dur.toFixed(1))}s · click to change the kind · drag an end to resize · Alt-click to remove"><i>◐</i><b>${esc(xfLabel(c.kind || "fade"))}</b><span>${esc(c.dur.toFixed(1))}s</span><i class="tl-xfe a" data-xfedge="a"></i><i class="tl-xfe b" data-xfedge="b"></i></button>`).join("")}
               </div></div>`).join("")}
               <div class="tl-marq" hidden></div>
             </div>`}
@@ -935,13 +1073,6 @@
       tfs.addEventListener("input", () => { if (readout) readout.textContent = parseFloat(tfs.value).toFixed(2) + "×"; });
     }
     root.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; paint(); }));
-    root.querySelectorAll("[data-xf]").forEach((b) => b.addEventListener("click", async () => {
-      const pair = String(b.dataset.between || "").split(",");
-      if (pair.length !== 2) return;
-      // Clicking a dissolve badge removes it (back to a hard cut), which is the common
-      // correction; setting a length is the inspector's job.
-      await commit({ op: "transition", a: pair[0], b: pair[1], seconds: 0 });
-    }));
     const grip = root.querySelector(".tl-grip");
     if (grip) {
       grip.addEventListener("pointerdown", gripDown);
@@ -974,6 +1105,8 @@
     wireWheels();
     wireCurves();
     wireBalance();
+    wireTransitions();
+    loadXcat();
     updateScope(true);
     applySplit();
     sizeFrame();
