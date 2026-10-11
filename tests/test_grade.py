@@ -391,3 +391,60 @@ def test_the_timeline_refuses_a_malformed_curve(home):
     for bad in ({"m": [[[0, 1], [0, 1]]]}, {"m": [[[1, 2], [0, 1]], [[1, 1], [1, 1]]]}, {"z": []}):
         with pytest.raises(E.EditorError):
             E.apply(pid, [{"op": "set_props", "id": "c1", "props": {"grade": {"curves": bad}}}], "bad")
+
+
+# ---------------------------------------------------------------- white balance
+
+
+def test_white_balance_keeps_greys_their_brightness_and_moves_the_right_channels():
+    assert G.wb(0, 0) == pytest.approx((1, 1, 1))
+    for t, n in ((100, 0), (-60, 30), (0, -100), (45, 80)):
+        w = G.wb(t, n)
+        assert sum(a * b for a, b in zip(G.LUMA, w)) == pytest.approx(1.0)  # luma of a grey kept
+    warm, cool = G.wb(60, 0), G.wb(-60, 0)
+    assert warm[0] > 1 > warm[2] and cool[2] > 1 > cool[0]   # warm: red up, blue down
+    mag, grn = G.wb(0, 60), G.wb(0, -60)
+    assert mag[1] < 1 < grn[1]                                # magenta: green down
+
+
+@pytest.mark.parametrize("px", [(0.55, 0.5, 0.4), (0.3, 0.42, 0.5), (0.7, 0.6, 0.66), (0.2, 0.25, 0.18)])
+def test_the_eyedropper_makes_the_picked_pixel_grey(px):
+    t, n = G.neutralise(px)
+    g = G.parse(G.store(temp=t, tint=n))
+    out = [G.curve(g, c, px[c]) for c in range(3)]
+    assert max(out) - min(out) < 0.004, (px, t, n, out)  # grey, to rounding of temp/tint
+
+
+def test_the_eyedropper_clamps_and_refuses_what_it_cannot_solve():
+    assert G.neutralise((0.5, 0.0, 0.5)) == (0.0, 0.0)
+    px = (0.9, 0.5, 0.05)  # far beyond what -100..100 can fix
+    t, n = G.neutralise(px)
+    assert t == -100 and -100 <= n <= 100
+    # Clamped, it still moves the pixel toward grey as far as the range allows.
+    g = G.parse(G.store(temp=t, tint=n))
+    out = [G.curve(g, c, px[c]) for c in range(3)]
+    assert max(out) - min(out) < max(px) - min(px)
+
+
+@pytest.mark.parametrize("kw", [dict(temp=40, tint=-25), dict(temp=-70, gain=[1.1, 1, 0.9], sat=0.8),
+                                dict(tint=60, curves={"m": [[0, 0], [0.5, 0.6], [1, 1]]})])
+def test_ffmpeg_renders_white_balance(kw, tmp_path):
+    g = G.parse(G.store(**kw))
+    chain = G.ffmpeg_chain(g, tmp_path)
+    for rgb in COLOURS:
+        want = [round(v * 255) for v in G.apply_pixel(g, tuple(c / 255 for c in rgb))]
+        got = _ffmpeg_pixel(rgb, chain)
+        assert all(abs(a - b) <= 2 for a, b in zip(got, want)), (kw, rgb, got, want)
+
+
+def test_balance_to_sets_temp_and_tint_and_keeps_the_rest(home, desk):
+    pid = _cut("wb1")
+    E.set_grade(pid, "c1", gain=[1.1, 1, 0.95], curves={"m": [[0, 0], [0.5, 0.6], [1, 1]]})
+    E.balance_to(pid, "c1", [140, 128, 102])
+    row = _row(pid)
+    assert row["grade"]["temp"] < 0 and row["grade"]["gain"] == pytest.approx([1.1, 1, 0.95])
+    assert row["grade"]["curves"] is not None
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "balance", "id": "c1", "rgb": [100, 0, 100]})
+    assert st == 400 and "no light" in res["error"]
+    with pytest.raises(E.EditorError, match="temperature"):
+        E.set_grade(pid, "c1", temp=150)

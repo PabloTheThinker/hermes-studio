@@ -78,7 +78,7 @@ TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
 DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
-GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves"}
+GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
 # added since is hashed only when set, so a new optional prop never changes an old doc's hash.
 HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
@@ -609,6 +609,9 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                         c.ratio(v, _j(ip, "props", "grade", k, n), lo, hi, lo_open=(k == "gamma" and lo == 0))
                 if "sat" in gr:
                     c.ratio(gr["sat"], _j(ip, "props", "grade", "sat"), *_G.SAT)
+                for k in ("temp", "tint"):
+                    if k in gr:
+                        c.ratio(gr[k], _j(ip, "props", "grade", k), *_G.WB)
                 if "curves" in gr and c.keys(gr["curves"], _j(ip, "props", "grade", "curves"), set(), set(_G.CURVE_KEYS)):
                     for ck, pts in gr["curves"].items():
                         cp = _j(ip, "props", "grade", "curves", ck)

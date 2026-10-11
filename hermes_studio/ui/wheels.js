@@ -21,7 +21,25 @@
   const WR = 0.2126, WG = 0.7152, WB = 0.0722;
   const KB = 1.8556, KR = 1.5748;
   const K = { lift: 0.25, gamma: 0.5, gain: 0.5 }; // a puck at the rim: lift +-0.2, gamma/gain x(1 +- 0.4)
-  const RANGE = { lift: [-0.5, 0.5], gamma: [0.2, 5], gain: [0, 4], sat: [0, 4] };
+  const RANGE = { lift: [-0.5, 0.5], gamma: [0.2, 5], gain: [0, 4], sat: [0, 4], temp: [-100, 100], tint: [-100, 100] };
+  const WB_STOPS = 0.5; // grade.WB_STOPS
+  // White-balance multipliers (r, g, b): grade.wb, line for line.
+  function wb(temp, tint) {
+    const a = WB_STOPS / 100;
+    const r = Math.pow(2, a * temp + 0.5 * a * tint), g = Math.pow(2, -a * tint), b = Math.pow(2, -a * temp + 0.5 * a * tint);
+    const y = WR * r + WG * g + WB * b;
+    return [r / y, g / y, b / y];
+  }
+  // The eyedropper: temp and tint that make an ungraded pixel (0..1) grey (grade.neutralise).
+  function neutralise(rgb) {
+    const [r, g, b] = rgb.map((v) => Math.max(v, 0));
+    if (Math.min(r, g, b) <= 1e-6) return [0, 0];
+    const a = WB_STOPS / 100;
+    const temp = Math.log2(b / r) / (2 * a);
+    const tint = (-Math.log2(r / g) - a * temp) / (1.5 * a);
+    const c = (v) => Math.round(Math.min(100, Math.max(-100, v)) * 100) / 100;
+    return [c(temp), c(tint)];
+  }
   const NEUTRAL = { lift: 0, gamma: 1, gain: 1 };
   const TABLE_POINTS = 257;
 
@@ -62,13 +80,16 @@
       gain: channels("gain", st.gain.m, st.gain.x, st.gain.y),
       sat: clamp(st.sat, RANGE.sat[0], RANGE.sat[1]),
       curves: cleanCurves(st.curves),
+      temp: clamp(st.temp || 0, -100, 100),
+      tint: clamp(st.tint || 0, -100, 100),
     };
   }
 
   // Grade numbers (view row .grade, or null) -> wheel state. Exact inverse of toGrade for
   // anything toGrade produced; for other grades it shows the nearest balance + master.
   function fromGrade(g) {
-    const st = { sat: g && g.sat != null ? g.sat : 1, curves: cleanCurves(g && g.curves) || {} };
+    const st = { sat: g && g.sat != null ? g.sat : 1, curves: cleanCurves(g && g.curves) || {},
+      temp: g && g.temp ? g.temp : 0, tint: g && g.tint ? g.tint : 0 };
     for (const kind of ["lift", "gamma", "gain"]) {
       const v = g && g[kind] ? g[kind] : [NEUTRAL[kind], NEUTRAL[kind], NEUTRAL[kind]];
       const m = luma(v[0], v[1], v[2]);
@@ -85,7 +106,8 @@
   function neutral() { return fromGrade(null); }
   function isNeutral(g) {
     const e = 1e-6;
-    return ["lift", "gamma", "gain"].every((k) => g[k].every((v) => Math.abs(v - NEUTRAL[k]) < e)) && Math.abs(g.sat - 1) < e && !cleanCurves(g.curves);
+    return ["lift", "gamma", "gain"].every((k) => g[k].every((v) => Math.abs(v - NEUTRAL[k]) < e)) && Math.abs(g.sat - 1) < e && !cleanCurves(g.curves)
+      && Math.abs(g.temp || 0) < e && Math.abs(g.tint || 0) < e;
   }
 
   // ---- the preview pack, computed here for a live drag (mirrors grade.py) ----------------
@@ -114,6 +136,7 @@
   }
   function curve(g, ch, x) {
     const lo = g.lift[ch], hi = g.gain[ch], gm = g.gamma[ch];
+    if (g.temp || g.tint) x = clamp(x * wb(g.temp || 0, g.tint || 0)[ch], 0, 1);
     let y = Math.pow(clamp(lo + x * (hi - lo), 0, 1), 1 / gm);
     const cv = g.curves;
     if (cv) {
@@ -158,7 +181,7 @@
     return `${edge} 0deg, ` + stops.map(([a, c]) => `${c} ${a.toFixed(1)}deg`).join(", ") + `, ${edge} 360deg`;
   }
 
-  const api = { K, RANGE, offset, puck, channels, toGrade, fromGrade, neutral, isNeutral, curve, pchip, cleanCurves, satMatrix, preview, ringStops, TABLE_POINTS };
+  const api = { K, RANGE, offset, puck, channels, toGrade, fromGrade, neutral, isNeutral, curve, pchip, cleanCurves, wb, neutralise, satMatrix, preview, ringStops, TABLE_POINTS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.HSWheels = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -794,7 +794,8 @@ def set_crop(pid: str, item_id: str, x: float, y: float, w: float, h: float) -> 
 _KEEP = object()
 
 
-def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=None, curves=_KEEP) -> dict:
+def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=None, curves=_KEEP,
+              temp=None, tint=None) -> dict:
     """Change a clip's grade: lift / gamma / gain per channel ([r, g, b]), saturation, and the
     custom curves ({"m"|"r"|"g"|"b": [[x, y], ...]}). Only the parts given change: the wheels
     send theirs and the curves are kept, the curve editor sends curves and the wheels are kept
@@ -803,7 +804,7 @@ def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=N
     doc, it = _item(pid, item_id)
     if it["type"] != "clip":
         raise EditorError("only a clip can be graded")
-    cur = _GR.parse((it.get("props") or {}).get("grade")) or {**_GR.IDENTITY, "curves": None}
+    cur = _GR.parse((it.get("props") or {}).get("grade")) or {**_GR.IDENTITY, "curves": None, "temp": 0.0, "tint": 0.0}
     curves_now = {k: [list(p) for p in pts] for k, pts in (cur.get("curves") or {}).items()} or None
     try:
         stored = _GR.store(
@@ -812,11 +813,26 @@ def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=N
             gain=gain if gain is not None else cur["gain"],
             sat=sat if sat is not None else cur["sat"],
             curves=curves_now if curves is _KEEP else curves,
+            temp=temp if temp is not None else cur.get("temp", 0.0),
+            tint=tint if tint is not None else cur.get("tint", 0.0),
         )
     except (ValueError, TypeError) as exc:
         raise EditorError(str(exc)) from None
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": stored, "look": None}}],
                  f"Grade {item_id}" if stored else f"Grade {item_id} reset")
+
+
+def balance_to(pid: str, item_id: str, rgb) -> dict:
+    """The eyedropper: set the clip's temperature and tint so ``rgb`` (0..255, the clip's own
+    pixel before any grade) comes out grey. Everything else in the grade is kept."""
+    try:
+        r, g, b = (float(v) / 255.0 for v in rgb)
+    except (TypeError, ValueError):
+        raise EditorError("pick a colour: three numbers, 0 to 255") from None
+    if min(r, g, b) <= 0.0:
+        raise EditorError("that spot has no light in one channel; pick a brighter grey")
+    temp, tint = _GR.neutralise((r, g, b))
+    return set_grade(pid, item_id, temp=temp, tint=tint)
 
 
 def clear_grade(pid: str, item_id: str) -> dict:

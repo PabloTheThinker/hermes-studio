@@ -3,6 +3,7 @@
 One formula, stated once, so the render and the page's preview cannot disagree:
 
     per channel c, on gamma-encoded values in 0..1 (what ffmpeg and the browser both see):
+        x = clamp(x * wb_c, 0, 1)                  # white balance (temp / tint), see wb()
         y = lift_c + x * (gain_c - lift_c)        # lift sets the black point, gain the white
         y = clamp(y, 0, 1) ** (1 / gamma_c)       # gamma bends the mids, ends stay put
         y = curve_c(curve_master(y))              # optional custom curves (Resolve's Curves)
@@ -30,7 +31,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-KEYS = ("lift", "gamma", "gain", "sat")
+KEYS = ("lift", "gamma", "gain", "sat", "temp", "tint")
 CHANNELS = "rgb"
 IDENTITY = {"lift": (0.0, 0.0, 0.0), "gamma": (1.0, 1.0, 1.0), "gain": (1.0, 1.0, 1.0), "sat": 1.0}
 # Ranges (inclusive). Lift is an offset of the black point; gain a multiplier of the white
@@ -39,7 +40,12 @@ LIFT = (Fraction(-1, 2), Fraction(1, 2))
 GAMMA = (Fraction(1, 5), Fraction(5))
 GAIN = (Fraction(0), Fraction(4))
 SAT = (Fraction(0), Fraction(4))
-RANGES = {"lift": LIFT, "gamma": GAMMA, "gain": GAIN, "sat": SAT}
+# White balance: temperature (-100 cool .. +100 warm) and tint (-100 green .. +100 magenta).
+WB = (Fraction(-100), Fraction(100))
+# Stops of channel ratio at full scale: temp 100 makes red/blue 2^(2 x 0.5) = 2x, about tungsten
+# against daylight, so the eyedropper can neutralise a real cast.
+WB_STOPS = 0.5
+RANGES = {"lift": LIFT, "gamma": GAMMA, "gain": GAIN, "sat": SAT, "temp": WB, "tint": WB}
 LUMA = (0.2126, 0.7152, 0.0722)  # Rec.709
 # How many points the preview's per-channel table carries. Linear interpolation between 257
 # evenly spaced samples is within a code value of the exact curve for any gamma in range.
@@ -68,6 +74,8 @@ def parse(grade: dict | None) -> dict | None:
         "gamma": tuple(_f(v) for v in grade.get("gamma") or IDENTITY["gamma"]),
         "gain": tuple(_f(v) for v in grade.get("gain") or IDENTITY["gain"]),
         "sat": _f(grade["sat"]) if grade.get("sat") is not None else 1.0,
+        "temp": _f(grade["temp"]) if grade.get("temp") is not None else 0.0,
+        "tint": _f(grade["tint"]) if grade.get("tint") is not None else 0.0,
         "curves": _parse_curves(grade.get("curves")),
     }
     return None if is_identity(out) else out
@@ -93,7 +101,42 @@ def _is_straight(pts) -> bool:
 
 def is_identity(g: dict) -> bool:
     return (all(abs(a - b) < 1e-9 for k in ("lift", "gamma", "gain") for a, b in zip(g[k], IDENTITY[k]))
-            and abs(g["sat"] - 1.0) < 1e-9 and not g.get("curves"))
+            and abs(g["sat"] - 1.0) < 1e-9 and not g.get("curves")
+            and abs(g.get("temp", 0)) < 1e-9 and abs(g.get("tint", 0)) < 1e-9)
+
+
+def wb(temp: float, tint: float) -> tuple[float, float, float]:
+    """White-balance multipliers (r, g, b) for temperature and tint in -100..100.
+
+    Temperature moves red against blue, tint moves green against red and blue together, each in
+    stops (powers of two) so equal steps look equal; the three are then divided by their Rec.709
+    luma so a balance never brightens or darkens a grey. wheels.js carries the same function.
+    """
+    a = WB_STOPS / 100.0
+    r = 2.0 ** (a * temp + 0.5 * a * tint)
+    g = 2.0 ** (-a * tint)
+    b = 2.0 ** (-a * temp + 0.5 * a * tint)
+    y = LUMA[0] * r + LUMA[1] * g + LUMA[2] * b
+    return (r / y, g / y, b / y)
+
+
+def neutralise(rgb: tuple[float, float, float]) -> tuple[float, float]:
+    """The temperature and tint that make the pixel ``rgb`` (0..1, before any grade) grey: the
+    eyedropper. wb() has two free ratios and so does a pixel, so the answer is exact unless it
+    falls outside -100..100 (it is clamped there) or a channel is 0 (then it can't be solved
+    and (0, 0) comes back)."""
+    import math
+
+    r, g, b = (max(v, 0.0) for v in rgb)
+    if min(r, g, b) <= 1e-6:
+        return (0.0, 0.0)
+    a = WB_STOPS / 100.0
+    # wr/wb = b/r  ->  2^(2 a temp) = b / r
+    temp = math.log2(b / r) / (2 * a)
+    # wg/wr = r/g  ->  2^(-a tint - a temp - a tint / 2) = r / g
+    tint = (-math.log2(r / g) - a * temp) / (1.5 * a)
+    clamp = lambda v: max(-100.0, min(100.0, v))  # noqa: E731
+    return (round(clamp(temp), 2), round(clamp(tint), 2))
 
 
 def pchip(pts, x: float) -> float:
@@ -136,6 +179,8 @@ def pchip(pts, x: float) -> float:
 def curve(g: dict, ch: int, x: float) -> float:
     """The per-channel curve at ``x`` (0..1) for channel ``ch`` (0 r, 1 g, 2 b)."""
     lo, hi, gm = g["lift"][ch], g["gain"][ch], g["gamma"][ch]
+    if g.get("temp") or g.get("tint"):
+        x = min(1.0, max(0.0, x * wb(g.get("temp", 0.0), g.get("tint", 0.0))[ch]))
     y = min(1.0, max(0.0, lo + x * (hi - lo)))
     y = y ** (1.0 / gm)
     cv = g.get("curves")
@@ -213,10 +258,12 @@ def ffmpeg_chain(g: dict | None, lut_dir: Path | None = None) -> str:
     curves = None if g.get("curves") else []
     for i, c in enumerate(CHANNELS):
         lo, hi, gm = g["lift"][i], g["gain"][i], g["gamma"][i]
-        if abs(lo) < 1e-12 and abs(hi - 1) < 1e-12 and abs(gm - 1) < 1e-12:
+        w = wb(g.get("temp", 0.0), g.get("tint", 0.0))[i] if (g.get("temp") or g.get("tint")) else 1.0
+        if abs(lo) < 1e-12 and abs(hi - 1) < 1e-12 and abs(gm - 1) < 1e-12 and abs(w - 1) < 1e-12:
             continue
         if curves is not None:
-            curves.append(f"{c}='maxval*pow(clip({lo:.9g}+val/maxval*({hi - lo:.9g}),0,1),{1 / gm:.9g})'")
+            xin = f"clip(val/maxval*{w:.9g},0,1)" if abs(w - 1) > 1e-12 else "val/maxval"
+            curves.append(f"{c}='maxval*pow(clip({lo:.9g}+{xin}*({hi - lo:.9g}),0,1),{1 / gm:.9g})'")
     if curves:
         parts.append("lutrgb=" + ":".join(curves))
     if abs(g["sat"] - 1.0) > 1e-12:
@@ -246,6 +293,7 @@ def view(g: dict | None) -> dict | None:
         return None
     cv = g.get("curves") or {}
     return {"lift": list(g["lift"]), "gamma": list(g["gamma"]), "gain": list(g["gain"]), "sat": g["sat"],
+            "temp": g.get("temp", 0.0), "tint": g.get("tint", 0.0),
             "curves": {k: [list(p) for p in pts] for k, pts in cv.items()} or None}
 
 
@@ -285,7 +333,7 @@ def _store_curves(curves: Any) -> dict | None:
     return out or None
 
 
-def store(lift=None, gamma=None, gain=None, sat=None, curves=None) -> dict | None:
+def store(lift=None, gamma=None, gain=None, sat=None, curves=None, temp=None, tint=None) -> dict | None:
     """Floats from the page -> ``props.grade`` (``[num, den]`` pairs), or None for the identity.
     Raises ValueError naming the first number out of range."""
     g = {
@@ -294,7 +342,12 @@ def store(lift=None, gamma=None, gain=None, sat=None, curves=None) -> dict | Non
         "gain": tuple(float(v) for v in (gain if gain is not None else IDENTITY["gain"])),
         "sat": float(sat) if sat is not None else 1.0,
         "curves": _store_curves(curves),
+        "temp": float(temp) if temp is not None else 0.0,
+        "tint": float(tint) if tint is not None else 0.0,
     }
+    for k in ("temp", "tint"):
+        if not (-100.0 <= g[k] <= 100.0):
+            raise ValueError(f"{'temperature' if k == 'temp' else 'tint'} must be between -100 and 100")
     for k in ("lift", "gamma", "gain"):
         if len(g[k]) != 3:
             raise ValueError(f"{k} needs three numbers (r, g, b)")
@@ -310,6 +363,9 @@ def store(lift=None, gamma=None, gain=None, sat=None, curves=None) -> dict | Non
            "gain": [pair(v) for v in g["gain"]], "sat": pair(g["sat"])}
     if g["curves"]:
         out["curves"] = {k: [[pair(x), pair(y)] for x, y in pts] for k, pts in g["curves"].items()}
+    for k in ("temp", "tint"):
+        if abs(g[k]) > 1e-9:
+            out[k] = pair(g[k])
     return out
 
 

@@ -48,7 +48,7 @@ def test_the_live_preview_pack_equals_grade_py(g):
 def test_neutral_is_no_grade():
     r = _run("const st = W.neutral(); const g = W.toGrade(st); console.log(JSON.stringify({ st, g, neutral: W.isNeutral(g), prev: W.preview(g) }))")
     assert r["neutral"] and r["prev"] is None
-    assert r["g"] == {"lift": [0, 0, 0], "gamma": [1, 1, 1], "gain": [1, 1, 1], "sat": 1, "curves": None}
+    assert r["g"] == {"lift": [0, 0, 0], "gamma": [1, 1, 1], "gain": [1, 1, 1], "sat": 1, "curves": None, "temp": 0, "tint": 0}
     for k in ("lift", "gamma", "gain"):
         assert abs(r["st"][k]["x"]) < 1e-12 and abs(r["st"][k]["y"]) < 1e-12
 
@@ -146,3 +146,24 @@ console.log(JSON.stringify({ st: st.curves, back: back.curves, neutralWithCurve:
 """)
     assert r["st"] == {"m": [[0, 0], [0.5, 0.7], [1, 1]]}  # the straight green curve is no curve
     assert r["back"] == r["st"] and r["neutralWithCurve"] is False and r["straightOnly"] is True
+
+
+def test_white_balance_and_eyedropper_mirror_grade_py():
+    r = _run("""
+const out = { wb: [[0,0],[100,0],[-60,30],[45,80]].map(([t,n]) => W.wb(t, n)),
+  neu: [[0.55,0.5,0.4],[0.3,0.42,0.5],[0.2,0.25,0.18]].map((p) => W.neutralise(p)) };
+console.log(JSON.stringify(out));
+""")
+    for (t, n), js in zip([(0, 0), (100, 0), (-60, 30), (45, 80)], r["wb"]):
+        assert js == pytest.approx(list(G.wb(t, n)), abs=1e-12)
+    for px, js in zip([(0.55, 0.5, 0.4), (0.3, 0.42, 0.5), (0.2, 0.25, 0.18)], r["neu"]):
+        assert js == pytest.approx(list(G.neutralise(px)), abs=0.011)
+
+
+def test_the_live_preview_with_white_balance_equals_grade_py():
+    g = {"lift": [0.02, 0, 0], "gamma": [1, 1.1, 1], "gain": [1, 1, 0.95], "sat": 1.1, "temp": -35, "tint": 20,
+         "curves": {"m": [[0, 0], [0.5, 0.6], [1, 1]]}}
+    js = _run(f"console.log(JSON.stringify(W.preview({json.dumps(g)})))")
+    py = G.preview(G.parse(G.store(**g)))
+    for ch in range(3):
+        assert max(abs(a - b) for a, b in zip(js["tables"][ch], py["tables"][ch])) <= 2e-5
