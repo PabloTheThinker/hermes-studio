@@ -2005,3 +2005,22 @@ def test_the_timeline_refuses_a_malformed_speed_ramp(home):
     for bad in ([{"speed": [1, 2]}], [{"at": 0}, {"at": 1}], [{"at": 0, "speed": [1, 2]}, {"at": 0, "speed": [2, 1]}]):
         with pytest.raises(E.EditorError):
             E.apply(pid, [{"op": "set_props", "id": "aa", "props": {"speed_keys": bad}}], "bad")
+
+
+def test_the_view_carries_the_ramp_and_its_length(home):
+    """The page reads speed keys back (source seconds, plain speeds) and the clip's length on the
+    timeline is the ramp's integral -- the same number the render produces."""
+    import math
+
+    from hermes_studio import oplog as _O
+
+    pid = _ramp_project(home, "rampV")
+    E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 1.0}, {"at": 4.0, "speed": 0.5}, {"at": 8.0, "speed": 1.0}])
+    row = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "aa")
+    assert row["speed_keys"] == [[0, 1], [4, 0.5], [8, 1]]
+    # Two linear pieces, 1 -> 0.5 and 0.5 -> 1, each 4s: integral = 2 * 4 * ln(2) / 0.5.
+    want = 2 * (math.log(1 / 0.5) / (0.5 / 4))
+    assert row["dur"] == pytest.approx(want, abs=0.002)
+    E.set_speed_keys(pid, "aa", None)
+    row = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "aa")
+    assert row["speed_keys"] is None and row["dur"] == pytest.approx(8.0)

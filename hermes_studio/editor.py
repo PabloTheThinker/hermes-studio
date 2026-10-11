@@ -228,8 +228,16 @@ def view(doc: dict) -> dict:
                 continue
             speed = clip_speed(it) if it["type"] == "clip" else 1.0
             at = it.get("at", 0) / rate
-            # A clip occupies (source range) / speed ticks on the timeline; text keeps dur.
-            dur = ((it["src"][1] - it["src"][0]) / speed if it["type"] == "clip" else it.get("dur", 0)) / rate
+            sk = (it.get("props") or {}).get("speed_keys")
+            if it["type"] == "clip" and isinstance(sk, list) and len(sk) >= 2:
+                # A speed ramp: the clip's timeline length is the integral of 1/speed over its
+                # source window (timeline._ramp_dur_ticks computes it; the render agrees).
+                dur = T._ramp_dur_ticks(sk, it["src"][1] - it["src"][0]) / rate
+            elif it["type"] == "clip":
+                # A clip occupies (source range) / speed ticks on the timeline; text keeps dur.
+                dur = (it["src"][1] - it["src"][0]) / speed / rate
+            else:
+                dur = it.get("dur", 0) / rate
             end = max(end, at + dur)
             label = text_at.get(it.get("at")) or it.get("text") or it["id"]
             if it["type"] == "clip" and not text_at.get(it.get("at")):
@@ -259,6 +267,11 @@ def view(doc: dict) -> dict:
                 row["grade"] = _GR.view(_g)
                 row["grade_preview"] = _GR.preview(_g)
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
+                skv = props.get("speed_keys")
+                row["speed_keys"] = (
+                    [[round(k["at"] / rate, 4), round(_pair_to_float(k["speed"]), 4)] for k in skv]
+                    if isinstance(skv, list) and len(skv) >= 2 else None
+                )
                 gk = props.get("gain_keys")
                 row["gain_keys"] = (
                     [{"at": round(k["at"] / rate, 4), "gain": round(_pair_to_float(k["gain"]), 4)} for k in gk]

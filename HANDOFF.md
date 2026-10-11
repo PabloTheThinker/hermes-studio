@@ -138,3 +138,21 @@ python3 -m venv .venv
    - Have the verifier gate the green head SHA. The gate covers the replay against `c6de84e`, the §11 row probes, contract tests 88–104, and the HTTP and stdio framing probes.
    - On a PASS, merge pinned to that SHA. That completes Phase 0.
    - Propose the Phase 0 release to the owner. Don't start S4 until he says yes.
+
+---
+
+## feat/video-editor progress (2026-10-10)
+
+- **57eb69d** — Multi-clip ops: `move_items` and `delete_items` in oplog.py. Editor wrappers with `_known_ids` validation. Desk endpoints. 4 tests.
+- **abbaa59** — Edit page: multi-clip selection UI. Shift+click, marquee drag, group move/delete. `selSet` state, `paintSel()` for live rings. Browser-verified. v=55.
+
+832 tests passing. One pre-existing umask failure in test_job_manifest.py (not from this work).
+- **49dbe48 / c3cd38a** — Slip (Alt-drag body), `,`/`.` frame nudge (Shift = 1 s, Alt = slip), frame-exact relative moves (`editor._frames`), click-ring repaint fix. v=57.
+- **0aaa289 / 81279f8** — Roll trim (Alt-drag an edge). v=58.
+- **a02cb2f / c9ffac9** — Slide (Alt+Shift-drag body). v=59.
+
+Phase B timeline tools (plan §4): multi-select, markers, ripple, roll, slip, slide, J/K/L, I/O, `,`/`.` all done. 848 tests pass (umask failure pre-existing). Render proofs: `~/.hermes/cache/scratch/{slip,roll,slide}_proof.py`.
+- **237d411 → 0f68e49 — Colour phase (plan §4 F), done except LUT import:** `grade.py` is the one formula (WB → lift/gamma/gain → curves → saturation), rendered by `lutrgb`/`lut1d` + `colorchannelmixer`, previewed by an SVG filter from the same tables (`wheels.js` mirrors the maths; Node tests pin it). Live graded preview, scopes (wave/parade/vector, `scopes.js`), wheels, looks as fitted presets, PCHIP curves, temp/tint + exact eyedropper. Safety fixes on the way: per-project write lock (`cad5f3a`), demo-only reset, preview-frame cache keyed by media.
+- Open: captions `_ass_escape_path` quotes the path (breaks on a `'` in the project path); `.cube` LUT import; the old umask test.
+- **d47fb71 — Keyframe curve editor (plan §4 D):** per-property graph (Scale/Pos X/Pos Y/Rotate) under the inspector; click adds a point at the clicked value, drag moves it, double-click removes it; piecewise-linear like the render; one `keyframes` op per gesture. Timeline diamonds remain the compact view. editor.js v=94.
+- **e3dabc8 + next — Speed ramps (plan §4 E):** `props.speed_keys` [{at (source ticks), speed}], length = ∫1/speed over the source span (timeline._ramp_dur_ticks; render setpts carries the same log integral). Speed graph under the Speed row: log-scale y (0.1×–10×), x = SOURCE span (not timeline length — that moves with the ramp). Open: audio still follows constant speed (needs a variable atempo/rubberband map).

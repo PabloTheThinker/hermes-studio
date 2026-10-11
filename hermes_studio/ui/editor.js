@@ -67,6 +67,8 @@
       .tl-kfcurve nav button{flex:1;padding:2px 0;font:600 10px var(--mono);color:var(--dim)}
       .tl-kfcurve nav button.on{background:var(--amber);color:var(--amber-ink)}
       .tl-kfcurvec{display:block;width:100%;height:120px;cursor:crosshair;touch-action:none}
+      .tl-speedcurve{margin:6px 0 2px;border:1px solid var(--line);border-radius:5px;padding:5px;background:#08090a}
+      .tl-speedcurve canvas{display:block;width:100%;height:120px;cursor:crosshair;touch-action:none}
       .tl-wbal{display:grid;grid-template-columns:auto 1fr 28px;gap:3px 6px;align-items:center;margin:0 0 8px;font:500 10px var(--mono);color:var(--dim)}
       .tl-wbal input[type=range]{margin:0;-webkit-appearance:none;appearance:none;height:6px;border-radius:3px}
       .tl-wbal input[data-wb=temp]{background:linear-gradient(90deg,#4f8dff,#d9d9d9 50%,#ffae42)}
@@ -440,6 +442,148 @@
     });
     // Esc closes the picker (the global key handler runs first; this is the fallback).
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") xfClosePick(); });
+  }
+
+  // ---- speed ramp ------------------------------------------------------------------------
+  // A speed curve, like Resolve's retime controls and Final Cut's speed ramps: the graph's
+  // height is playback speed (1x in the middle), the x axis is time through the clip. Click to
+  // add a speed key, drag to move it, double-click to remove. Two or more keys make a ramp; the
+  // render integrates 1/speed exactly (see render_timeline._ramp_pts), so what the graph shows
+  // is what exports. A flat line at 1x is just normal speed -- no ramp.
+  let srDrag = null;
+  const SR = { lo: 0.1, hi: 10, m: { l: 34, r: 6, t: 8, b: 14 }, h: 120 };
+  // Speed keys are in SOURCE time (the render ramps PTS-STARTPTS of the trimmed source), so the
+  // graph's x axis is the clip's source span, not its length on the timeline -- that length
+  // changes as the ramp changes, and the points would slide under the cursor.
+  const srSpan = () => { const it = find(sel); return it ? Math.max(0.001, (it.src_out ?? it.dur) - (it.src_in ?? 0)) : 1; };
+  const srPts = () => (find(sel) && find(sel).speed_keys) ? find(sel).speed_keys : [[0, 1], [srSpan(), 1]];
+  // Speed at clip time t: linear between keys, held before the first and after the last
+  // (the same rule the render integrates).
+  function srSpeedAt(pts, t) {
+    if (t <= pts[0][0]) return pts[0][1];
+    for (let j = 0; j < pts.length - 1; j++) {
+      const a = pts[j], b = pts[j + 1];
+      if (t <= b[0]) return b[0] > a[0] ? a[1] + ((b[1] - a[1]) * (t - a[0])) / (b[0] - a[0]) : b[1];
+    }
+    return pts[pts.length - 1][1];
+  }
+  function drawSpeed() {
+    const cv = root && root.querySelector("[data-speedcurve]");
+    if (!cv || !find(sel)) return;
+    const k = window.devicePixelRatio || 1;
+    const W = Math.max(1, Math.round(cv.clientWidth * k)), H = Math.max(1, Math.round(cv.clientHeight * k));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
+    const P = SR.m, X = (t) => P.l * k + t * (W - (P.l + P.r) * k), Y = (s) => (H - P.b * k) - ((Math.log(s) - Math.log(SR.lo)) / (Math.log(SR.hi) - Math.log(SR.lo))) * (H - (P.t + P.b) * k);
+    ctx.fillStyle = "#08090a"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(242,239,232,.09)"; ctx.lineWidth = 1;
+    ctx.font = `${8 * k}px var(--mono, monospace)`; ctx.fillStyle = "rgba(242,239,232,.35)";
+    for (const s of [0.1, 0.25, 0.5, 1, 2, 4, 10]) {
+      const y = Y(s);
+      ctx.beginPath(); ctx.moveTo(P.l * k, y); ctx.lineTo(W - P.r * k, y); ctx.stroke();
+      ctx.fillText(s === 1 ? "1x" : (s < 1 ? s + "x" : s + "x"), 2 * k, y + 3 * k);
+    }
+    const dur = srSpan();
+    const pts = srPts();
+    ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
+    ctx.beginPath();
+    for (let i = 0; i <= 128; i++) {
+      const t = (i / 128) * dur;
+      const s = srSpeedAt(pts, t);
+      if (i) ctx.lineTo(X(t / dur), Y(s)); else ctx.moveTo(X(t / dur), Y(s));
+    }
+    ctx.stroke();
+    ctx.fillStyle = "rgba(242,239,232,.35)";
+    ctx.fillText("0s", P.l * k, H - 3 * k);
+    ctx.textAlign = "right"; ctx.fillText(dur.toFixed(1) + "s", W - P.r * k, H - 3 * k); ctx.textAlign = "left";
+    pts.forEach((p, i) => {
+      const on = srDrag && srDrag.i === i;
+      ctx.fillStyle = on ? "#fff" : "#DEAB42";
+      ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 1.5 * k;
+      ctx.beginPath(); ctx.arc(X(p[0] / dur), Y(p[1]), (on ? 5 : 4) * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    });
+  }
+  function srAt(e) { // pointer -> [t (s), speed]
+    const cv = e.currentTarget;
+    const r = cv.getBoundingClientRect();
+    const P = SR.m;
+    const dur = srSpan();
+    const t = ((e.clientX - r.left - P.l) / Math.max(1, r.width - P.l - P.r)) * dur;
+    // Inverse of the drawing's Y: frac = (H - b - y) / (H - t - b), y measured from the canvas
+    // top (the top margin belongs in the span, not in y -- the keyframe graph's lesson).
+    const frac = (r.height - P.b - (e.clientY - r.top)) / Math.max(1, r.height - P.t - P.b);
+    const s = Math.exp(Math.log(SR.lo) + frac * (Math.log(SR.hi) - Math.log(SR.lo)));
+    return [Math.min(dur, Math.max(0, t)), Math.min(SR.hi, Math.max(SR.lo, s))];
+  }
+  async function commitSpeed() {
+    const it = find(sel);
+    if (!it) return;
+    const keys = (it.speed_keys || []).map(([at, s]) => ({ at, speed: s }));
+    // Fewer than two keys is not a ramp; the render would ignore it anyway.
+    if (keys.length < 2) { srDrag = null; return; }
+    await commit({ op: "speed_keys", id: sel, keys });
+    const c2 = root && root.querySelector("[data-speedcurve]");
+    if (c2) c2.scrollIntoView({ block: "nearest" });
+  }
+  function wireSpeed() {
+    if (!root) return;
+    const cv = root.querySelector("[data-speedcurve]");
+    if (!cv) return;
+    cv.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !find(sel)) return;
+      e.preventDefault();
+      const it = find(sel);
+      const pts = (it.speed_keys || [[0, 1], [srSpan(), 1]]).map((p) => [p[0], p[1]]);
+      const [t, s] = srAt(e);
+      const r = cv.getBoundingClientRect();
+      const dur = srSpan();
+      let hit = pts.findIndex((p) => {
+        const dx = ((p[0] - t) / dur) * (r.width - SR.m.l - SR.m.r);
+        const dy = ((Math.log(p[1]) - Math.log(s)) / (Math.log(SR.hi) - Math.log(SR.lo))) * (r.height - SR.m.t - SR.m.b);
+        return Math.hypot(dx, dy) < 9;
+      });
+      if (hit < 0) { // add a key where you clicked
+        if (pts.length >= 64) return;
+        const key = [t, s];
+        pts.push(key);
+        pts.sort((a, b) => a[0] - b[0]);
+        hit = pts.indexOf(key);
+      }
+      find(sel).speed_keys = pts;
+      srDrag = { i: hit };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
+      drawSpeed();
+    });
+    cv.addEventListener("pointermove", (e) => {
+      if (!srDrag || !find(sel)) return;
+      const pts = find(sel).speed_keys || [];
+      const i = srDrag.i, [t, s] = srAt(e);
+      const lo = i > 0 ? pts[i - 1][0] : 0;
+      const hi = i < pts.length - 1 ? pts[i + 1][0] : srSpan();
+      pts[i] = [Math.min(hi - 0.02, Math.max(lo + 0.02, t)), s];
+      drawSpeed();
+    });
+    const up = () => { if (!srDrag) return; srDrag = null; drawSpeed(); commitSpeed(); };
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", up);
+    // Double-click removes a key: the browser's own dblclick (pointer timing loses to the
+    // commit round-trip between the two clicks; the keyframe graph taught that).
+    cv.addEventListener("dblclick", async (e) => {
+      const it = find(sel);
+      if (!it || !it.speed_keys) return;
+      const pts = it.speed_keys.map((p) => [p[0], p[1]]);
+      const [t, s] = srAt(e);
+      const r = cv.getBoundingClientRect();
+      const dur = srSpan();
+      const hit = pts.findIndex((p) => Math.hypot(((p[0] - t) / dur) * (r.width - SR.m.l - SR.m.r),
+        ((Math.log(p[1]) - Math.log(s)) / (Math.log(SR.hi) - Math.log(SR.lo))) * (r.height - SR.m.t - SR.m.b)) < 9);
+      if (hit < 0) return;
+      pts.splice(hit, 1);
+      await commit({ op: "speed_keys", id: sel, keys: pts.length >= 2 ? pts.map(([at, sp]) => ({ at, speed: sp })) : null });
+      const c2 = root && root.querySelector("[data-speedcurve]");
+      if (c2) c2.scrollIntoView({ block: "nearest" });
+    });
+    drawSpeed();
   }
 
   // ---- keyframe curves -------------------------------------------------------------------
@@ -1172,6 +1316,7 @@
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-speedcurve"><canvas data-speedcurve height="120" aria-label="Speed ramp: click to add a speed key, drag to move, double-click to remove. A flat line is normal speed."></canvas></div>${it.speed_keys ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.speed_keys.length} speed keys</span> <button type="button" data-act="clear-speed-ramp">Clear ramp</button></div>` : ""}` : ""}
             ${it && it.type === "clip" && window.HSWheels ? colourSection(it) : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
@@ -1274,6 +1419,7 @@
     wireTransitions();
     loadXcat();
     wireKfCurve();
+    wireSpeed();
     updateScope(true);
     applySplit();
     sizeFrame();
@@ -2217,6 +2363,11 @@
       if (!nx) { msg = "No clip next to dissolve into."; paint(); return; }
       // A 0.75s dissolve is a sane default that reads on screen; undo restores the hard cut.
       await commit({ op: "transition", a: it.id, b: nx.id, seconds: 0.75 });
+      return;
+    }
+    if (name === "clear-speed-ramp") {
+      const s3 = find(sel);
+      if (s3 && s3.speed_keys) await commit({ op: "speed_keys", id: sel, keys: null });
       return;
     }
     if (name === "apply-speed") {
