@@ -558,7 +558,17 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             )
 
     captions = []
+    titles = []
     for it in items("text"):
+        if isinstance(it.get("title"), dict):
+            # A designed title: one PNG of the canvas, overlaid with its motion (titles.py).
+            from hermes_studio import titles as _TT
+
+            titles.append({"at": it["at"], "dur": it.get("dur") or 0, "fi": it.get("fade_in") or 0, "fo": it.get("fade_out") or 0,
+                           "png": _TT.png(it["title"], folder / "cache"), "in": it["title"].get("in", "fade"),
+                           "out": it["title"].get("out", "fade")})
+            end_tick = max(end_tick, it["at"] + (it.get("dur") or 0))
+            continue
         text = " ".join(str(it.get("text") or "").split())
         if not text:
             continue
@@ -605,6 +615,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         "inputs": inputs,
         "audio": audio,
         "captions": captions,
+        "titles": titles,
         "transitions": transitions,
         "end_tick": end_tick,
         "silent": not any(True for _ in audio),
@@ -987,6 +998,24 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     if ass is not None:
         fc.append(f"[outv]ass='{_ass_escape_path(ass)}'[outv2]")
         vout = "outv2"
+    # Titles over everything: each PNG is its own looped input (see _encode), faded in alpha
+    # (linear, as the preview) and slid with the overlay position expression (titles.py).
+    from hermes_studio import titles as _TT
+
+    base_idx = len(plan["inputs"])
+    for k, ti in enumerate(plan.get("titles") or []):
+        at, dur = _t2s(ti["at"], rate), _t2s(ti["dur"], rate)
+        fi, fo = min(_t2s(ti["fi"], rate), dur), min(_t2s(ti["fo"], rate), dur)
+        chain = f"[{base_idx + k}:v]format=rgba"
+        if fi > 0 and ti["in"] != "none":
+            chain += f",fade=t=in:st=0:d={fi:.6f}:alpha=1"
+        if fo > 0 and ti["out"] != "none":
+            chain += f",fade=t=out:st={max(0.0, dur - fo):.6f}:d={fo:.6f}:alpha=1"
+        chain += f",setpts=PTS-STARTPTS+{at:.6f}/TB[tt{k}]"
+        fc.append(chain)
+        xe, ye = _TT.motion_expr(ti["in"] if fi > 0 else "none", ti["out"] if fo > 0 else "none", at, dur, fi, fo, w, h)
+        fc.append(f"[{vout}][tt{k}]overlay=x='{xe}':y='{ye}':eval=frame:eof_action=pass:format=auto,format=yuv420p[tv{k}]")
+        vout = f"tv{k}"
 
     return ";".join(fc), vout
 
@@ -1001,6 +1030,9 @@ def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "o
             cmd += ["-i", str(inp["path"])]
         elif kind == "gap":
             cmd += ["-f", "lavfi", "-i", f"color=c=black:s={plan['width']}x{plan['height']}:r={plan['fps']:.3f}"]
+    for ti in plan.get("titles") or []:
+        # One still, looped for the title's length at the cut's frame rate.
+        cmd += ["-loop", "1", "-framerate", f"{plan['fps']:.3f}", "-t", f"{_t2s(ti['dur'], plan['rate']):.6f}", "-i", str(ti["png"])]
     cmd += [
         "-filter_complex",
         graph,

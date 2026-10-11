@@ -26,6 +26,12 @@
       .tl button.on{color:var(--ink);border-color:var(--amber);background:rgba(255,200,61,.08)}
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden}
+      .tl-frame.haspic{background:#000}
+      .tl-frame.haspic .tl-shade,.tl-frame.haspic .k,.tl-frame.haspic .big,.tl-frame.haspic .who{display:none}
+      .tl-titles{position:absolute;inset:0;z-index:2;pointer-events:none;overflow:hidden}
+      .tl-titles img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;will-change:transform,opacity}
+      .tl-tsec{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+      .tl-tsec input[type=text]{flex:1;min-width:0}
       .tl-stage.withbin{grid-template-columns:210px minmax(0,1fr) 280px}
       .tl-bin{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
       .tl-binhd{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
@@ -823,6 +829,94 @@
     return false;
   }
 
+  // ---- titles (Editor 1.0, M3) --------------------------------------------------------------
+  // A title is the server's own PNG of the canvas (titles.py, drawn by the Design renderer),
+  // laid over the picture. The render overlays the very same file, so the still title is the
+  // same pixels; only the motion is computed here, by the render's formula: opacity linear over
+  // the in and out (ffmpeg fade, multiplied), a slide of 6% of the canvas eased (1 - p)^3.
+  const TITLE_SLIDE = 0.06;
+  const TITLE_TEMPLATES = [["lower-third", "Lower third"], ["title", "Title"], ["end-card", "End card"]];
+  const TITLE_ANIMS = [["fade", "Fade"], ["slide-up", "Slide up"], ["slide-left", "Slide left"], ["none", "Cut"]];
+  function titleItems() {
+    const out = [];
+    for (const tr of (doc && doc.tracks) || []) if (tr.role === "text") for (const i of tr.items) if (i.title) out.push(i);
+    return out;
+  }
+  function titleState(i, t) {
+    const T = i.title, u = t - i.at;
+    if (u < 0 || u >= i.dur) return null;
+    const fi = Math.min(T.fade_in || 0, i.dur), fo = Math.min(T.fade_out || 0, i.dur);
+    const pin = fi > 0 ? Math.max(0, Math.min(1, u / fi)) : 1;
+    const pout = fo > 0 ? Math.max(0, Math.min(1, (i.dur - u) / fo)) : 1;
+    let alpha = 1, dx = 0, dy = 0;
+    if (T.in !== "none" && fi > 0) alpha *= pin;
+    if (T.out !== "none" && fo > 0) alpha *= pout;
+    const slide = (kind, p) => { const k = Math.pow(1 - p, 3) * TITLE_SLIDE; if (kind === "slide-up") dy += k; if (kind === "slide-left") dx += k; };
+    if (fi > 0) slide(T.in, pin);
+    if (fo > 0) slide(T.out, pout);
+    return { alpha, dx, dy }; // offsets as fractions of the canvas
+  }
+  function titleUrl(i) { return "/api/editor/" + encodeURIComponent(pid) + "/title?id=" + encodeURIComponent(i.id) + "&k=" + encodeURIComponent(i.title.key); }
+  function showTitles() {
+    const box = root && root.querySelector(".tl-titles");
+    if (!box) return;
+    const live = new Set();
+    for (const i of titleItems()) {
+      const st = titleState(i, play);
+      let img = box.querySelector(`img[data-title="${CSS.escape(i.id)}"]`);
+      if (!st) { if (img) img.hidden = true; continue; }
+      live.add(i.id);
+      if (!img) { img = document.createElement("img"); img.alt = ""; img.dataset.title = i.id; box.appendChild(img); }
+      const url = titleUrl(i);
+      if (img.dataset.k !== i.title.key) { img.dataset.k = i.title.key; img.src = url; }
+      img.hidden = false;
+      img.style.opacity = String(st.alpha);
+      img.style.transform = `translate(${(st.dx * 100).toFixed(4)}%, ${(st.dy * 100).toFixed(4)}%)`;
+    }
+    box.querySelectorAll("img[data-title]").forEach((im) => { if (!titleItems().some((i) => i.id === im.dataset.title)) im.remove(); });
+    void live;
+  }
+  async function addTitleHere(template) {
+    if (playing) { stop(); }
+    const at = play;
+    await commit({ op: "title_add", template: template || "lower-third", at, text: "Your name", sub: "What you do", dur: 4 });
+    const made = titleItems().filter((i) => Math.abs(i.at - frameOf(at) / fpsOf()) < 1e-3).pop() || titleItems().pop();
+    if (made) sel = made.id;
+    paint();
+    const f = root.querySelector("[data-ttext]");
+    if (f) { f.focus(); f.select(); }
+  }
+  function titleSection(it) {
+    const T = it.title;
+    const opt = (list, v) => list.map(([k, l]) => `<option value="${k}" ${k === v ? "selected" : ""}>${esc(l)}</option>`).join("");
+    return `<div class="tl-tsec">
+      <div class="tl-row"><span>Template</span><select data-ttpl>${opt(TITLE_TEMPLATES, T.template)}</select></div>
+      <div class="tl-row"><span>Title</span><input data-ttext type="text" maxlength="200" value="${esc(T.text)}"></div>
+      <div class="tl-row"><span>Second line</span><input data-tsub type="text" maxlength="200" value="${esc(T.sub || "")}" placeholder="optional"></div>
+      <div class="tl-row"><span>Accent</span><input data-tacc type="color" value="${esc((T.accent || "#ffc83d").slice(0, 7))}"></div>
+      <div class="tl-row"><span>In</span><select data-tin>${opt(TITLE_ANIMS, T.in)}</select></div>
+      <div class="tl-row"><span>Out</span><select data-tout>${opt(TITLE_ANIMS, T.out)}</select></div>
+    </div>`;
+  }
+  function wireTitle() {
+    const it = find(sel);
+    if (!it || !it.title) return;
+    const send = (patch) => commit({ op: "title_edit", id: it.id, ...patch });
+    const on = (selr, ev, fn) => { const el = root.querySelector(selr); if (el) el.addEventListener(ev, () => fn(el)); };
+    on("[data-ttpl]", "change", (el) => send({ template: el.value }));
+    on("[data-tin]", "change", (el) => send({ in: el.value }));
+    on("[data-tout]", "change", (el) => send({ out: el.value }));
+    on("[data-tacc]", "change", (el) => send({ accent: el.value }));
+    // Words commit when the box is left or Enter is pressed (not per keystroke: each is an undo step).
+    for (const [selr, key] of [["[data-ttext]", "text"], ["[data-tsub]", "sub"]]) {
+      const el = root.querySelector(selr);
+      if (!el) continue;
+      const go = () => { if (el.value !== (key === "text" ? it.title.text : it.title.sub || "")) send({ [key]: el.value }); };
+      el.addEventListener("change", go);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } });
+    }
+  }
+
   // ---- keyframe curves -------------------------------------------------------------------
   // A graph per animated property (Scale, Pos X, Pos Y, Rotate): click to add a point, drag to
   // move it, double-click to remove it. This is the authoring surface Resolve's keyframe editor
@@ -1486,7 +1580,7 @@
   // The inspector controls a person drives from the keyboard. paint() rebuilds the DOM, so the
   // focused one is noted before and focused again after: otherwise a commit made by the first
   // arrow press on a menu or slider dropped focus and the next presses went nowhere.
-  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname"];
+  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc"];
   function paint() {
     if (!root || !doc) return;
     const ae = document.activeElement;
@@ -1529,6 +1623,7 @@
           <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
           <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
           <button type="button" data-act="bin" class="${binOpen ? "on" : ""}" title="Show or hide the bin">Bin</button>
+          <button type="button" data-act="title" title="Add a lower-third title at the playhead (Alt+T)">Title</button>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
@@ -1541,6 +1636,7 @@
             <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
+            <span class="tl-titles" aria-hidden="true"></span>
             <span class="tl-shade"></span>
             <span class="k">${esc(cw)} × ${esc(ch)}</span>
             <span class="big">${esc(fmt(play))}</span>
@@ -1562,6 +1658,7 @@
             </div>
             ${mkSection(mkHere())}
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
+            ${it && it.title ? titleSection(it) : ""}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button><button type="button" data-act="freeze" title="Freeze the frame under the playhead for 2 s (Option+F)">Freeze</button><button type="button" data-act="reverse" class="${it.reverse ? "on" : ""}" aria-pressed="${it.reverse ? "true" : "false"}" title="Play the clip backwards (its sound too)">${it.reverse ? "◀ Reversed" : "Reverse"}</button></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-speedcurve"><canvas data-speedcurve height="120" aria-label="Speed ramp: click to add a speed key, drag to move, double-click to remove. A flat line is normal speed."></canvas></div>${it.speed_keys ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.speed_keys.length} speed keys</span> <button type="button" data-act="clear-speed-ramp">Clear ramp</button></div>` : ""}` : ""}
@@ -1615,6 +1712,8 @@
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
     wireBin();
+    wireTitle();
+    showTitles();
     // Volume is a live slider: update the readout as it drags, and commit on release.
     const vol = root.querySelector("[data-vol]");
     if (vol) {
@@ -1719,6 +1818,7 @@
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
     showGrade();
     showFrame();
+    showTitles();
     updateScope(false);
   }
 
@@ -1813,12 +1913,18 @@
   function showFrame() {
     const img = root && root.querySelector(".tl-pic");
     if (!img || !doc) return;
+    // The viewer is a clean picture, as in Final Cut and Resolve: the shade and the labels over
+    // it (timecode, clip name, canvas size) only show when there is no picture to show. They
+    // used to darken the bottom 42% of every paused frame, which the render never does.
+    const fr = img.closest(".tl-frame");
+    if (fr) fr.classList.toggle("haspic", !!mainClip(play));
     if (playing) return;
-    const t = Math.max(0, Math.round(play * 5) / 5);
+    // Exactly the frame under the playhead (the clock's frame), not the nearest fifth of a second.
+    const t = Math.max(0, frameOf(play) / fpsOf());
     if (t === shown && img.getAttribute("src")) return;
     shown = t;
     img.hidden = false;
-    img.src = "/api/editor/" + encodeURIComponent(pid || "demo") + "/frame?t=" + t;
+    img.src = "/api/editor/" + encodeURIComponent(pid || "demo") + "/frame?t=" + t.toFixed(6);
   }
 
   function xToTime(e) {
@@ -2651,6 +2757,7 @@
       if (s3 && s3.speed_keys) await commit({ op: "speed_keys", id: sel, keys: null });
       return;
     }
+    if (name === "title") { await addTitleHere("lower-third"); return; }
     if (name === "import") { const inp = root.querySelector("[data-import]"); if (inp) inp.click(); return; }
     if (name === "bin") { binOpen = !binOpen; try { localStorage.setItem("tl-bin", binOpen ? "1" : "0"); } catch (e) { /* private */ } paint(); return; }
     if (name === "src-insert" || name === "src-over" || name === "src-append") {
@@ -2866,6 +2973,7 @@
       return;
     }
     if (code === "KeyF" && e.altKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); freezeHere(); return; }
+    if (code === "KeyT" && e.altKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); addTitleHere("lower-third"); return; }
     if (code === "KeyX" && e.altKey) { e.preventDefault(); inOut = { in: null, out: null }; saveMarks(); paint(); return; }
     if (code === "Comma" || code === "Period") {
       // , and . nudge the selection a frame (Shift: a second), as in Resolve and Final Cut.

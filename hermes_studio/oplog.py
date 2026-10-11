@@ -365,6 +365,8 @@ def op_add_text(ctx: _Ctx, a: dict) -> list[dict]:
         "fade_in": a.setdefault("fade_in", 0),
         "fade_out": a.setdefault("fade_out", 0),
     }
+    if "title" in a:
+        it["title"] = copy.deepcopy(a["title"])  # the validator checks it against its template
     _timed(a, it)
     tr["items"].append(it)
     return [{"op": "delete_item", "id": iid}]
@@ -476,7 +478,7 @@ def op_insert_item(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "delete_item", "id": a["item"]["id"]}]
 
 
-_SETTABLE = ("at", "anchor", "src", "dur", "fade_in", "fade_out", "props", "text", "style", "split_from")
+_SETTABLE = ("at", "anchor", "src", "dur", "fade_in", "fade_out", "props", "text", "style", "split_from", "title")
 
 
 def op_set_fields(ctx: _Ctx, a: dict) -> list[dict]:
@@ -792,8 +794,13 @@ def op_edit_text(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     if it["type"] != "text":
         raise _OpError("bad_arg", f"edit_text takes a text item id; {it['id']!r} is a {it['type']}", "id", item_id=it["id"])
-    if not any(k in a for k in _TEXT_FIELDS):
-        raise _OpError("missing_arg", "edit_text needs 'text' and/or 'style'")
+    if not any(k in a for k in _TEXT_FIELDS) and "title" not in a:
+        raise _OpError("missing_arg", "edit_text needs 'text', 'style' and/or 'title'")
+    if "title" in a:
+        # A designed title: replaced whole; the validator checks it against its template.
+        sets = {k: a[k] for k in _TEXT_FIELDS if k in a}
+        sets["title"] = copy.deepcopy(a["title"])
+        return _set(ctx, it["id"], sets)
     for k in _TEXT_FIELDS:
         if k in a:
             c = T._Checker()
@@ -957,11 +964,11 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "add_media": (op_add_media, frozenset({"id", "path", "dur"}), frozenset({"fps", "name", "audio"})),
     "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain"})),
     "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur", "kind"})),
-    "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
+    "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style", "title"})),
     "add_text": (
         op_add_text,
         frozenset({"dur", "text", "style"}),
-        frozenset({"id", "track", "at", "anchor", "fade_in", "fade_out"}),
+        frozenset({"id", "track", "at", "anchor", "fade_in", "fade_out", "title"}),
     ),
     "add_transition": (op_add_transition, frozenset({"between", "dur"}), frozenset({"id", "track", "kind"})),
     "add_track": (op_add_track, frozenset({"role"}), frozenset({"id"})),

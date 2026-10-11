@@ -213,7 +213,7 @@ def view(doc: dict) -> dict:
                 if span_a is None:
                     continue
                 # The seam is where clip A ends *on the timeline*, which speed shortens.
-                span_a_dur = (span_a["src"][1] - span_a["src"][0]) / clip_speed(span_a)
+                span_a_dur = T.item_duration(span_a)  # the one length rule (ramps and holds too)
                 at = span_a.get("at", 0) + span_a_dur - it.get("dur", 0)
                 items.append(
                     {
@@ -247,6 +247,14 @@ def view(doc: dict) -> dict:
                 "dur": round(dur, 3),
                 "label": label,
             }
+            if it["type"] == "text" and isinstance(it.get("title"), dict):
+                from hermes_studio import titles as _TT
+
+                t = it["title"]
+                row["title"] = {"template": t["template"], "text": t["text"], "sub": t.get("sub", ""), "accent": t.get("accent"),
+                                "in": t.get("in", "fade"), "out": t.get("out", "fade"), "key": _TT.key(t),
+                                "fade_in": round((it.get("fade_in") or 0) / rate, 3), "fade_out": round((it.get("fade_out") or 0) / rate, 3)}
+                row["label"] = t["text"]
             if it["type"] == "clip" and "src" in it:
                 row["src_in"] = round(it["src"][0] / rate, 3)
                 row["src_out"] = round(it["src"][1] / rate, 3)
@@ -1006,6 +1014,71 @@ def place(pid: str, media_id: str, src_in: float, src_out: float, mode: str, at:
     return apply(pid, ops, f"{word} {label}")
 
 
+def add_title(pid: str, template: str, at: float, *, text: str, sub: str = "", dur: float = 4.0,
+              accent: str | None = None, anim_in: str = "fade", anim_out: str = "fade", fade: float = 0.5) -> dict:
+    """A designed title on the text track (Final Cut's titles, Resolve's Text+ templates):
+    lower-third, title or end-card, drawn by the Design page's renderer so the preview and the
+    render show the same pixels. ``fade`` is the length of the in and out motion. One undo."""
+    from hermes_studio import titles as TT
+
+    doc = _log(_dir(pid)).doc
+    w, h = (doc.get("size") or [1920, 1080])
+    try:
+        title = TT.make(template, int(w), int(h), text=text, sub=sub, accent=accent, anim_in=anim_in, anim_out=anim_out)
+    except ValueError as exc:
+        raise EditorError(str(exc)) from exc
+    if not title["text"]:
+        raise EditorError("a title needs some words")
+    length = _frames(doc, float(dur))
+    if length < _frames(doc, 0.2):
+        raise EditorError("a title lasts at least 0.2 s")
+    fade_t = min(_frames(doc, max(0.0, float(fade))), length // 2)
+    track = next((t["id"] for t in doc["tracks"] if t.get("role") == "text"), None)
+    if track is None:
+        raise EditorError("this cut has no text track")
+    start = _at_frame(doc, float(at))
+    return apply(pid, [{"op": "add_text", "track": track, "id": f"tt{secrets.token_hex(3)}", "dur": length,
+                        "text": title["text"], "style": "title", "at": start, "fade_in": fade_t, "fade_out": fade_t,
+                        "title": title}], f"Title {title['text'][:40]}")
+
+
+def edit_title(pid: str, item_id: str, **changes) -> dict:
+    """Change a title's words, template, accent or motion. Its layers are rebuilt from the
+    template (the validator holds them to it), the canvas size included, so a title follows a
+    change of canvas the next time it is edited. One undo step."""
+    from hermes_studio import titles as TT
+
+    doc = _log(_dir(pid)).doc
+    _, it = _item(pid, item_id)
+    t = it.get("title")
+    if not isinstance(t, dict):
+        raise EditorError("that item isn't a title")
+    w, h = (doc.get("size") or [1920, 1080])
+    fields = {"template": t["template"], "text": t["text"], "sub": t.get("sub", ""), "accent": t.get("accent"),
+              "anim_in": t.get("in", "fade"), "anim_out": t.get("out", "fade")}
+    for k in ("template", "text", "sub", "accent", "anim_in", "anim_out"):
+        if changes.get(k) is not None:
+            fields[k] = changes[k]
+    try:
+        new = TT.make(fields.pop("template"), int(w), int(h), **fields)
+    except ValueError as exc:
+        raise EditorError(str(exc)) from exc
+    if not new["text"]:
+        raise EditorError("a title needs some words")
+    return apply(pid, [{"op": "edit_text", "id": item_id, "text": new["text"], "title": new}], f"Title {new['text'][:40]}")
+
+
+def title_png(pid: str, item_id: str) -> bytes:
+    """The title's own PNG (the same file the render overlays), for the preview."""
+    from hermes_studio import titles as TT
+
+    folder = _dir(pid)
+    _, it = _item(pid, item_id)
+    if not isinstance(it.get("title"), dict):
+        raise EditorError("that item isn't a title")
+    return TT.png(it["title"], folder / "cache").read_bytes()
+
+
 def set_look(pid: str, item_id: str, look: str | None) -> dict:
     """Apply a named look to a clip (it becomes the clip's grade, so the preview, scopes and
     wheels show it and the wheels can take it further), or clear the grade (None). Clears any
@@ -1569,7 +1642,15 @@ def _media_jpeg(folder: Path, doc: dict, media_id: str, src_s: float) -> bytes:
             _ensure_demo_plate(folder, path)
         else:
             raise EditorError("picture file is missing")
-    slot = max(0, int(round(src_s * 5)))
+    # One still per SOURCE FRAME (the file's own rate), not per fifth of a second: a paused
+    # frame used to be up to three frames off what the render shows.
+    m = doc.get("media", {}).get(media_id, {})
+    mf = m.get("fps") or [30, 1]
+    rate_f = mf[0] / mf[1] if mf[1] else 30.0
+    slot = max(0, int(src_s * rate_f + 1e-6))
+    # Seek a quarter frame BEFORE the frame: an accurate -ss drops every frame that starts
+    # earlier than the seek, so aiming mid-frame handed back the next frame.
+    src_s = max(0.0, (slot - 0.25) / rate_f)
     # Keyed by media as well as time: two clips from different files at the same source second
     # used to share one cached JPEG, so the preview showed the other file's picture. The media
     # id is made filename-safe (ids are free strings); a hash keeps two ids from colliding.
@@ -1577,7 +1658,7 @@ def _media_jpeg(folder: Path, doc: dict, media_id: str, src_s: float) -> bytes:
 
     mkey = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(media_id))[:40]
     mkey += "-" + _hl.sha1(str(media_id).encode()).hexdigest()[:8]
-    cache = folder / "frames" / mkey / f"{slot:05d}.jpg"
+    cache = folder / "frames" / mkey / f"f{slot:07d}.jpg"
     if not cache.is_file() or cache.stat().st_size < 100:
         cache.parent.mkdir(parents=True, exist_ok=True)
         # A temp name of its own: two requests for one frame (the playhead still and a bin
@@ -1588,7 +1669,7 @@ def _media_jpeg(folder: Path, doc: dict, media_id: str, src_s: float) -> bytes:
                 "ffmpeg",
                 "-y",
                 "-ss",
-                f"{src_s:.3f}",
+                f"{src_s:.6f}",
                 "-i",
                 str(path),
                 "-frames:v",

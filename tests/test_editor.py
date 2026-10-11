@@ -2674,3 +2674,153 @@ def test_a_cut_mixing_vertical_and_horizontal_shots_renders(home):
     sar = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=sample_aspect_ratio",
                           "-of", "csv=p=0", out], capture_output=True, text=True).stdout.strip()
     assert sar in ("1:1", "N/A", "0:1")
+
+
+# ---- M3: titles ------------------------------------------------------------------------------
+
+def _title_cut(home, pid):
+    """A 6 s flat-grey (level 60) 1920x1080 cut built through the bin, with sound."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    d = T.new_timeline(pid)
+    d, _ = T.stamp_hash(d)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "base.json").write_text(_json.dumps(d))
+    E._save_current(folder, _O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    src = home / "g.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x3c3c3c:s=1920x1080:r=30:d=6",
+                    "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", str(src)], check=True)
+    E.import_media(pid, src, "Grey")
+    mid = E.view(E._log(folder).doc)["bin"][0]["id"]
+    E.place(pid, mid, 0, 6, "append")
+    return pid
+
+
+def _frame_rgb(path, t):
+    import numpy as np
+
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{t:.4f}", "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                          "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(1080, 1920, 3).astype(float)
+
+
+def _composite(png_path, alpha=1.0, dy=0, bg=60):
+    """What the preview shows: the title PNG over the picture, at an opacity and offset."""
+    import numpy as np
+    from PIL import Image
+
+    im = np.asarray(Image.open(png_path).convert("RGBA")).astype(float)
+    out = np.full((1080, 1920, 3), float(bg))
+    a = im[..., 3:4] / 255.0 * alpha
+    shifted = np.zeros_like(im)
+    if dy >= 0:
+        shifted[dy:] = im[: 1080 - dy]
+        a2 = np.zeros_like(a)
+        a2[dy:] = a[: 1080 - dy]
+        a = a2
+    return out * (1 - a) + shifted[..., :3] * a
+
+
+def test_a_title_renders_the_same_pixels_the_preview_shows(home):
+    """Mid-hold, the rendered frame equals the title PNG composited over the picture -- the PNG
+    the page shows -- to within the H.264 encode (median under 2 levels, 99% within 12)."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+    from hermes_studio import titles as TT
+
+    pid = _title_cut(home, "ttA")
+    E.add_title(pid, "lower-third", 1.0, text="Pablo Navarro", sub="Systems Thinker", dur=4.0)
+    doc = E._log(E._dir(pid)).doc
+    it = next(i for t in doc["tracks"] for i in t["items"] if isinstance(i.get("title"), dict))
+    png = TT.png(it["title"], E._dir(pid) / "cache")
+    assert png.read_bytes() == E.title_png(pid, it["id"])  # the preview's PNG is the render's
+    out = R.render_project(pid)["path"]
+    got, want = _frame_rgb(out, 3.0), _composite(png)
+    d = np.abs(got - want)
+    assert np.median(d) < 2 and np.percentile(d, 99) < 12, (np.median(d), np.percentile(d, 99))
+    assert np.abs(_frame_rgb(out, 0.5) - 60).max() < 4  # before it: no title
+    assert np.abs(_frame_rgb(out, 5.6) - 60).max() < 4  # after it: gone
+
+
+def test_title_motion_matches_the_formula(home):
+    """Halfway through a 0.5 s fade-in the title is at half opacity; halfway through a slide-up
+    it is (1 - 0.5)^3 * 6% of the height lower -- the formula the page uses."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+    from hermes_studio import titles as TT
+
+    pid = _title_cut(home, "ttB")
+    E.add_title(pid, "title", 1.0, text="HELLO", dur=4.0, anim_in="slide-up", fade=1.0)
+    doc = E._log(E._dir(pid)).doc
+    it = next(i for t in doc["tracks"] for i in t["items"] if isinstance(i.get("title"), dict))
+    png = TT.png(it["title"], E._dir(pid) / "cache")
+    out = R.render_project(pid)["path"]
+    t = 1.0 + 0.5  # half way into the 1 s in-motion
+    dy = round(TT.SLIDE * 1080 * (1 - 0.5) ** 3)
+    got = _frame_rgb(out, t)
+    best = min(range(dy - 4, dy + 5), key=lambda k: np.abs(got - _composite(png, alpha=0.5, dy=k)).mean())
+    assert abs(best - dy) <= 2, (best, dy)
+    assert np.median(np.abs(got - _composite(png, alpha=0.5, dy=best))) < 3
+
+
+def test_titles_edit_undo_and_refuse_nonsense(home):
+    pid = _title_cut(home, "ttC")
+    E.add_title(pid, "lower-third", 1.0, text="One", dur=2.0)
+    v = E.view(E._log(E._dir(pid)).doc)
+    row = next(i for t in v["tracks"] for i in t["items"] if i.get("title"))
+    assert row["title"]["template"] == "lower-third" and row["label"] == "One" and row["dur"] == 2.0
+    k0 = row["title"]["key"]
+    E.edit_title(pid, row["id"], text="Two", template="end-card", accent="#22aaff")
+    row2 = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i.get("title"))
+    assert row2["title"]["text"] == "Two" and row2["title"]["template"] == "end-card" and row2["title"]["key"] != k0
+    E.undo(pid)
+    row3 = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i.get("title"))
+    assert row3["title"]["key"] == k0
+    with pytest.raises(E.EditorError):
+        E.add_title(pid, "banner", 0, text="x")
+    with pytest.raises(E.EditorError):
+        E.add_title(pid, "title", 0, text="   ")
+    # The validator holds a title to its template: hand-edited layers are refused.
+    doc = E._log(E._dir(pid)).doc
+    it = next(i for t in doc["tracks"] for i in t["items"] if isinstance(i.get("title"), dict))
+    bad = json.loads(json.dumps(it["title"]))
+    bad["layers"][0]["x"] += 5
+    with pytest.raises(E.EditorError):
+        E.apply(pid, [{"op": "edit_text", "id": it["id"], "title": bad}], "hack")
+
+
+def test_the_paused_frame_is_the_exact_frame_not_the_nearest_fifth(home):
+    """A source whose frame n is grey 16 + (7n mod 210), so neighbouring frames are 7 levels
+    apart: paused at frame n, the still must be frame n. It used to be cached per 0.2 s of
+    source, so most frames showed a neighbour."""
+    import io
+    import json as _json
+
+    import numpy as np
+    from PIL import Image
+
+    from hermes_studio import oplog as _O
+
+    pid = "pfA"
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "nullsrc=s=64x64:r=30:d=6,geq=lum='16+mod(7*N,210)':cb=128:cr=128",
+                    "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", str(folder / "media" / "s.mp4")], check=True)
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    {t["id"]: t for t in d["tracks"]}["V1"]["items"] = [{"id": "v1", "type": "clip", "media": "m1", "src": [0, 6 * s], "at": 0, "fade_in": 0, "fade_out": 0}]
+    d["media"] = {"m1": {"path": "media/s.mp4", "dur": 6 * s, "fps": [30, 1]}}
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    E._save_current(folder, _O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    for n in (37, 38, 41, 100, 101):
+        jpg = E.frame_jpeg(pid, n / 30 + 0.004)
+        got = np.asarray(Image.open(io.BytesIO(jpg)).convert("L")).astype(float)[20:44, 20:44].mean()
+        want = (7 * n) % 210 * 255 / 219  # TV-range Y -> the still's full-range grey
+        assert abs(got - want) <= 3, (n, got, want)

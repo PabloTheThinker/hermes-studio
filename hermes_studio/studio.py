@@ -721,6 +721,19 @@ class StudioHandler(BaseHTTPRequestHandler):
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
             return self._file(media, editor.MEDIA_TYPES[media.suffix.lower()])
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "title":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                data = editor.title_png(parts[2], (qs.get("id") or [""])[0])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")  # the URL carries the content key
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
             qs = parse_qs(urlparse(self.path).query)
             try:
@@ -882,6 +895,15 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
             elif op == "speed_keys":
                 project = editor.set_speed_keys(pid, str(body.get("id") or ""), body.get("keys"))
+            elif op == "title_add":
+                project = editor.add_title(pid, str(body.get("template") or "lower-third"), _num(body, "at", 0.0),
+                                           text=str(body.get("text") or ""), sub=str(body.get("sub") or ""),
+                                           dur=_num(body, "dur", 4.0), accent=body.get("accent"),
+                                           anim_in=str(body.get("in") or "fade"), anim_out=str(body.get("out") or "fade"))
+            elif op == "title_edit":
+                project = editor.edit_title(pid, str(body.get("id") or ""), template=body.get("template"), text=body.get("text"),
+                                            sub=body.get("sub"), accent=body.get("accent"), anim_in=body.get("in"),
+                                            anim_out=body.get("out"))
             elif op == "place":
                 at = body.get("at")
                 project = editor.place(pid, str(body.get("media") or ""), _num(body, "src_in", 0.0),

@@ -58,8 +58,10 @@ TRACK_OPTIONAL = {"mute", "solo", "gain"}
 TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1]}
 CLIP_KEYS = {"id", "type", "media", "src", "fade_in", "fade_out"}
 TEXT_KEYS = {"id", "type", "dur", "text", "style", "fade_in", "fade_out"}
+# title: a designed title (titles.py) -- drawn to an image instead of burned in as a caption.
 TIMED_OPTIONAL = {"at", "anchor", "split_from"}
 CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
+TEXT_OPTIONAL = TIMED_OPTIONAL | {"title"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
 # A marker's colour: OpenTimelineIO's marker colours bar black and white, so a round trip keeps
@@ -681,7 +683,7 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b) and b[0] != b[1]):
             c.bad("bad_transition", _j(ip, "between"), "between must be two different clip ids")
         return
-    if not c.keys(it, ip, CLIP_KEYS if typ == "clip" else TEXT_KEYS, CLIP_OPTIONAL if typ == "clip" else TIMED_OPTIONAL):
+    if not c.keys(it, ip, CLIP_KEYS if typ == "clip" else TEXT_KEYS, CLIP_OPTIONAL if typ == "clip" else TEXT_OPTIONAL):
         return
     if ("at" in it) == ("anchor" in it):
         c.bad("at_and_anchor", ip, "give exactly one of 'at' or 'anchor'")
@@ -700,6 +702,12 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         c.string(it["style"], _j(ip, "style"))
         if c.ticks(it["dur"], _j(ip, "dur"), positive=True):
             dur = it["dur"]
+        if "title" in it:
+            from hermes_studio import titles as _TT
+
+            why = _TT.problem(it["title"])
+            if why:
+                c.bad("bad_title", _j(ip, "title"), why)
     else:
         speed: Fraction | None = Fraction(1)
         if "props" in it and c.keys(it["props"], _j(ip, "props"), set(), PROP_KEYS):
