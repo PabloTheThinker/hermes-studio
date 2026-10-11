@@ -1112,6 +1112,7 @@
   // Resolve shows a retimed clip's speed on the clip itself; reverse is a backwards arrow.
   function retimeBadge(c) {
     if (c.type !== "clip") return "";
+    if (c.hold) return `<b class="tl-rt" title="Freeze frame">❚❚ hold</b>`;
     const sp = c.speed_keys ? "ramp" : c.speed && Math.abs(c.speed - 1) > 1e-6 ? `${+c.speed.toFixed(2)}×` : "";
     const txt = (c.reverse ? "◀" + (sp ? " " : "") : "") + sp;
     return txt ? `<b class="tl-rt" title="${c.reverse ? "Reversed" : ""}${c.reverse && sp ? " · " : ""}${sp ? "Speed " + sp : ""}">${esc(txt)}</b>` : "";
@@ -1323,7 +1324,7 @@
             ${mkSection(mkHere())}
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button><button type="button" data-act="reverse" class="${it.reverse ? "on" : ""}" aria-pressed="${it.reverse ? "true" : "false"}" title="Play the clip backwards (its sound too)">${it.reverse ? "◀ Reversed" : "Reverse"}</button></span></div>` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button><button type="button" data-act="freeze" title="Freeze the frame under the playhead for 2 s (Option+F)">Freeze</button><button type="button" data-act="reverse" class="${it.reverse ? "on" : ""}" aria-pressed="${it.reverse ? "true" : "false"}" title="Play the clip backwards (its sound too)">${it.reverse ? "◀ Reversed" : "Reverse"}</button></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-speedcurve"><canvas data-speedcurve height="120" aria-label="Speed ramp: click to add a speed key, drag to move, double-click to remove. A flat line is normal speed."></canvas></div>${it.speed_keys ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.speed_keys.length} speed keys</span> <button type="button" data-act="clear-speed-ramp">Clear ramp</button></div>` : ""}` : ""}
             ${it && it.type === "clip" && window.HSWheels ? colourSection(it) : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
@@ -2271,7 +2272,7 @@
       return;
     }
     const c1 = mainClip(play) || it;
-    if (rate < 0 || c1.reverse) {
+    if (rate < 0 || c1.reverse || c1.hold) {
       // A <video> can't play backwards, so a reverse shuttle (or a reversed clip) steps it: paused, one seek every
       // 80 ms (about 12 pictures a second), which is what a reverse scrub looks like anyway.
       if (!v.paused) v.pause();
@@ -2352,7 +2353,8 @@
       raf = requestAnimationFrame(loop);
       return;
     }
-    const revMain = ((doc.tracks.find((x) => x.role === "main") || {}).items || []).some((i) => i.reverse);
+    // A reversed clip or a freeze frame can't be driven by the <video>'s own clock.
+    const revMain = ((doc.tracks.find((x) => x.role === "main") || {}).items || []).some((i) => i.reverse || i.hold);
     if (r === 1 && !revMain) {
       if (mix) msg = "Sound is still loading; playing the picture's own sound for now.";
       paint();
@@ -2367,6 +2369,17 @@
     raf = requestAnimationFrame(loop);
   }
 
+  // Freeze frame at the playhead (Final Cut: Option+F): a 2 s hold of the frame under it, on the
+  // main-track clip there, pushing the rest of the cut out.
+  async function freezeHere() {
+    const c = mainClip(play);
+    if (!c || c.type !== "clip" || c.hold) { msg = "Put the playhead on a clip to freeze its frame."; paint(); return; }
+    const at = play;
+    await commit({ op: "freeze", id: c.id, at, hold: 2 });
+    sel = null;
+    play = at;
+    paint();
+  }
   async function act(name, el) {
     if (name === "play") {
       if (playing) { stop(); paint(); return; }
@@ -2390,6 +2403,10 @@
     if (name === "clear-speed-ramp") {
       const s3 = find(sel);
       if (s3 && s3.speed_keys) await commit({ op: "speed_keys", id: sel, keys: null });
+      return;
+    }
+    if (name === "freeze") {
+      await freezeHere();
       return;
     }
     if (name === "reverse") {
@@ -2592,6 +2609,7 @@
       setMark(which, play);
       return;
     }
+    if (code === "KeyF" && e.altKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); freezeHere(); return; }
     if (code === "KeyX" && e.altKey) { e.preventDefault(); inOut = { in: null, out: null }; saveMarks(); paint(); return; }
     if (code === "Comma" || code === "Period") {
       // , and . nudge the selection a frame (Shift: a second), as in Resolve and Final Cut.

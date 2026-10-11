@@ -43,6 +43,7 @@
     return out;
   }
   function srcAt(c, into) {
+    if (c.hold) return 0; // a freeze frame shows its one source frame the whole time
     const span = Math.max(0, (c.src_out || 0) - (c.src_in || 0));
     const u = Math.max(0, into);
     const pts = rampPts(c);
@@ -85,6 +86,7 @@
   }
   // Playback speed at clip-timeline second `into`.
   function speedAt(c, into) {
+    if (c.hold) return 0;
     const pts = rampPts(c);
     if (!pts) return c.speed || 1;
     const t = srcAt(c, into);

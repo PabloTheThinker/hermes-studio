@@ -264,11 +264,9 @@ def view(doc: dict) -> dict:
                 row["grade_preview"] = _GR.preview(_g)
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
                 row["reverse"] = props.get("reverse") is True
-                skv = props.get("speed_keys")
-                row["speed_keys"] = (
-                    [[round(k["at"] / rate, 4), round(_pair_to_float(k["speed"]), 4)] for k in skv]
-                    if isinstance(skv, list) and len(skv) >= 2 else None
-                )
+                row["hold"] = bool(props.get("hold"))
+                curve = T.ramp_curve(it) if it.get("type") == "clip" else None
+                row["speed_keys"] = [[round(a, 4), round(v, 4)] for a, v in curve] if curve else None
                 gk = props.get("gain_keys")
                 row["gain_keys"] = (
                     [{"at": round(k["at"] / rate, 4), "gain": round(_pair_to_float(k["gain"]), 4)} for k in gk]
@@ -732,6 +730,72 @@ def set_reverse(pid: str, item_id: str, on: bool) -> dict:
     return _retime(pid, item_id, {"reverse": flag}, {"reverse": flag}, "Reverse" if on else "Forward")
 
 
+def freeze(pid: str, item_id: str, at_seconds: float, hold_seconds: float = 2.0) -> dict:
+    """Freeze frame (Final Cut's Add Freeze Frame, Resolve's Freeze Frame): hold the frame under
+    ``at_seconds`` for ``hold_seconds``, pushing everything after it out by the hold.
+
+    The clip is cut at the playhead (its sound too) and a one-frame still of the frame shown
+    there is inserted between the pieces; the still carries the clip's grade, crop and framing
+    but not its motion, and has no sound, so the hold is silent. One undo step."""
+    doc = _log(_dir(pid)).doc
+    tr_of, me = None, None
+    for tr in doc["tracks"]:
+        for it in tr["items"]:
+            if it["id"] == item_id:
+                tr_of, me = tr, it
+    if me is None:
+        raise EditorError(f"no item {item_id!r}")
+    if me.get("type") != "clip" or tr_of.get("role") != "main" or "at" not in me:
+        raise EditorError("freeze a clip on the main track")
+    if (me.get("props") or {}).get("hold"):
+        raise EditorError("that clip is already a freeze frame")
+    hold = T.seconds_to_ticks(float(hold_seconds))
+    if not (T.seconds_to_ticks(0.1) <= hold <= T.seconds_to_ticks(600)):
+        raise EditorError("hold between 0.1 and 600 seconds")
+    start, length = me["at"], T.item_duration(me)
+    cut = T.seconds_to_ticks(float(at_seconds))
+    if not start <= cut < start + length:
+        raise EditorError("the playhead isn't on that clip")
+    # The frame shown at the playhead, snapped to the media's own frame grid.
+    m = doc["media"][me["media"]]
+    fps = m.get("fps") or [30, 1]
+    frame = T.TICK_RATE * fps[1] // fps[0]
+    src = me["src"][0] + T.source_offset(me, cut - start)
+    src = (src // frame) * frame
+    if isinstance(m.get("dur"), int):
+        src = min(src, m["dur"] - frame)
+    src = max(0, src)
+    tag = secrets.token_hex(3)
+    still = f"fz{tag}"
+    props = {k: v for k, v in (me.get("props") or {}).items() if k in ("grade", "crop", "transform", "look") and v is not None}
+    props["hold"] = hold
+
+    ops: list[dict] = []
+    later_from = cut
+    pieces: list[str] = []
+    if cut > start:
+        a, b = f"{item_id}a{tag}", f"{item_id}b{tag}"
+        ops.append({"op": "split_clip", "id": item_id, "at": cut, "ids": [a, b]})
+        pieces.append(b)
+    for sid in _linked_sound(pid, item_id):
+        if cut > start:
+            ops.append({"op": "split_clip", "id": sid, "at": cut, "ids": [f"{sid}a{tag}", f"{sid}b{tag}"]})
+            pieces.append(f"{sid}b{tag}")
+    # Everything that starts at or after the cut moves out by the hold (the new right-hand
+    # pieces included); anchored items follow their clips.
+    later = [it["id"] for tr in doc["tracks"] for it in tr["items"]
+             if it.get("type") != "transition" and "at" in it and it["at"] >= later_from and it["id"] != item_id]
+    if cut == start:
+        later.append(item_id)
+        later += [sid for sid in _linked_sound(pid, item_id) if sid not in later]
+    move = sorted(set(later + pieces), key=lambda x: (x not in pieces, x))
+    if move:
+        ops.append({"op": "move_items", "ids": move, "by": hold})
+    ops.append({"op": "insert_clip", "track": tr_of["id"], "id": still, "media": me["media"],
+                "src": [src, src + frame], "at": cut, "fade_in": 0, "fade_out": 0, "props": props})
+    return apply(pid, ops, f"Freeze frame {hold_seconds:g}s")
+
+
 def set_look(pid: str, item_id: str, look: str | None) -> dict:
     """Apply a named look to a clip (it becomes the clip's grade, so the preview, scopes and
     wheels show it and the wheels can take it further), or clear the grade (None). Clears any
@@ -1020,7 +1084,8 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
     if not keys or len(keys) < 2:
         # A ramp needs at least two keys to mean anything; fewer clears it. The constant speed
         # stays whatever it was, so a one-key "ramp" is just that constant.
-        return _retime(pid, item_id, {"speed_keys": None}, {"speed_keys": None}, "Speed ramp cleared")
+        return _retime(pid, item_id, {"speed_keys": None, "ramp_at": None}, {"speed_keys": None, "ramp_at": None},
+                       "Speed ramp cleared")
     if len(keys) > 64:
         raise EditorError("at most 64 speed keys")
     out = []
@@ -1036,7 +1101,9 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
         prev = ticks
         out.append({"at": ticks, "speed": pair(sp)})
     # The clip's sound follows the same ramp, so picture and sound stay in step.
-    return _retime(pid, item_id, {"speed_keys": out}, {"speed_keys": out}, f"Speed ramp ({len(out)} keys)")
+    # Keys are in this clip's own time, so any split offset into an older ramp is dropped.
+    return _retime(pid, item_id, {"speed_keys": out, "ramp_at": None}, {"speed_keys": out, "ramp_at": None},
+                   f"Speed ramp ({len(out)} keys)")
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:

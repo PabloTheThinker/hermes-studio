@@ -56,7 +56,7 @@ Each of these is a 1.x item after 1.0 ships.
 | Playback | real preview mix on the audio clock, J/K/L shuttle, frame step, timecode, adaptive ruler | — |
 | Transitions | all 58 ffmpeg xfade kinds, picker, drag to resize | — |
 | Keyframes | position, scale, rotate, Ken Burns, curve editor, diamonds, drag handles, volume rubber band | opacity keyframes; easing (ease in/out) |
-| Speed | constant 0.1–10×, **speed ramps** (graph UI), sound follows picture, frame-accurate render | **reverse, freeze frame** |
+| Speed | constant 0.1–10×, **speed ramps** (graph UI), **reverse**, **freeze frame** (Option+F), sound follows picture, retime ripples, one time map for render/preview/split, frame-accurate render | — (M1 done) |
 | Colour | primary grade (lift/gamma/gain/sat), wheels, curves (M/R/G/B), white balance + eyedropper, 5 looks, scopes (waveform/parade/vectorscope), live graded preview | **LUT (.cube) import; masks** |
 | Audio | track mixer (mute/solo/gain), meters, waveforms, fades, volume keys, loudnorm | **pan, ducking (sidechain), export loudness readout** |
 | Text | caption track (burned ASS, word styles) | **title objects**: position, size, font, colour, animate-in/out, lower-third + end-card templates |
@@ -77,7 +77,7 @@ render or real CDP input before its commit.
 
 | # | Milestone | Done when |
 |---|---|---|
-| **M1** | **Speed finish**: reverse, freeze frame (hold N seconds), sound handled (reversed / silence) | a reversed clip renders frames in reverse order (frame-number probe); a freeze holds one frame for its length |
+| **M1** ✅ | **Speed finish**: reverse, freeze frame (hold N seconds), sound handled (reversed / silence) | a reversed clip renders frames in reverse order (frame-number probe); a freeze holds one frame for its length. **Done** `1b3b641`, `775a541` + the freeze commit |
 | **M2** | **Media bin + source viewer + 3-point editing**: bin of imported media, source monitor with its own In/Out, insert (ripple), overwrite, append, keys Q/W/E | a cut is built entirely from the bin with the keyboard; each edit is one undo step |
 | **M3** | **Titles**: text objects on T1 (font, size, colour, position, box), fade/slide in-out, lower-third and end-card templates, rendered with drawtext/ASS | a title appears at the same place and size in the preview and the export (pixel-checked) |
 | **M4** | **Audio finish**: pan, ducking (music under voice, sidechaincompress), export loudness (ebur128) shown after a render | music measurably drops under voice; the export reads −14 LUFS ±1 |

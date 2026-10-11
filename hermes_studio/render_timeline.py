@@ -221,29 +221,11 @@ def _volume(it: dict) -> float:
 
 
 def _speed_keys(it: dict, rate: int) -> list[dict] | None:
-    """The clip's speed ramp as [{at: clip-local seconds, speed: float}], or None. `at` is ticks
-    from the clip's start, speed a reduced [num, den] pair. The render integrates 1/speed over
-    source time (see _ramp_pts), matching timeline._ramp_dur_ticks that sizes the clip."""
-    raw = (it.get("props") or {}).get("speed_keys")
-    if not isinstance(raw, list) or len(raw) < 2:
-        return None
-    out = []
-    for k in raw:
-        if not (isinstance(k, dict) and isinstance(k.get("at"), int)):
-            return None
-        sp = k.get("speed")
-        if not (isinstance(sp, (list, tuple)) and len(sp) == 2):
-            return None
-        try:
-            num, den = float(sp[0]), float(sp[1])
-            sv = num / den if den != 0 else None
-        except (TypeError, ValueError, ZeroDivisionError):
-            sv = None
-        if sv is None or sv <= 0:
-            return None
-        out.append({"at": k["at"] / rate, "speed": sv})
-    out.sort(key=lambda k: k["at"])
-    return out or None
+    """The clip's speed ramp as [{at: clip-local seconds, speed: float}] on its own window, or
+    None: timeline.ramp_curve, so a split piece renders exactly its part of the original ramp
+    and the render, view and time map read one curve."""
+    curve = T.ramp_curve(it) if it.get("src") else None
+    return [{"at": a, "speed": v} for a, v in curve] if curve else None
 
 
 def _ramp_pts(kfs: list[dict]) -> str:
@@ -476,16 +458,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             raise RenderError("a clip has no length")
         speed = _speed(it)
         speed_keys = _speed_keys(it, rate)
-        # The source window is read at `speed`; a clip played faster than 1x covers fewer
-        # ticks on the timeline than the source range it spans, and slower covers more.
-        # A speed ramp replaces the constant: the timeline length is the integral of 1/speed
-        # over the source window (timeline._ramp_dur_ticks sizes it the same way).
-        if speed_keys:
-            # One integral for schema, view and render (timeline._ramp_dur_ticks reads the
-            # stored ticks + [num, den] keys).
-            tl_dur = T._ramp_dur_ticks((it.get("props") or {}).get("speed_keys"), o1 - i0) or (o1 - i0)
-        else:
-            tl_dur = int(round((o1 - i0) / speed))
+        # The clip's length on the timeline is the one length rule the schema, view and ripple
+        # use: source range / speed, a ramp's integral, or a freeze frame's hold.
+        tl_dur = T.item_duration(it)
         if tl_dur <= 0:
             raise RenderError("a clip has no length")
         rel = str(media.get(it.get("media") or "", {}).get("path") or "")
@@ -512,7 +487,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         props_ = it.get("props") or {}
         # A legacy props.look renders as that look's grade (the eq/colorbalance chains are gone).
         grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
-        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes, "speed_keys": speed_keys}
+        hold = props_.get("hold") if isinstance(props_.get("hold"), int) and props_.get("hold") > 0 else None
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform,
+                      "keyframes": keyframes, "speed_keys": None if hold else speed_keys, "tl_dur": tl_dur, "hold": hold}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -542,18 +519,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             # A retimed sound item occupies (source range) / speed ticks on the timeline, the
             # same as its picture -- not the raw source range. Otherwise a 2x clip's sound padded
             # the timeline to 8s while the picture was 4s.
-            _ask = _speed_keys(it, rate)
-            if _ask:
-                # _ramp_dur_ticks reads the stored keys (ticks + [num, den]), not the plan's
-                # seconds/float copy -- feeding it the copy returned None and the sound padded
-                # the timeline back to the source length.
-                _at_dur = T._ramp_dur_ticks((it.get("props") or {}).get("speed_keys"), o1 - i0)
-            else:
-                _at_dur = int(round((o1 - i0) / _speed(it)))
-            # Malformed ramp keys are reported by the validator; fall back to real time here so
-            # the plan still builds.
-            if _at_dur is None:
-                _at_dur = o1 - i0
+            # A retimed sound item occupies its retimed length (the one length rule), not the raw
+            # source range -- a 2x clip's sound used to pad the timeline to the source length.
+            _at_dur = T.item_duration(it)
             end_tick = max(end_tick, it["at"] + _at_dur)
             if not audible:
                 continue
@@ -779,6 +747,7 @@ def _assemble_video(segs: list, seg_ids: list, seg_durs: list, transitions: list
 
 def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     """The filter graph, and the label to map as the output video."""
+    sizes = {inp["idx"]: inp["size"] for inp in plan["inputs"] if inp.get("role") == "clip" and inp.get("size")}
     w, h = plan["width"], plan["height"]
     rate = plan["rate"]
     total = _t2s(plan["end_tick"], rate)
@@ -822,11 +791,17 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # 1/speed plays it faster (shorter output) or slower (longer). PTS-STARTPTS
             # still re-bases each segment to zero so concat/xfade see clean, aligned
             # streams; fps= then re-timestamps to the canvas rate.
-            dur = src_dur / speed
+            # The clip's length on the timeline: the one length rule (constant speed, a ramp's
+            # integral, or a freeze frame's hold). `src_dur / speed` was wrong for a ramp, and the
+            # dissolve offsets and the fade-out start read this.
+            dur = _t2s(inp["tl_dur"], rate) if inp.get("tl_dur") else src_dur / speed
             v_in.append(f"[v{n}]")
             seg_ids.append(inp.get("id"))
             seg_durs.append(dur)
-            sw, sh = inp["size"] or (w, h)
+            # Every piece of a file has that file's size. Only the first input record carried it,
+            # so the second and later pieces of a split (or a freeze) were scaled to the whole
+            # canvas -- stretched -- whenever the source's shape differed from the canvas's.
+            sw, sh = inp["size"] or sizes.get(idx) or (w, h)
             # A crop keeps a sub-rectangle of the source, which then fills the canvas, so
             # feed _contain the cropped dimensions. Crop happens before scale.
             crop = inp.get("crop")
@@ -899,8 +874,18 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
             pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
-            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
-            fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
+            if inp.get("hold"):
+                # A freeze frame: pick exactly the one source frame (a half-frame window either
+                # side of its time, so rounding can't take two or none), clone it out to the
+                # hold, then cut to the hold's length.
+                fr = 1.0 / (fps if fps > 0 else 30.0)
+                chain = (f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts=PTS-STARTPTS,"
+                         f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}"
+                         f"{vfade},format=yuv420p")
+                fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{chain}[v{n}]")
+            else:
+                chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
+                fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")

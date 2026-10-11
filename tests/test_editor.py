@@ -2367,3 +2367,102 @@ def test_the_validator_takes_reverse_as_true_or_nothing(home):
     E.create("demo")
     with pytest.raises(E.EditorError):
         E.apply("demo", [{"op": "set_props", "id": "c1", "props": {"reverse": "yes"}}], "bad")
+
+
+def test_freeze_frame_holds_the_frame_under_the_playhead_and_ripples(home):
+    """Freeze at 3 s for 2 s on a frame-number source: output frames 0..89 are source 0..89,
+    90..149 all show source frame 90, then the clip resumes at 91 onwards; the cut grows by 2 s,
+    the hold is silent, and the sound after it lines up with its picture again."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+
+    pid = _numbered_av(home, "fzA")
+    E.freeze(pid, "v1", 3.0, 2.0)
+    v = E.view(E._log(E._dir(pid)).doc)
+    v1 = sorted((i for t in v["tracks"] if t["id"] == "V1" for i in t["items"]), key=lambda i: i["at"])
+    assert [(i["at"], round(i["dur"], 4), i["hold"]) for i in v1] == [(0.0, 3.0, False), (3.0, 2.0, True), (5.0, 5.0, False)]
+    a1 = sorted((i for t in v["tracks"] if t["id"] == "A1" for i in t["items"]), key=lambda i: i["at"])
+    assert [(i["at"], round(i["dur"], 4)) for i in a1] == [(0.0, 3.0), (5.0, 5.0)]  # sound cut and moved too
+    out = R.render_project(pid)
+    lum, _ = _frames_and_tone(out["path"])
+    assert len(lum) == 300
+    want = np.concatenate([np.arange(0, 90), np.full(60, 90), np.arange(90, 240)])
+    mid = (want >= 16) & (want <= 235)
+    assert np.abs(lum - want)[mid].max() <= 1.5, np.abs(lum - want)[mid].max()
+    E.undo(pid)
+    assert len([i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] if t["id"] == "V1" for i in t["items"]]) == 1
+
+
+def test_a_freeze_frame_on_a_ramped_or_reversed_clip_holds_the_frame_you_see(home):
+    """The still is the frame the playhead shows, through the one time map: on a reversed clip
+    at 2 s that is source 6 s, not 2 s."""
+    E.create("demo")
+    E.set_reverse("demo", "c1", True)
+    E.freeze("demo", "c1", 2.0, 1.0)
+    doc = E._log(E._dir("demo")).doc
+    still = next(i for t in doc["tracks"] for i in t["items"] if (i.get("props") or {}).get("hold"))
+    fps = doc["media"][still["media"]].get("fps") or [30, 1]
+    frame = T.TICK_RATE * fps[1] // fps[0]
+    assert abs(still["src"][0] - 6 * T.TICK_RATE) <= frame
+    assert E.source_time(doc, 2.5)[1] == pytest.approx(still["src"][0] / T.TICK_RATE)
+
+
+def test_freeze_at_a_clip_start_inserts_before_it_and_refuses_bad_holds(home):
+    E.create("demo")
+    before = _v1("demo")
+    E.freeze("demo", "c2", 8.0, 1.5)
+    after = _v1("demo")
+    assert after["c2"][0] == before["c2"][0] + 1.5 and after["c1"] == before["c1"]
+    with pytest.raises(E.EditorError):
+        E.freeze("demo", "c3", 40.0, 2.0)  # playhead not on c3
+    with pytest.raises(E.EditorError):
+        E.freeze("demo", "c3", 25.0, 0.0)
+
+
+def test_splitting_a_reversed_or_ramped_clip_keeps_the_picture_continuous(home):
+    """A reversed clip split at 2 s: first piece is source 6..8 (played 8 -> 6), second 0..6.
+    A ramped clip splits into two pieces that read the same curve, meet to the tick, and show the
+    frames the unsplit ramp shows."""
+    s = T.TICK_RATE
+    E.create("demo")
+    E.set_reverse("demo", "c1", True)
+    E.split("demo", "c1", 2.0)
+    v1 = sorted((i for t in E._log(E._dir("demo")).doc["tracks"] if t["id"] == "V1" for i in t["items"]), key=lambda i: i["at"])
+    assert [i["src"] for i in v1[:2]] == [[6 * s, 8 * s], [0, 6 * s]]
+    E.reset("demo")
+    E.set_speed_keys("demo", "c1", [{"at": 0, "speed": 0.5}, {"at": 8, "speed": 2.0}])
+    doc = E._log(E._dir("demo")).doc
+    whole = next(T.item_duration(i) for t in doc["tracks"] for i in t["items"] if i["id"] == "c1")
+    seen = [E.source_time(doc, t)[1] for t in (1.0, 2.5, 4.0, 6.0)]
+    E.split("demo", "c1", 2.0)
+    doc = E._log(E._dir("demo")).doc
+    v1 = sorted((i for t in doc["tracks"] if t["id"] == "V1" for i in t["items"]), key=lambda i: i["at"])
+    a, b = v1[0], v1[1]
+    assert a["at"] + T.item_duration(a) == b["at"]
+    assert T.item_duration(a) + T.item_duration(b) == whole
+    assert [E.source_time(doc, t)[1] for t in (1.0, 2.5, 4.0, 6.0)] == pytest.approx(seen, abs=1e-4)
+    E.undo("demo")
+    E.redo("demo")
+
+
+def test_every_piece_of_a_split_keeps_the_sources_shape(home):
+    """A square source on the 16:9 canvas is boxed (1080x1080, pillarboxed). Only the FIRST piece
+    of a file used to know its size: after a split the second piece was scaled to 1920x1080,
+    stretched. Both pieces must be the same box."""
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+
+    pid = _numbered_av(home, "sqA")
+    E.split(pid, "v1", 4.0)
+    folder = E._dir(pid)
+    fc, _ = R._build_graph(R._build_plan(E._log(folder).doc, folder), None)
+    assert fc.count("scale=1080:1080") == 2 and "scale=1920:1080" not in fc
+    out = R.render_project(pid)
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", out["path"], "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                         capture_output=True, check=True).stdout
+    y = np.frombuffer(raw, np.uint8).reshape(-1, 1080, 1920)
+    # Frame 200 (second piece, source frame 200, bright): the side bars are black, as in piece one.
+    assert y[200, 540, 100] < 20 and y[200, 540, 960] > 150
+    assert y[50, 540, 100] < 20

@@ -668,8 +668,28 @@ def op_split_clip(ctx: _Ctx, a: dict) -> list[dict]:
     pa["split_from"] = pb["split_from"] = it["id"]
     pb["at"] = cut
     if it["type"] == "clip":
-        mid = it["src"][0] + _whole(off * _speed(it), "the split point")
-        pa["src"], pb["src"] = [it["src"][0], mid], [mid, it["src"][1]]
+        props = it.get("props") or {}
+        s0, s1 = it["src"]
+        ramp = T.ramp_curve(it) is not None
+        # p = source ticks in PLAYED order at the cut (the one time map; exact for a constant
+        # speed, the integral's inverse for a ramp).
+        p = T.played_offset(it, off) if ramp else _whole(off * _speed(it), "the split point")
+        if not 0 < p < s1 - s0:
+            raise _OpError("bad_arg", "the split point must be strictly inside the clip's source", "at")
+        if props.get("reverse") is True:
+            # Played backwards: the first piece is the END of the source window.
+            pa["src"], pb["src"] = [s1 - p, s1], [s0, s1 - p]
+        else:
+            pa["src"], pb["src"] = [s0, s0 + p], [s0 + p, s1]
+        if ramp:
+            # Both pieces keep the original curve and read it from where they start, so each
+            # plays exactly its part; lengths share one origin, so the cut lands where the first
+            # piece ends (to the tick) and the two add up to the whole.
+            r0 = props.get("ramp_at") or 0
+            pa.setdefault("props", {})["ramp_at"] = r0 or None
+            pb.setdefault("props", {})["ramp_at"] = r0 + p
+            off = T.item_duration(pa)
+            pb["at"] = cut = start + off
     else:
         pa["dur"], pb["dur"] = off, dur - off
     pa["fade_out"], pb["fade_in"] = 0, 0

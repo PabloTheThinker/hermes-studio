@@ -829,6 +829,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
             elif op == "speed_keys":
                 project = editor.set_speed_keys(pid, str(body.get("id") or ""), body.get("keys"))
+            elif op == "freeze":
+                project = editor.freeze(pid, str(body.get("id") or ""), _num(body, "at", 0.0), _num(body, "hold", 2.0))
             elif op == "reverse":
                 project = editor.set_reverse(pid, str(body.get("id") or ""), body.get("on") is True)
             elif op == "look":

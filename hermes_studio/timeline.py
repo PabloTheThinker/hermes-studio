@@ -68,7 +68,7 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
 # It multiplies props.volume, so the volume stays the clip's overall trim.
@@ -83,7 +83,7 @@ SPEEDKEY_KEYS = {"at", "speed"}
 # the clip's constant props.speed for the render (the schema treats a clip as either constant or
 # ramped, never both meaningfully).
 
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
 GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
@@ -559,13 +559,9 @@ def _check_speed_keys(c: _Checker, keys: Any, path: str) -> None:
             prev_at = kf["at"]
 
 
-def _ramp_dur_ticks(keys: Any, src_ticks: int) -> int | None:
-    """Timeline length in whole ticks of a source window played through a speed ramp: the
-    integral of 1/speed over source time, clamped to the window. None if the keys are malformed
-    (the validator reports them separately). Between two keys the speed is linear in source
-    seconds, so 1/speed integrates to a natural log; outside the keys it holds the end speed."""
-    import math
-
+def _ramp_parse(keys: Any) -> list[tuple[float, float]] | None:
+    """Stored ramp keys -> sorted [(at seconds, speed)], or None if absent or malformed (the
+    validator reports malformed keys separately)."""
     if not isinstance(keys, list) or len(keys) < 2:
         return None
     pts = []
@@ -583,28 +579,65 @@ def _ramp_dur_ticks(keys: Any, src_ticks: int) -> int | None:
             return None
         pts.append((k["at"] / TICK_RATE, sv))
     pts.sort()
-    total = 0.0
-    u = 0.0  # source seconds elapsed
-    end = src_ticks / TICK_RATE
-    # Before the first key the first speed holds (the render plays it that way too).
-    if pts[0][0] > 0:
-        u = min(end, pts[0][0])
-        total += u / pts[0][1]
-    # Walk the source window [0, end]; speed at u is the piecewise-linear ramp, held at the ends.
+    return pts
+
+
+def _ramp_I(pts: list[tuple[float, float]], x: float) -> float:
+    """Output seconds for the first ``x`` seconds of played source: the integral of 1/speed.
+    Between keys the speed is linear in source time (a natural log); before the first key and
+    after the last the end speed holds."""
+    import math
+
+    x = max(0.0, x)
+    if x <= pts[0][0]:
+        return x / pts[0][1]
+    total = pts[0][0] / pts[0][1]
     for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
-        a, b = max(u, ta), min(end, tb)
-        if b > a:
-            k = (sb - sa) / (tb - ta) if tb > ta else 0.0
-            if abs(k) < 1e-12:
-                total += (b - a) / sa
-            else:
-                total += (math.log(sa + k * (b - a)) - math.log(sa)) / k
-            u = b
-        if u >= end:
-            break
-    if u < end:  # after the last key: hold the last speed
-        total += (end - u) / pts[-1][1]
-    return max(0, int(round(total * TICK_RATE)))
+        if tb <= ta:
+            continue
+        hi = min(x, tb)
+        if hi > ta:
+            k = (sb - sa) / (tb - ta)
+            total += (hi - ta) / sa if abs(k) < 1e-12 else (math.log(sa + k * (hi - ta)) - math.log(sa)) / k
+        if x <= tb:
+            return total
+    return total + (x - pts[-1][0]) / pts[-1][1]
+
+
+def _ramp_speed(pts: list[tuple[float, float]], x: float) -> float:
+    if x <= pts[0][0]:
+        return pts[0][1]
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+        if x <= tb:
+            return sa + (sb - sa) * (x - ta) / (tb - ta) if tb > ta else sb
+    return pts[-1][1]
+
+
+def _ramp_dur_ticks(keys: Any, src_ticks: int, start: int = 0) -> int | None:
+    """Timeline length in whole ticks of a source window played through a speed ramp, the window
+    starting ``start`` ticks into the ramp (a split piece reads the ramp from where it was cut).
+    Computed from a SHARED origin -- round(I(start+span)) - round(I(start)) -- so two pieces of
+    a split ramp always meet exactly and add up to the whole. None if the keys are malformed."""
+    pts = _ramp_parse(keys)
+    if pts is None:
+        return None
+    a = max(0, start)
+    return max(0, int(round(_ramp_I(pts, (a + src_ticks) / TICK_RATE) * TICK_RATE))
+               - int(round(_ramp_I(pts, a / TICK_RATE) * TICK_RATE)))
+
+
+def ramp_curve(item: dict) -> list[tuple[float, float]] | None:
+    """The clip's ramp as [(at seconds, speed)] on its OWN window [0, span] in played order -- the
+    stored curve read from ``ramp_at`` and clipped, with a key at each end. The render, the view
+    and the time map all use this, so a split piece plays exactly its part of the original."""
+    props = item.get("props") or {}
+    pts = _ramp_parse(props.get("speed_keys"))
+    if pts is None:
+        return None
+    a = (props.get("ramp_at") or 0) / TICK_RATE
+    span = (item["src"][1] - item["src"][0]) / TICK_RATE
+    inner = [(t - a, v) for t, v in pts if a + 1e-9 < t < a + span - 1e-9]
+    return [(0.0, _ramp_speed(pts, a))] + inner + [(span, _ramp_speed(pts, a + span))]
 
 
 def _check_gain_keys(c: _Checker, keys: Any, path: str) -> None:
@@ -724,6 +757,17 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
             if pr.get("speed_keys") is not None:
                 _check_speed_keys(c, pr["speed_keys"], _j(ip, "props", "speed_keys"))
+            if pr.get("hold") is not None:
+                # A freeze frame: one source frame held for `hold` ticks on the timeline.
+                if not (_is_int(pr["hold"]) and 0 < pr["hold"] <= MAX_TICKS):
+                    c.bad("wrong_type", _j(ip, "props", "hold"), "hold must be whole ticks > 0")
+                elif pr.get("speed_keys") is not None or pr.get("reverse") is not None:
+                    c.bad("bad_hold", _j(ip, "props", "hold"), "a freeze frame can't also ramp or reverse")
+            if pr.get("ramp_at") is not None:
+                if not (_is_int(pr["ramp_at"]) and pr["ramp_at"] >= 0):
+                    c.bad("wrong_type", _j(ip, "props", "ramp_at"), "ramp_at must be whole ticks >= 0")
+                elif pr.get("speed_keys") is None:
+                    c.bad("bad_speed_keys", _j(ip, "props", "ramp_at"), "ramp_at needs a speed ramp")
             # Reverse is stored as True or not at all (None), so a forward clip hashes as before.
             if pr.get("reverse") is not None and pr["reverse"] is not True:
                 c.bad("wrong_type", _j(ip, "props", "reverse"), "reverse must be true or null")
@@ -738,11 +782,13 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 c.bad("empty_range", _j(ip, "src"), "src in must be before src out")
             elif _is_int(mdur) and src[1] > mdur:
                 c.bad("src_out_of_media", _j(ip, "src"), "src out is past the end of the media")
+            elif _is_int((it.get("props") or {}).get("hold")) and it["props"]["hold"] > 0:
+                dur = it["props"]["hold"]  # a freeze frame is as long as its hold
             elif (it.get("props") or {}).get("speed_keys") is not None:
                 # A speed ramp: the timeline length is the integral of 1/speed over the source
                 # window (render_timeline computes the same integral). Rounded to a whole
                 # tick; a ramp's length is inherently approximate at frame boundaries.
-                rd = _ramp_dur_ticks(it["props"]["speed_keys"], src[1] - src[0])
+                rd = _ramp_dur_ticks(it["props"]["speed_keys"], src[1] - src[0], (it.get("props") or {}).get("ramp_at") or 0)
                 if rd is None:
                     pass  # malformed keys already reported by _check_speed_keys
                 elif rd <= 0:
@@ -766,49 +812,49 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         c.bad("fade_too_long", ip, "fade_in + fade_out must not exceed the item's duration")
 
 
-def source_offset(item: dict, into: int) -> int:
-    """Source ticks from the clip's src in, for a point ``into`` ticks after the clip starts on
-    the timeline: the inverse of the length rule. Constant speed multiplies; a speed ramp
-    inverts the integral of 1/speed piece by piece (between keys the speed is linear, so the
-    inverse is an exponential); before the first key and after the last the end speed holds.
-    Clamped to the source window. The preview, the frame cache and the page all ask this, so
-    a paused frame is the frame the render shows."""
+def played_offset(item: dict, into: int) -> int:
+    """Source ticks in PLAYED order (from the start of what is seen) for a point ``into`` ticks
+    after the clip starts on the timeline: the inverse of the length rule. Constant speed
+    multiplies; a ramp inverts the integral of 1/speed piece by piece (between keys the speed
+    is linear, so the inverse is an exponential). Clamped to the window."""
     import math
 
     span = item["src"][1] - item["src"][0]
     into = max(0, into)
-    keys = (item.get("props") or {}).get("speed_keys")
-    if _ramp_dur_ticks(keys, span):
-        pts = sorted((k["at"] / TICK_RATE, k["speed"][0] / k["speed"][1]) for k in keys)
-        u = into / TICK_RATE  # output seconds
+    if (item.get("props") or {}).get("hold"):
+        return 0  # a freeze frame shows its one source frame the whole time
+    pts = ramp_curve(item)
+    if pts:
+        u = into / TICK_RATE
         t = None
-        out0 = pts[0][0] / pts[0][1]  # output time at the first key (first speed holds before)
-        if u < out0:
-            t = u * pts[0][1]
-        else:
-            acc = out0
-            for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
-                d = tb - ta
-                if d <= 0:
-                    continue
-                k = (sb - sa) / d
-                seg = d / sa if abs(k) < 1e-12 else (math.log(sb) - math.log(sa)) / k
-                if u < acc + seg:
-                    w = u - acc
-                    t = ta + (w * sa if abs(k) < 1e-12 else sa * (math.exp(k * w) - 1.0) / k)
-                    break
-                acc += seg
-            if t is None:
-                t = pts[-1][0] + (u - acc) * pts[-1][1]
+        acc = 0.0
+        for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+            d = tb - ta
+            if d <= 0:
+                continue
+            k = (sb - sa) / d
+            seg = d / sa if abs(k) < 1e-12 else (math.log(sb) - math.log(sa)) / k
+            if u < acc + seg:
+                w = u - acc
+                t = ta + (w * sa if abs(k) < 1e-12 else sa * (math.exp(k * w) - 1.0) / k)
+                break
+            acc += seg
+        if t is None:
+            t = pts[-1][0] + (u - acc) * pts[-1][1]
         off = int(round(t * TICK_RATE))
     else:
         sp = (item.get("props") or {}).get("speed", [1, 1])
         off = int(Fraction(into) * Fraction(sp[0], sp[1]))
-    off = max(0, min(span - 1, off))
+    return max(0, min(span - 1, off))
+
+
+def source_offset(item: dict, into: int) -> int:
+    """Source ticks from src in for a point ``into`` ticks into the clip on the timeline: the
+    played offset, read from the out point down when the clip is reversed. The preview, the
+    frame cache and the page all ask this, so a paused frame is the frame the render shows."""
+    off = played_offset(item, into)
     if (item.get("props") or {}).get("reverse") is True:
-        # Played backwards: the speed map runs in PLAYED time, then the source window is read
-        # from its out point down.
-        off = span - 1 - off
+        off = item["src"][1] - item["src"][0] - 1 - off
     return off
 
 
@@ -816,10 +862,14 @@ def item_duration(item: dict) -> int:
     """Timeline duration in ticks of a valid clip, text or transition item."""
     if item["type"] in ("text", "transition"):
         return item["dur"]
+    hold = (item.get("props") or {}).get("hold")
+    if isinstance(hold, int) and not isinstance(hold, bool) and hold > 0:
+        return hold  # a freeze frame: its length is the hold, whatever its one-frame source
     # A speed ramp replaces the constant speed: the length is the integral of 1/speed. This is
     # the ONE length rule -- overlap checks, ripple, anchors, view and render all read it. (It
     # used to ignore ramps, so a slowing ramp could run a clip over the next one unrefused.)
-    rd = _ramp_dur_ticks((item.get("props") or {}).get("speed_keys"), item["src"][1] - item["src"][0])
+    props = item.get("props") or {}
+    rd = _ramp_dur_ticks(props.get("speed_keys"), item["src"][1] - item["src"][0], props.get("ramp_at") or 0)
     if rd is not None and rd > 0:
         return rd
     sp = item.get("props", {}).get("speed", [1, 1])
