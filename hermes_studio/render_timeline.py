@@ -19,6 +19,7 @@ Shape of a render:
 from __future__ import annotations
 
 from hermes_studio import grade as _G
+from hermes_studio import timeline as T
 
 import math
 import shutil
@@ -246,47 +247,47 @@ def _speed_keys(it: dict, rate: int) -> list[dict] | None:
 
 
 def _ramp_pts(kfs: list[dict]) -> str:
-    """A setpts expression that plays a clip through a speed ramp, in timebase ticks.
+    """A setpts expression that plays a clip through a speed ramp.
 
-    The output timestamp of a source frame at time ``t`` is ``integral(1/speed)`` from the clip
-    start to ``t``. Between two keys the speed is linear in ``t``, so ``1/speed`` integrates to
-    a natural log; outside the keys the speed holds the end value (a plain divide). ``t`` here is
-    ``PTS-STARTPTS`` rebased to seconds via the source timebase, so the expression multiplies
-    back into ticks at the end. Keys before the clip start are clamped (the ramp starts already
-    in progress), matching how the clip is sized."""
+    The output time of a source frame at ``t`` seconds (clip-local) is the integral of 1/speed
+    from 0 to ``t``. Between two keys the speed is linear in ``t`` so 1/speed integrates to a
+    natural log; before the first key and after the last the speed holds (a plain divide).
+
+    ``t`` is ``(PTS-STARTPTS)*TB`` -- ffmpeg's own ``TB``, the stream's real timebase -- and the
+    result is divided by ``TB`` to get back to PTS units. Segment offsets are summed FORWARD from
+    the clip start, so each piece starts where the one before it ended. (The first version
+    divided by a made-up 1e6 ticks/s and summed offsets from the end; three-key ramps showed
+    frames up to 140 off.) Speeds and times are rendered with enough digits for frame accuracy.
+    """
     def v(x: float) -> str:
-        return f"{x:.6f}"
+        return f"{x:.9f}"
 
-    first, last = kfs[0], kfs[-1]
-    # Before the first key: hold the first speed -> out = t / s0.
-    before = f"(PTS-STARTPTS)/{TB}/{v(first['speed'])}*{TB}"
-    # Build from the last segment back. Each segment [a,b] with linear speed s0->s1:
-    #   out = C + (1/k) * ln((s0 + k*(t - ta)) / s0),  k = (s1 - s0)/(tb - ta)
-    # C is the accumulated output time at the segment's start.
-    expr = f"(PTS-STARTPTS)/{TB}/{v(last['speed'])}*{TB}"  # after the last key: hold last speed
-    acc = 0.0
-    for i in range(len(kfs) - 1, 0, -1):
-        a, b = kfs[i - 1], kfs[i]
-        s0, s1, ta, tb = a["speed"], b["speed"], a["at"], b["at"]
+    pts = [(float(k["at"]), float(k["speed"])) for k in kfs]
+    t = "((PTS-STARTPTS)*TB)"
+    # Output seconds at each key, summed forward. Before key 0 the first speed holds.
+    starts = [pts[0][0] / pts[0][1]]
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+        d = tb - ta
+        if d <= 0:
+            starts.append(starts[-1])
+            continue
+        k = (sb - sa) / d
+        starts.append(starts[-1] + (d / sa if abs(k) < 1e-12 else (math.log(sb) - math.log(sa)) / k))
+    # After the last key: hold the last speed.
+    ta, sa = pts[-1]
+    expr = f"{v(starts[-1])}+({t}-{v(ta)})/{v(sa)}"
+    for i in range(len(pts) - 2, -1, -1):
+        (ta, sa), (tb, sb) = pts[i], pts[i + 1]
         if tb <= ta:
             continue
-        k = (s1 - s0) / (tb - ta)
-        seg_dur = tb - ta
+        k = (sb - sa) / (tb - ta)
         if abs(k) < 1e-12:
-            seg_out = seg_dur / s0
+            piece = f"{v(starts[i])}+({t}-{v(ta)})/{v(sa)}"
         else:
-            seg_out = (math.log(s1) - math.log(s0)) / k
-        C = acc  # output time at ta
-        t_expr = f"(PTS-STARTPTS)/{TB}"
-        if abs(k) < 1e-12:
-            piece = f"{v(C)}+({t_expr}-{v(ta)})/{v(s0)}*{TB}"
-        else:
-            piece = (f"{v(C)}+(1.0/{v(k)})*log(({v(s0)}+{v(k)}*({t_expr}-{v(ta)}))/{v(s0)})*{TB}")
-        expr = f"if(lt({t_expr},{v(tb)}),{piece},{expr})"
-        acc += seg_out
-    # Guard before the first key.
-    t_expr = f"(PTS-STARTPTS)/{TB}"
-    return f"if(lt({t_expr},{v(first['at'])}),{before},{expr})"
+            piece = f"{v(starts[i])}+log(({v(sa)}+{v(k)}*({t}-{v(ta)}))/{v(sa)})/{v(k)}"
+        expr = f"if(lt({t},{v(tb)}),{piece},{expr})"
+    expr = f"if(lt({t},{v(pts[0][0])}),{t}/{v(pts[0][1])},{expr})"
+    return f"({expr})/TB"
 
 
 def _gain_keys(it: dict, rate: int) -> list[dict] | None:
@@ -302,6 +303,61 @@ def _gain_keys(it: dict, rate: int) -> list[dict] | None:
 
 
 TB = 1000000.0  # internal 'seconds' unit for a speed-ramp setpts expression
+
+
+def _atempo(tempo: float) -> str:
+    """The atempo filter chain that plays at ``tempo``. atempo accepts 0.5 to 100, so a tempo
+    below 0.5 (a clip slower than half speed) chains halves until the rest fits: 0.1x is
+    0.5,0.5,0.4. Pitch is preserved throughout, which is what a retime should sound like."""
+    if abs(tempo - 1.0) < 1e-9:
+        return ""
+    if tempo >= 0.5:
+        return f"atempo={tempo:.6f}"
+    parts = []
+    rest = tempo
+    while rest < 0.5 - 1e-9:
+        parts.append("atempo=0.5")
+        rest *= 2.0
+    parts.append(f"atempo={rest:.6f}")
+    return ",".join(parts)
+
+
+def _audio_segments(row: dict, rate: int) -> list[tuple[float, float, str]]:
+    """How an audio item is retimed: [(source start s, source end s, atempo chain)], in order,
+    concatenated by the caller. One segment for a constant speed; one per ramp segment otherwise.
+
+    For a segment where the speed ramps s0 -> s1 across D seconds of source, the picture runs
+    D * ln(s1/s0) / (s1 - s0) seconds, so the tempo that makes the SOUND come out at exactly that
+    length is (s1 - s0) / ln(s1/s0) -- which tends to s0 as s1 tends to s0. Splitting on the
+    source clock keeps the total equal to the picture's integral, so sound and picture stay in
+    step; each segment is time-stretched with its pitch kept."""
+    i0, o1 = row["src"]
+    dur = _t2s(o1 - i0, rate)
+    sk = row.get("speed_keys")
+    if not sk or len(sk) < 2:
+        return [(0.0, dur, _atempo(float(row.get("speed") or 1.0)))]
+    ks = [(k["at"], k["speed"]) for k in sk]
+
+    def speed_at(t: float) -> float:
+        if t <= ks[0][0]:
+            return ks[0][1]
+        for (ta, sa), (tb, sb) in zip(ks, ks[1:]):
+            if t <= tb:
+                return sa + (sb - sa) * (t - ta) / (tb - ta) if tb > ta else sb
+        return ks[-1][1]
+
+    bounds = sorted({0.0, dur, *(min(dur, max(0.0, t)) for t, _ in ks)})
+    out = []
+    for a_t, b_t in zip(bounds, bounds[1:]):
+        if b_t - a_t < 1e-6:
+            continue
+        s0, s1 = speed_at(a_t), speed_at(b_t)
+        if abs(s1 - s0) < 1e-9:
+            tempo = s0
+        else:
+            tempo = (s1 - s0) / math.log(s1 / s0)
+        out.append((a_t, b_t, _atempo(tempo)))
+    return out
 
 
 def _ass_escape_path(path: Path) -> str:
@@ -363,23 +419,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         # A speed ramp replaces the constant: the timeline length is the integral of 1/speed
         # over the source window (timeline._ramp_dur_ticks sizes it the same way).
         if speed_keys:
-            from fractions import Fraction as _F
-            acc = 0.0
-            u = 0.0
-            end = (o1 - i0) / rate
-            for a, b in zip(speed_keys, speed_keys[1:]):
-                ta, tb = a["at"], b["at"]
-                s0, s1 = a["speed"], b["speed"]
-                lo, hi = max(u, ta), min(end, tb)
-                if hi > lo:
-                    k = (s1 - s0) / (tb - ta) if tb > ta else 0.0
-                    acc += (hi - lo) / s0 if abs(k) < 1e-12 else (math.log(s0 + k * (hi - lo)) - math.log(s0)) / k
-                    u = hi
-                if u >= end:
-                    break
-            if u < end:
-                acc += (end - u) / speed_keys[-1]["speed"]
-            tl_dur = max(1, int(round(acc * rate)))
+            # One integral for schema, view and render (timeline._ramp_dur_ticks reads the
+            # stored ticks + [num, den] keys).
+            tl_dur = T._ramp_dur_ticks((it.get("props") or {}).get("speed_keys"), o1 - i0) or (o1 - i0)
         else:
             tl_dur = int(round((o1 - i0) / speed))
         if tl_dur <= 0:
@@ -430,7 +472,22 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             rel = str(media.get(it.get("media") or "", {}).get("path") or "")
             if not rel or i0 >= o1:
                 continue
-            end_tick = max(end_tick, it["at"] + (o1 - i0))
+            # A retimed sound item occupies (source range) / speed ticks on the timeline, the
+            # same as its picture -- not the raw source range. Otherwise a 2x clip's sound padded
+            # the timeline to 8s while the picture was 4s.
+            _ask = _speed_keys(it, rate)
+            if _ask:
+                # _ramp_dur_ticks reads the stored keys (ticks + [num, den]), not the plan's
+                # seconds/float copy -- feeding it the copy returned None and the sound padded
+                # the timeline back to the source length.
+                _at_dur = T._ramp_dur_ticks((it.get("props") or {}).get("speed_keys"), o1 - i0)
+            else:
+                _at_dur = int(round((o1 - i0) / _speed(it)))
+            # Malformed ramp keys are reported by the validator; fall back to real time here so
+            # the plan still builds.
+            if _at_dur is None:
+                _at_dur = o1 - i0
+            end_tick = max(end_tick, it["at"] + _at_dur)
             if not audible:
                 continue
             path = resolve_media(folder, rel)
@@ -452,6 +509,10 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                     "fade_out": it.get("fade_out") or 0,
                     "volume": _volume(it) * gain,
                     "gain_keys": _gain_keys(it, rate),
+                    # A retimed sound item plays at its own speed: without this the picture
+                    # moves and the sound does not, and the two drift apart.
+                    "speed": _speed(it),
+                    "speed_keys": _speed_keys(it, rate),
                 }
             )
 
@@ -807,11 +868,34 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         k = cut_a.get(idx, 0)
         cut_a[idx] = k + 1
         asrc = f"sa{idx}_{k}" if a_uses.get(idx, 0) > 1 else f"{idx}:a"
-        fc.append(
-            f"[{asrc}]atrim=start={s_in:.3f}:end={s_in + dur:.3f},asetpts=PTS-STARTPTS"
-            f"{fade}{vol_filter},aresample=48000,adelay=delays={delay_ms}:all=1,"
-            f"apad=whole_dur={total:.3f}[{lab}]"
-        )
+        # Retime: one atrim+atempo per segment on the SOURCE clock, then concat, so a ramp plays
+        # with the same time map as its picture (see _audio_segments). A single unretimed segment
+        # keeps the old one-filter path, which is exact and cheaper.
+        segs = _audio_segments(row, rate)
+        if len(segs) == 1:
+            _, _, at = segs[0]
+            chain = f"[{asrc}]atrim=start={s_in:.3f}:end={s_in + dur:.3f},asetpts=PTS-STARTPTS"
+            if at:
+                chain += f",{at}"
+            fc.append(
+                f"{chain}{fade}{vol_filter},aresample=48000,adelay=delays={delay_ms}:all=1,"
+                f"apad=whole_dur={total:.3f}[{lab}]"
+            )
+        else:
+            parts = []
+            for si, (a_t, b_t, at) in enumerate(segs):
+                out = f"{lab}s{si}"
+                fc.append(
+                    f"[{asrc}]atrim=start={s_in + a_t:.3f}:end={s_in + b_t:.3f},asetpts=PTS-STARTPTS"
+                    f"{',' + at if at else ''}[{out}]"
+                )
+                parts.append(f"[{out}]")
+            joined = "".join(parts)
+            fc.append(
+                f"{joined}concat=n={len(segs)}:v=0:a=1,asetpts=PTS-STARTPTS"
+                f"{fade}{vol_filter},aresample=48000,adelay=delays={delay_ms}:all=1,"
+                f"apad=whole_dur={total:.3f}[{lab}]"
+            )
         a_ready.append((lab, row["role"], 1.0))
 
     if not a_ready:

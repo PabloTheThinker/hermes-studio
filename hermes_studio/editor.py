@@ -632,6 +632,29 @@ def set_canvas(pid: str, width: int, height: int) -> dict:
     return apply(pid, [{"op": "set_canvas", "width": w, "height": h}], f"Canvas {w}×{h}")
 
 
+def _linked_sound(pid: str, item_id: str) -> list[str]:
+    """The audio items that carry the same footage as a video clip: same media, same source range
+    and the same start, on a voice or music track. A film imports as a picture item plus its
+    sound items laid over it, so retiming the picture must retime the sound or the two drift."""
+    doc = _log(_dir(pid)).doc
+    me = None
+    for tr in doc["tracks"]:
+        for it in tr["items"]:
+            if it["id"] == item_id:
+                me = it
+    if not me or me.get("type") != "clip" or "src" not in me or "at" not in me:
+        return []
+    out = []
+    for tr in doc["tracks"]:
+        if tr.get("role") not in ("voice", "music"):
+            continue
+        for it in tr["items"]:
+            if (it.get("type") == "clip" and it.get("media") == me.get("media")
+                    and it.get("src") == me.get("src") and it.get("at") == me.get("at")):
+                out.append(it["id"])
+    return out
+
+
 def set_speed(pid: str, item_id: str, speed: float) -> dict:
     """Set a clip's playback speed. The schema stores it as a reduced [num, den] pair and
     allows 0.1x to 10x; anything outside that is refused before it reaches the op log.
@@ -654,6 +677,10 @@ def set_speed(pid: str, item_id: str, speed: float) -> dict:
         a_id, b_id = tr["between"]
         ops.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
     ops.append({"op": "set_props", "id": item_id, "props": {"speed": pair}})
+    # The clip's sound plays at the same speed (and any ramp on it is cleared, since the clip is
+    # now a constant rate): one op per linked item, still one undo step.
+    for sid in _linked_sound(pid, item_id):
+        ops.append({"op": "set_props", "id": sid, "props": {"speed": pair, "speed_keys": None}})
     return apply(pid, ops, f"Speed {s:g}×")
 
 
@@ -945,7 +972,10 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
     if not keys or len(keys) < 2:
         # A ramp needs at least two keys to mean anything; fewer clears it. The constant speed
         # stays whatever it was, so a one-key "ramp" is just that constant.
-        return apply(pid, [{"op": "set_props", "id": item_id, "props": {"speed_keys": None}}], "Speed ramp cleared")
+        ops = [{"op": "set_props", "id": item_id, "props": {"speed_keys": None}}]
+        for sid in _linked_sound(pid, item_id):
+            ops.append({"op": "set_props", "id": sid, "props": {"speed_keys": None}})
+        return apply(pid, ops, "Speed ramp cleared")
     if len(keys) > 64:
         raise EditorError("at most 64 speed keys")
     out = []
@@ -960,7 +990,11 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
             raise EditorError("speed keys must be in strictly increasing time order")
         prev = ticks
         out.append({"at": ticks, "speed": pair(sp)})
-    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"speed_keys": out}}], f"Speed ramp ({len(out)} keys)")
+    ops = [{"op": "set_props", "id": item_id, "props": {"speed_keys": out}}]
+    # The clip's sound follows the same ramp, so picture and sound stay in step.
+    for sid in _linked_sound(pid, item_id):
+        ops.append({"op": "set_props", "id": sid, "props": {"speed_keys": out}})
+    return apply(pid, ops, f"Speed ramp ({len(out)} keys)")
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:

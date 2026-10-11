@@ -2024,3 +2024,172 @@ def test_the_view_carries_the_ramp_and_its_length(home):
     E.set_speed_keys(pid, "aa", None)
     row = next(i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] for i in t["items"] if i["id"] == "aa")
     assert row["speed_keys"] is None and row["dur"] == pytest.approx(8.0)
+
+
+def _av_project(home, pid, seconds=8.0):
+    """A film-shaped project: a picture clip on V1 and its sound clip on A1, same media/src/at."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"sine=frequency=440:duration={seconds}",
+         "-f", "lavfi", "-i", f"testsrc2=s=320x180:d={seconds}:r=30", "-c:v", "libx264",
+         "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+         str(folder / "media" / "av.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/av.mp4", "dur": int(seconds * s), "fps": [30, 1]}}
+    by["V1"]["items"] = [{"id": "v1", "type": "clip", "media": "m1", "src": [0, int(seconds * s)], "at": 0, "fade_in": 0, "fade_out": 0}]
+    by["A1"]["items"] = [{"id": "a1", "type": "clip", "media": "m1", "src": [0, int(seconds * s)], "at": 0, "fade_in": 0, "fade_out": 0}]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    return pid
+
+
+def _props_of(pid, iid):
+    return next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == iid).get("props") or {}
+
+
+def test_retiming_a_clip_retimes_its_sound(home):
+    """A film is a picture item plus its sound items. Retiming the picture must carry the speed to
+    the sound, or the sound plays at the old rate and drifts out of sync."""
+    pid = _av_project(home, "avA")
+    E.set_speed(pid, "v1", 2.0)
+    assert _props_of(pid, "a1")["speed"] == [2, 1]
+    assert _props_of(pid, "v1")["speed"] == [2, 1]
+    E.set_speed(pid, "v1", 0.5)
+    assert _props_of(pid, "a1")["speed"] == [1, 2]
+    # One undo step for the whole thing.
+    before = len(E.history(pid))
+    E.set_speed(pid, "v1", 1.0)
+    assert _props_of(pid, "a1")["speed"] == [1, 1] and len(E.history(pid)) == before + 1
+
+
+def test_a_ramp_retimes_its_sound(home):
+    pid = _av_project(home, "avB")
+    E.set_speed_keys(pid, "v1", [{"at": 0, "speed": 1.0}, {"at": 4.0, "speed": 0.5}])
+    assert _props_of(pid, "a1").get("speed_keys") == _props_of(pid, "v1").get("speed_keys")
+    E.set_speed_keys(pid, "v1", None)
+    assert _props_of(pid, "a1").get("speed_keys") is None
+
+
+def test_the_render_retimes_sound_to_match_the_picture(home):
+    """At 2x the picture and the sound must come out the same length (they did not: the sound kept
+    its original length and ran twice as long as the picture)."""
+    from hermes_studio import render_timeline as R
+
+    pid = _av_project(home, "avC")
+    E.set_speed(pid, "v1", 2.0)
+    out = R.render_project(pid)
+    vlen = float(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                 "stream=duration", "-of", "csv=p=0", out["path"]], capture_output=True, text=True).stdout.strip())
+    alen = float(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                 "stream=duration", "-of", "csv=p=0", out["path"]], capture_output=True, text=True).stdout.strip())
+    assert vlen == pytest.approx(4.0, abs=0.15), vlen
+    assert alen == pytest.approx(vlen, abs=0.15), (alen, vlen)
+
+
+def test_a_ramped_clips_sound_matches_its_length(home):
+    """The ramped sound is split per segment and time-stretched, so its total is the picture's
+    integral -- not the source length."""
+    import math
+
+    from hermes_studio import render_timeline as R
+
+    pid = _av_project(home, "avD")
+    E.set_speed_keys(pid, "v1", [{"at": 0, "speed": 0.5}, {"at": 4.0, "speed": 2.0}])
+    out = R.render_project(pid)
+    alen = float(subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+                                 "stream=duration", "-of", "csv=p=0", out["path"]], capture_output=True, text=True).stdout.strip())
+    want = math.log(2 / 0.5) / 0.375 + 4 / 2.0
+    assert alen == pytest.approx(want, abs=0.2), (alen, want)
+    assert alen < 8.0
+
+
+def test_audio_segments_cover_the_source_and_match_the_integral():
+    """The split points cover the whole source window exactly once, and each segment's tempo makes
+    it come out at the picture's length for that stretch."""
+    import math
+
+    from hermes_studio import render_timeline as R
+
+    s = T.TICK_RATE
+    row = {"src": (0, 8 * s), "speed": 1.0, "rate": s,
+           "speed_keys": [{"at": 0, "speed": 0.5}, {"at": 4.0, "speed": 2.0}]}
+    segs = R._audio_segments(row, s)
+    assert segs[0][0] == 0.0 and segs[-1][1] == pytest.approx(8.0)
+    assert all(b > a for a, b, _ in segs)
+    assert sum(b - a for a, b, _ in segs) == pytest.approx(8.0)
+    out = sum((b - a) / float(c.split("=")[1]) for a, b, c in segs)
+    assert out == pytest.approx(math.log(2 / 0.5) / 0.375 + 2.0, abs=1e-3)
+
+
+def test_atempo_chains_below_half_speed():
+    from hermes_studio import render_timeline as R
+
+    assert R._atempo(1.0) == "" and R._atempo(2.0) == "atempo=2.000000"
+    chain = R._atempo(0.1)
+    factors = [float(p.split("=")[1]) for p in chain.split(",")]
+    prod = 1.0
+    for f in factors:
+        prod *= f
+        assert 0.5 <= f <= 100.0  # every stage is a legal atempo
+    assert prod == pytest.approx(0.1, abs=1e-6)
+
+
+def test_a_three_key_ramp_shows_the_right_frame_at_every_moment(tmp_path):
+    """Frame-accurate: a source whose brightness is its frame number, played through a 3-key ramp
+    (1x -> 0.5x -> 2x). Every output frame must show the source frame the integral says it should
+    (within the 1-frame rounding of fps), and the clip must be the integral long. The first ramp
+    render summed segment offsets from the end and used a fake timebase: 38 frames off, 20 long."""
+    import math
+
+    import numpy as np
+
+    from hermes_studio import render_timeline as R
+
+    src = tmp_path / "n.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+                    "nullsrc=s=64x64:r=30:d=8,geq=lum='N':cb=128:cr=128", "-c:v", "libx264",
+                    "-qp", "0", "-pix_fmt", "yuv444p", str(src)], check=True)
+    keys = [{"at": 0.0, "speed": 1.0}, {"at": 2.0, "speed": 0.5}, {"at": 6.0, "speed": 2.0}]
+
+    def out_of(t):
+        tot, u = 0.0, 0.0
+        for a, b in zip(keys, keys[1:]):
+            lo, hi = max(u, a["at"]), min(t, b["at"])
+            if hi > lo:
+                k = (b["speed"] - a["speed"]) / (b["at"] - a["at"])
+                s_lo = a["speed"] + k * (lo - a["at"])
+                tot += (math.log(s_lo + k * (hi - lo)) - math.log(s_lo)) / k
+                u = hi
+        return tot + max(0.0, t - u) / keys[-1]["speed"]
+
+    out = tmp_path / "o.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vf",
+                    f"setpts='{R._ramp_pts(keys)}',fps=30", "-c:v", "libx264", "-qp", "0",
+                    "-pix_fmt", "yuv444p", str(out)], check=True)
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(out), "-f", "rawvideo",
+                          "-pix_fmt", "yuv444p", "-"], capture_output=True, check=True).stdout
+    y = np.frombuffer(raw, np.uint8).reshape(-1, 3, 64, 64)[:, 0]
+    got = np.round(y[:, 20:44, 20:44].mean(axis=(1, 2))).astype(int)
+    outs = np.array([out_of(n / 30) for n in range(240)])
+    want = np.array([int(np.searchsorted(outs, k / 30 + 1e-6, side="right") - 1) for k in range(len(got))])
+    assert abs(len(got) - out_of(8.0) * 30) <= 1, len(got)
+    assert np.abs(got - want).max() <= 1, np.abs(got - want).max()
+
+
+def test_a_ramp_whose_first_key_is_late_holds_the_first_speed_before_it():
+    """Keys at 2s (0.5x) and 6s (0.5x) on an 8s source: the whole clip is 0.5x, so 16s -- not the
+    12s you get by skipping the stretch before the first key."""
+    s = T.TICK_RATE
+    keys = [{"at": 2 * s, "speed": [1, 2]}, {"at": 6 * s, "speed": [1, 2]}]
+    assert T._ramp_dur_ticks(keys, 8 * s) == 16 * s

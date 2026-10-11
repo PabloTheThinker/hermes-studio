@@ -586,6 +586,10 @@ def _ramp_dur_ticks(keys: Any, src_ticks: int) -> int | None:
     total = 0.0
     u = 0.0  # source seconds elapsed
     end = src_ticks / TICK_RATE
+    # Before the first key the first speed holds (the render plays it that way too).
+    if pts[0][0] > 0:
+        u = min(end, pts[0][0])
+        total += u / pts[0][1]
     # Walk the source window [0, end]; speed at u is the piecewise-linear ramp, held at the ends.
     for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
         a, b = max(u, ta), min(end, tb)
