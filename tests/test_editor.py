@@ -1684,3 +1684,87 @@ def test_desk_slide(desk):
     rows = {i["id"]: i for t in res["project"]["tracks"] for i in t["items"]}
     assert abs(rows[p0]["dur"] - 0.5) < 1e-9 and abs(rows[p1]["at"] - 0.5) < 1e-9
     assert abs(rows[p1]["src_in"] - 1.0) < 1e-9 and abs(rows[p2]["at"] - 2.5) < 1e-9 and abs(rows[p2]["dur"] - 1.5) < 1e-9
+
+
+# ---------------------------------------------------------------- concurrency
+
+
+def test_parallel_edits_to_one_project_never_corrupt_its_log(home):
+    """The desk serves requests on threads. Three quick Look changes once raced: two requests
+    both read version 1 and both appended version 2, and the log was refused on load ('out of
+    sequence'), so the project would not open. Fire 24 edits from 8 threads at once: every one
+    lands, in order, and the log reloads."""
+    import threading
+
+    from hermes_studio import oplog as O
+
+    pid = _mixer_cut("race")
+    errors: list[Exception] = []
+    start = threading.Barrier(8)
+
+    def worker(n):
+        start.wait()
+        for k in range(3):
+            try:
+                E.set_volume(pid, "a1", round(0.1 + 0.01 * (n * 3 + k), 3))
+            except Exception as exc:  # noqa: BLE001 - collect, assert below
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:3]
+    folder = E._dir(pid)
+    base = json.loads((folder / "base.json").read_text())
+    log = O.Oplog.load(base, folder / "oplog.jsonl")  # raised 'out of sequence' before the lock
+    assert log.version == 24
+    entries = [json.loads(line) for line in (folder / "oplog.jsonl").read_text().splitlines() if line.strip()]
+    assert sorted(e["base_version"] for e in entries) == list(range(24))
+    assert json.loads((folder / "timeline.json").read_text())["version"] == 24
+
+
+def test_parallel_edits_from_separate_processes_are_serialised(home):
+    """The CLI and the MCP server are other processes: the project's OS file lock (not just the
+    desk's thread lock) has to keep their writes apart too. Four processes, five edits each."""
+    import os
+    import subprocess
+    import sys
+
+    from hermes_studio import oplog as O
+
+    pid = _mixer_cut("xproc")
+    code = (
+        "import sys; from hermes_studio import editor as E\n"
+        "for k in range(5): E.set_volume(sys.argv[1], 'a1', round(0.2 + 0.01 * (int(sys.argv[2]) * 5 + k), 3))\n"
+    )
+    env = {**os.environ, "HERMES_STUDIO_EDITOR": str(E.root())}
+    procs = [subprocess.Popen([sys.executable, "-c", code, pid, str(n)], env=env,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE) for n in range(4)]
+    outs = [p.communicate(timeout=120) for p in procs]
+    assert all(p.returncode == 0 for p in procs), [o[1].decode()[-400:] for o in outs]
+    folder = E._dir(pid)
+    log = O.Oplog.load(json.loads((folder / "base.json").read_text()), folder / "oplog.jsonl")
+    assert log.version == 20
+
+
+def test_reset_only_ever_rebuilds_the_demo(home, desk):
+    """Reset deletes a project's folder. It used to run for any project, and the inspector
+    showed "Reset demo" on real films: one click would have wiped one. Now a film is refused,
+    by the editor and by the desk, and nothing in its folder is touched."""
+    pid = _mixer_cut("film1")
+    folder = E._dir(pid)
+    before = sorted(p.name for p in folder.iterdir())
+    with pytest.raises(E.EditorError, match="only rebuilds the demo"):
+        E.reset(pid)
+    st, res = _post(desk, f"/api/editor/{pid}", {"op": "reset"})
+    assert st == 400 and "only rebuilds the demo" in res["error"]
+    assert sorted(p.name for p in folder.iterdir()) == before
+    assert (folder / "media" / "v.mp4").is_file()
+    # The demo itself still resets: a fresh project with no history.
+    E.create("demo")
+    E.split("demo", "c1", 2.0)
+    assert len(E.history("demo")) == 1
+    E.reset("demo")
+    assert E.history("demo") == []

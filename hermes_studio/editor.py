@@ -6,12 +6,15 @@ The desk and tests call open / apply / undo / redo. Nothing else writes the time
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
 import secrets
 import shutil
 import subprocess
+import threading
+from collections.abc import Callable
 from fractions import Fraction
 from pathlib import Path
 
@@ -97,6 +100,62 @@ def _keyframes_view(v: object, rate: int) -> list[dict] | None:
             row[k] = round(_pair_to_float(kf[k]), 4)
         out.append(row)
     return out or None
+
+
+# ---- one writer per project ------------------------------------------------------------
+# The desk serves requests on parallel threads, and the CLI and MCP server are other processes.
+# A project's write is read-modify-write (load the log, check the op against its version, append,
+# save timeline.json), so two at once used to both read version N and both append N+1: the log
+# was then refused on load ("out of sequence") and the project would not open. Every write now
+# holds the project's lock: a thread lock for this process, plus an OS file lock on
+# <project>/.lock for other processes. Re-entrant per thread (apply -> _call).
+_LOCKS: dict[str, threading.RLock] = {}
+_LOCKS_GUARD = threading.Lock()
+_HELD = threading.local()
+
+
+def _os_lock(fh, on: bool) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(fh, fcntl.LOCK_EX if on else fcntl.LOCK_UN)
+        return
+    except ImportError:
+        pass
+    try:  # Windows (the desktop build)
+        import msvcrt
+
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK if on else msvcrt.LK_UNLCK, 1)
+    except (ImportError, OSError):
+        pass  # no OS lock available: the thread lock still serialises this process
+
+
+@contextlib.contextmanager
+def _locked(folder: Path):
+    key = str(folder.resolve())
+    with _LOCKS_GUARD:
+        lk = _LOCKS.setdefault(key, threading.RLock())
+    held = getattr(_HELD, "keys", None)
+    if held is None:
+        held = _HELD.keys = {}
+    with lk:
+        if held.get(key):  # this thread already holds it (and the OS lock): just nest
+            held[key] += 1
+            try:
+                yield
+            finally:
+                held[key] -= 1
+            return
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / ".lock", "a+b") as fh:
+            _os_lock(fh, True)
+            held[key] = 1
+            try:
+                yield
+            finally:
+                held[key] = 0
+                _os_lock(fh, False)
 
 
 def _save_current(folder: Path, doc: dict) -> None:
@@ -269,11 +328,13 @@ def create(pid: str = "demo") -> dict:
     if (folder / "base.json").exists():
         return open_project(pid)
     d, _ = T.stamp_hash(_seed(pid))
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "base.json").write_text(json.dumps(d))
-    log = O.Oplog(d, path=folder / "oplog.jsonl")
-    _save_current(folder, log.doc)
-    return view(log.doc)
+    with _locked(folder):
+        if (folder / "base.json").exists():  # another request created it while we waited
+            return view(_log(folder).doc)
+        (folder / "base.json").write_text(json.dumps(d))
+        log = O.Oplog(d, path=folder / "oplog.jsonl")
+        _save_current(folder, log.doc)
+        return view(log.doc)
 
 
 def open_project(pid: str) -> dict:
@@ -291,28 +352,30 @@ def list_projects() -> list[str]:
     return sorted(p.name for p in r.iterdir() if (p / "base.json").exists())
 
 
-def _call(pid: str, tool: str, args: dict) -> dict:
+def _call(pid: str, tool: str, args: dict | Callable[[O.Oplog], dict]) -> dict:
+    """Run one tool call on the project's log under its lock. ``args`` may be a function of the
+    freshly loaded log, for calls that need its current version or history (the desk's edits
+    always act on the latest state; reading the version outside the lock let two writes race)."""
     folder = _dir(pid)
     if not (folder / "base.json").exists():
         raise EditorError("no such project")
-    log = _log(folder)
-    try:
-        result = log.call(HUMAN, tool, args)
-    except O.OplogError as exc:
-        raise EditorError(exc.message) from exc
-    _save_current(folder, log.doc)
-    out = view(log.doc)
+    with _locked(folder):
+        log = _log(folder)
+        try:
+            result = log.call(HUMAN, tool, args(log) if callable(args) else args)
+        except O.OplogError as exc:
+            raise EditorError(exc.message) from exc
+        _save_current(folder, log.doc)
+        out = view(log.doc)
     out["summary"] = result.get("summary") or tool
     return out
 
 
 def apply(pid: str, ops: list[dict], summary: str) -> dict:
-    folder = _dir(pid)
-    log = _log(folder)
     return _call(
         pid,
         "timeline_apply",
-        {
+        lambda log: {
             "base_version": log.version,
             "ops": ops,
             "summary": summary[:120] or "edit",
@@ -862,11 +925,26 @@ def delete_items(pid: str, ids: list[str], *, ripple: bool = False) -> dict:
                  f"{'Ripple' if ripple else 'Lift'} {n} item{'s' if n > 1 else ''}")
 
 
-def reset(pid: str = "demo") -> dict:
+DEMO = "demo"
+
+
+def reset(pid: str = DEMO) -> dict:
+    """Rebuild the demo project from scratch. Only the demo: a reset deletes the project's
+    folder (media, history, transcript), and this used to run for any project the page or an
+    API call named, so the inspector's "Reset demo" button would have wiped a real film."""
+    if pid != DEMO:
+        raise EditorError("reset only rebuilds the demo project; use undo on a film")
     folder = _dir(pid)
-    if folder.exists():
-        shutil.rmtree(folder)
-    return create(pid)
+    with _locked(folder):
+        # Clear everything but the lock file we hold, then build the demo again in place.
+        for child in folder.iterdir():
+            if child.name == ".lock":
+                continue
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        return create(pid)
 
 
 def split(pid: str, item_id: str, at_seconds: float) -> dict:
@@ -914,13 +992,11 @@ def _latest(log: O.Oplog, *, redo: bool) -> str:
 
 
 def undo(pid: str) -> dict:
-    log = _log(_dir(pid))
-    return _call(pid, "history_undo", {"client_op_id": _cid(), "op_id": _latest(log, redo=False)})
+    return _call(pid, "history_undo", lambda log: {"client_op_id": _cid(), "op_id": _latest(log, redo=False)})
 
 
 def redo(pid: str) -> dict:
-    log = _log(_dir(pid))
-    return _call(pid, "history_redo", {"client_op_id": _cid(), "op_id": _latest(log, redo=True)})
+    return _call(pid, "history_redo", lambda log: {"client_op_id": _cid(), "op_id": _latest(log, redo=True)})
 
 
 def source_time(doc: dict, seconds: float) -> tuple[str, float] | None:
@@ -1073,13 +1149,13 @@ def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> 
     by_id["T1"]["items"] = t_items
     d, _ = T.stamp_hash(d)
     folder = _dir(pid)
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "base.json").write_text(json.dumps(d))
-    # An imported cut starts with an empty log, but the log file must exist: without it
-    # the film has no history surface until somebody happens to make an edit.
-    log = O.Oplog(d, path=folder / "oplog.jsonl")
-    (folder / "oplog.jsonl").touch(exist_ok=True)
-    _save_current(folder, log.doc)
+    with _locked(folder):
+        (folder / "base.json").write_text(json.dumps(d))
+        # An imported cut starts with an empty log, but the log file must exist: without it
+        # the film has no history surface until somebody happens to make an edit.
+        log = O.Oplog(d, path=folder / "oplog.jsonl")
+        (folder / "oplog.jsonl").touch(exist_ok=True)
+        _save_current(folder, log.doc)
     out = view(log.doc)
     out["summary"] = f"Opened {title}"[:120]
     out["title"] = title

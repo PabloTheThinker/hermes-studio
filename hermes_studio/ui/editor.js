@@ -645,7 +645,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
-            <div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>
+            ${pid === "demo" ? `<div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>` : ""}
           </aside>
         </div>
         <div class="tl-grip" data-act="grip" title="Drag to resize the timeline"></div>
@@ -1846,6 +1846,7 @@
       await commit({ op: "marker_set", id: mkSel, label: box.value });
       return;
     }
+    if (name === "reset" && pid !== "demo") return; // the server refuses too; never wipe a film
     if (name === "undo" || name === "redo" || name === "reset") { await commit({ op: name === "reset" ? "reset" : name }); return; }
     const target = name === "split" ? under() : find(sel);
     if (!target) { msg = name === "split" ? "Move the playhead inside a clip." : "Select a clip first."; paint(); return; }
@@ -1864,7 +1865,9 @@
 
   function onKey(e) {
     if (!document.body.classList.contains("editing") || !doc) return;
-    if (e.target.closest("input, textarea")) return;
+    // Any focused control keeps its own keys: a <select> takes the arrows, a range takes them
+    // too, a text box takes letters. (A <select> used to lose its arrows to the timeline.)
+    if (e.target.closest("input, textarea, select, [contenteditable]")) return;
     const k = e.key.toLowerCase();
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
     // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
