@@ -148,7 +148,7 @@ def test_set_grade_stores_views_and_undoes(home):
     row = _row(pid)
     assert row["grade"]["lift"] == pytest.approx([0.1, 0, 0]) and row["grade"]["sat"] == pytest.approx(0.5)
     assert len(row["grade_preview"]["tables"]) == 3 and len(row["grade_preview"]["tables"][0]) == G.TABLE_POINTS
-    E.set_grade(pid, "c1")  # identity clears it
+    E.clear_grade(pid, "c1")  # removes the whole grade
     assert _row(pid)["grade"] is None
     E.undo(pid)
     assert _row(pid)["grade"]["sat"] == pytest.approx(0.5)
@@ -285,3 +285,109 @@ def test_a_legacy_look_shows_and_renders_as_its_grade(home):
     got = [sum(raw[i::3]) / (len(raw) // 3) for i in range(3)]
     want = [v * 255 for v in G.apply_pixel(G.parse(G.look("punch")), (128 / 255,) * 3)]
     assert all(abs(a - b) <= 4 for a, b in zip(got, want)), (got, want)
+
+
+# ---------------------------------------------------------------- custom curves
+
+
+S_CURVE = {"m": [[0, 0], [0.25, 0.15], [0.75, 0.85], [1, 1]]}
+
+
+def test_pchip_passes_through_its_points_and_never_overshoots():
+    pts = ((0, 0), (0.2, 0.5), (0.4, 0.55), (0.7, 0.56), (1, 1))
+    for x, y in pts:
+        assert G.pchip(pts, x) == pytest.approx(y)
+    xs = [i / 1000 for i in range(1001)]
+    ys = [G.pchip(pts, x) for x in xs]
+    assert all(b >= a - 1e-12 for a, b in zip(ys, ys[1:]))  # rising points: a rising curve
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):  # and each piece stays between its ends
+        seg = [G.pchip(pts, x) for x in xs if x0 <= x <= x1]
+        assert min(seg) >= min(y0, y1) - 1e-12 and max(seg) <= max(y0, y1) + 1e-12
+
+
+def test_curves_compose_after_lift_gamma_gain_master_then_channel():
+    g = G.parse(G.store(gain=[0.8, 0.8, 0.8], curves={**S_CURVE, "r": [[0, 0.1], [1, 1]]}))
+    x = 0.6
+    lgg = 0.8 * x
+    m = G.pchip(((0, 0), (0.25, 0.15), (0.75, 0.85), (1, 1)), lgg)
+    assert G.curve(g, 1, x) == pytest.approx(m)                     # green: master only
+    assert G.curve(g, 0, x) == pytest.approx(0.1 + 0.9 * m)          # red: master then red
+
+
+def test_curves_store_validate_and_straight_lines_are_dropped():
+    assert G.store(curves={"m": [[0, 0], [1, 1]]}) is None  # a straight master is no grade
+    st = G.store(curves={"g": [[1, 1], [0, 0], [0.5, 0.6]]})  # sorted on the way in
+    assert [p[0] for p in G.parse(st)["curves"]["g"]] == [0, 0.5, 1]
+    for bad, msg in [({"x": [[0, 0], [1, 1]]}, "unknown curve"), ({"m": [[0, 0]]}, "2 to"),
+                     ({"m": [[0, 0], [0.5, 1.2], [1, 1]]}, "inside 0..1"),
+                     ({"m": [[0.1, 0], [1, 1]]}, "input 0 to input 1"),
+                     ({"m": [[0, 0], [0.5, 0.4], [0.5, 0.6], [1, 1]]}, "same input")]:
+        with pytest.raises(ValueError, match=msg):
+            G.store(curves=bad)
+
+
+@pytest.mark.parametrize("curves", [S_CURVE, {"r": [[0, 0], [0.5, 0.7], [1, 1]], "b": [[0, 0.1], [0.6, 0.4], [1, 0.9]]}])
+def test_ffmpeg_lut1d_renders_the_curves(tmp_path, curves):
+    """With curves the render's per-channel stage is a LUT grade.py writes: ffmpeg's output must
+    still be the reference formula, to 2 code values, on real pixels."""
+    g = G.parse(G.store(lift=[0.05, 0, 0], sat=1.2, curves=curves))
+    chain = G.ffmpeg_chain(g, tmp_path)
+    assert "lut1d=" in chain and "lutrgb" not in chain
+    assert len(list(tmp_path.glob("grade-*.cube"))) == 1
+    G.ffmpeg_chain(g, tmp_path)  # same grade: same file, not a second one
+    assert len(list(tmp_path.glob("grade-*.cube"))) == 1
+    for rgb in COLOURS:
+        want = [round(v * 255) for v in G.apply_pixel(g, tuple(c / 255 for c in rgb))]
+        got = _ffmpeg_pixel(rgb, chain)
+        assert all(abs(a - b) <= 2 for a, b in zip(got, want)), (rgb, got, want)
+
+
+def test_a_lut_path_with_a_colon_and_a_quote_still_renders(tmp_path):
+    odd = tmp_path / "it's a: [b],c;d"
+    g = G.parse(G.store(curves=S_CURVE))
+    chain = G.ffmpeg_chain(g, odd)
+    want = [round(v * 255) for v in G.apply_pixel(g, (100 / 255,) * 3)]
+    assert list(_ffmpeg_pixel((100, 100, 100), chain)) == pytest.approx(want, abs=2)
+
+
+def test_wheels_keep_the_curves_and_the_curves_keep_the_wheels(home):
+    pid = _cut("curves1")
+    E.set_grade(pid, "c1", curves=S_CURVE)
+    E.set_grade(pid, "c1", gain=[1.1, 1, 0.9])  # a wheel commit: no curves in it
+    row = _row(pid)
+    assert row["grade"]["curves"]["m"][1] == pytest.approx([0.25, 0.15])
+    E.set_grade(pid, "c1", curves={"m": [[0, 0], [0.5, 0.6], [1, 1]]})  # a curve commit
+    row = _row(pid)
+    assert row["grade"]["gain"] == pytest.approx([1.1, 1, 0.9]) and len(row["grade"]["curves"]["m"]) == 3
+    E.set_grade(pid, "c1", curves=None)  # clear just the curves
+    assert _row(pid)["grade"]["curves"] is None and _row(pid)["grade"]["gain"] == pytest.approx([1.1, 1, 0.9])
+    E.clear_grade(pid, "c1")
+    assert _row(pid)["grade"] is None
+
+
+def test_render_applies_the_curves(home):
+    """A mid-grey clip under a master curve that lifts 0.5 to 0.7 renders at ~179."""
+    from hermes_studio import render_timeline as R
+
+    pid = _cut("curves2", colour="0x808080")
+    E.set_grade(pid, "c1", curves={"m": [[0, 0], [0.5, 0.7], [1, 1]]})
+    out = R.render_project(pid)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(out.get("path") or out.get("file")),
+                          "-vf", "crop=8:8:76:41", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         check=True, capture_output=True).stdout
+    got = [sum(raw[i::3]) / (len(raw) // 3) for i in range(3)]
+    want = G.apply_pixel(_row_grade(pid), (128 / 255,) * 3)[0] * 255
+    assert all(abs(v - want) <= 4 for v in got), (got, want)
+    assert list((E._dir(pid) / "cache" / "luts").glob("grade-*.cube"))
+
+
+def _row_grade(pid):
+    raw = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == "c1")
+    return G.parse(raw["props"]["grade"])
+
+
+def test_the_timeline_refuses_a_malformed_curve(home):
+    pid = _cut("curves3")
+    for bad in ({"m": [[[0, 1], [0, 1]]]}, {"m": [[[1, 2], [0, 1]], [[1, 1], [1, 1]]]}, {"z": []}):
+        with pytest.raises(E.EditorError):
+            E.apply(pid, [{"op": "set_props", "id": "c1", "props": {"grade": {"curves": bad}}}], "bad")

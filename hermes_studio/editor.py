@@ -791,19 +791,40 @@ def set_crop(pid: str, item_id: str, x: float, y: float, w: float, h: float) -> 
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"crop": crop}}], label)
 
 
-def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=None) -> dict:
-    """Primary colour correction on a clip: lift / gamma / gain per channel ([r, g, b]) and
-    saturation. The identity clears the grade. One set_props op: one undo step. See grade.py
-    for the formula the render and the preview share."""
+_KEEP = object()
+
+
+def set_grade(pid: str, item_id: str, *, lift=None, gamma=None, gain=None, sat=None, curves=_KEEP) -> dict:
+    """Change a clip's grade: lift / gamma / gain per channel ([r, g, b]), saturation, and the
+    custom curves ({"m"|"r"|"g"|"b": [[x, y], ...]}). Only the parts given change: the wheels
+    send theirs and the curves are kept, the curve editor sends curves and the wheels are kept
+    (``curves=None`` clears them). One set_props op: one undo step. See grade.py for the formula
+    the render and the preview share; :func:`clear_grade` removes the whole grade."""
+    doc, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can be graded")
+    cur = _GR.parse((it.get("props") or {}).get("grade")) or {**_GR.IDENTITY, "curves": None}
+    curves_now = {k: [list(p) for p in pts] for k, pts in (cur.get("curves") or {}).items()} or None
+    try:
+        stored = _GR.store(
+            lift=lift if lift is not None else cur["lift"],
+            gamma=gamma if gamma is not None else cur["gamma"],
+            gain=gain if gain is not None else cur["gain"],
+            sat=sat if sat is not None else cur["sat"],
+            curves=curves_now if curves is _KEEP else curves,
+        )
+    except (ValueError, TypeError) as exc:
+        raise EditorError(str(exc)) from None
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": stored, "look": None}}],
+                 f"Grade {item_id}" if stored else f"Grade {item_id} reset")
+
+
+def clear_grade(pid: str, item_id: str) -> dict:
+    """Remove a clip's whole grade: wheels, saturation and curves."""
     _, it = _item(pid, item_id)
     if it["type"] != "clip":
         raise EditorError("only a clip can be graded")
-    try:
-        stored = _GR.store(lift=lift, gamma=gamma, gain=gain, sat=sat)
-    except (ValueError, TypeError) as exc:
-        raise EditorError(str(exc)) from None
-    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": stored}}],
-                 f"Grade {item_id}" if stored else f"Grade {item_id} reset")
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": None, "look": None}}], f"Grade {item_id} reset")
 
 
 def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:

@@ -409,6 +409,8 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         "transitions": transitions,
         "end_tick": end_tick,
         "silent": not any(True for _ in audio),
+        # Where a grade with custom curves writes its 1D LUT (grade.ffmpeg_chain).
+        "cache": str(folder / "cache"),
     }
 
 
@@ -610,7 +612,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # The primary grade (grade.py): on the clip's own pixels, right after the scale and
             # before transform/pad, so a lift never lifts the letterbox. Same formula the
             # preview shows.
-            gchain = _G.ffmpeg_chain(inp.get("grade"))
+            gchain = _G.ffmpeg_chain(inp.get("grade"), Path(plan.get("cache") or ".") / "luts")
             grade_filter = f"{gchain}," if gchain else ""
             # Transform acts on the contained frame before it meets the canvas: scale
             # multiplies it, rotate turns it, and x/y pan it by a fraction of the canvas.

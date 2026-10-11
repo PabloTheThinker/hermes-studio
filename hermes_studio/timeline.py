@@ -78,7 +78,7 @@ TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
 DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
-GRADE_KEYS = {"lift", "gamma", "gain", "sat"}
+GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
 # added since is hashed only when set, so a new optional prop never changes an old doc's hash.
 HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
@@ -609,6 +609,23 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                         c.ratio(v, _j(ip, "props", "grade", k, n), lo, hi, lo_open=(k == "gamma" and lo == 0))
                 if "sat" in gr:
                     c.ratio(gr["sat"], _j(ip, "props", "grade", "sat"), *_G.SAT)
+                if "curves" in gr and c.keys(gr["curves"], _j(ip, "props", "grade", "curves"), set(), set(_G.CURVE_KEYS)):
+                    for ck, pts in gr["curves"].items():
+                        cp = _j(ip, "props", "grade", "curves", ck)
+                        if not (isinstance(pts, list) and 2 <= len(pts) <= _G.CURVE_MAX):
+                            c.bad("wrong_type", cp, f"a curve is 2 to {_G.CURVE_MAX} [x, y] points")
+                            continue
+                        xs = []
+                        for n, pt in enumerate(pts):
+                            if not (isinstance(pt, list) and len(pt) == 2):
+                                c.bad("wrong_type", _j(cp, n), "a curve point is [x, y]")
+                                xs = None
+                                break
+                            x = c.ratio(pt[0], _j(cp, n, 0), Fraction(0), Fraction(1))
+                            c.ratio(pt[1], _j(cp, n, 1), Fraction(0), Fraction(1))
+                            xs.append(x)
+                        if xs and None not in xs and (xs[0] != 0 or xs[-1] != 1 or any(b <= a for a, b in zip(xs, xs[1:]))):
+                            c.bad("out_of_range", cp, "curve points must rise in x from 0 to 1")
             if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
                 tf = pr["transform"]
                 for k in ("x", "y"):
