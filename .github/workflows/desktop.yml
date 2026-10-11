@@ -97,7 +97,7 @@ jobs:
           ls -l "$RUNNER_TEMP/bundles"
           cat "$RUNNER_TEMP/bundles/SOURCES-SHA256SUMS"
       - name: Bundle sources-common.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-common
           path: ${{ runner.temp }}/bundles/sources-common.tar
@@ -105,7 +105,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Bundle sources-ffmpeg.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-ffmpeg
           path: ${{ runner.temp }}/bundles/sources-ffmpeg.tar
@@ -113,7 +113,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Bundle sources-ffmpeg-linux64.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-ffmpeg-linux64
           path: ${{ runner.temp }}/bundles/sources-ffmpeg-linux64.tar
@@ -121,7 +121,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Bundle sources-ffmpeg-win64.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-ffmpeg-win64
           path: ${{ runner.temp }}/bundles/sources-ffmpeg-win64.tar
@@ -129,7 +129,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Bundle sources-opencv.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-opencv
           path: ${{ runner.temp }}/bundles/sources-opencv.tar
@@ -137,7 +137,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: Bundle sources-pyav.tar
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sources-pyav
           path: ${{ runner.temp }}/bundles/sources-pyav.tar
@@ -145,7 +145,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - name: SOURCES-SHA256SUMS
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SOURCES-SHA256SUMS
           path: ${{ runner.temp }}/bundles/SOURCES-SHA256SUMS
@@ -207,13 +207,13 @@ jobs:
           grep -q "INSTALLER CLEAN TEST PASSED" work/out/installer-test.log
       - name: Test output
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-test
           path: work/out/
           if-no-files-found: warn
       - name: AppImage
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-appimage
           path: dist/Hermes-Studio-*.AppImage
@@ -307,13 +307,13 @@ jobs:
           "INSTALLER CLEAN TEST PASSED"
       - name: Screenshots
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-screenshots
           path: win-shots/
           if-no-files-found: warn
       - name: Installer
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-installer
           path: dist/Hermes-Studio-Setup-*.exe
@@ -400,7 +400,7 @@ jobs:
           extra=$(ls | grep -vxF -f release-assets.txt | grep -vxE 'release-(assets|notes)\.txt' || true)
           [ -z "$extra" ] || { echo "unexpected files in rel/: $extra"; exit 1; }
       - name: Release assets
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: rel/
