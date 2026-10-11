@@ -36,11 +36,13 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | doc | `fps` | timeline frame rate, reduced rational `[num, den]`, a whole number of ticks per frame |
 | doc | `size` | `[width, height]`, integers 1–16384 |
 | doc | `media` | id → `{path, dur, fps, proxy?}`; `dur` ticks > 0; `fps` rational or `null` (audio) |
-| doc | `tracks` | list of `{id, role, items}`, in role order (below) |
-| doc | `markers` | list of `{id, at, label}` |
+| doc | `tracks` | list of `{id, role, items, mute?, solo?, gain?}`, in role order (below) |
+| doc | `markers` | list of `{id, at, label, color?}`; `at` ticks, `label` NFC, `color` optional (see below) |
+| doc | `markers[].color` | optional `cyan`/`green`/`yellow`/`orange`/`red`/`pink`/`purple`. `blue` is the default and is never stored, so an uncoloured marker hashes as before |
 | clip | `id, type:"clip", media, src:[in,out], fade_in, fade_out` | required; `src` in media ticks, `in < out ≤ media.dur` |
 | clip | `at` or `anchor` | exactly one; `anchor` only on music tracks |
-| clip | `props` | optional `{volume, speed, crop, look}`; defaults `[1,1]`, `[1,1]`, `null`, `null` |
+| clip | `props` | optional `{volume, speed, crop, look, transform, keyframes, gain_keys}`; defaults `[1,1]`, `[1,1]`, `null`, `null`, `null`, `null`, `null` |
+| clip | `props.gain_keys` | the volume envelope (rubber band): a sorted list (1–64) of `{at, gain}`, `at` ticks from the clip's start, `gain` `[num, den]` 0–4. Linear between keys, held before the first and after the last; it multiplies `volume`. Any envelope counts as a hand-set level, so the render's loudnorm stands aside |
 | clip | `split_from` | optional id of the item this was split from (it need not still exist) |
 | text | `id, type:"text", dur, text, style, fade_in, fade_out` + `at` or `anchor` | `split_from` optional |
 | transition | `id, type:"transition", kind:"xfade", between:[a,b], dur` | on clip tracks only |
@@ -69,6 +71,13 @@ track), `voice` and `music` (`A<n>`). Text tracks hold text items; the others ho
 transitions. Track order is meaningful and fixed: text, main, voice, music; text tracks highest
 number first (top of the stack first), audio tracks lowest number first. The default doc is
 T1, V1, A1, A2.
+
+**Track mixer.** Voice and music tracks may carry `mute` and `solo` (booleans) and `gain` (a
+`[num, den]` ratio, 0–4, like a clip's volume); text and the main track may not
+(`track_audio_only`). A muted track is silent; when any track is soloed, only soloed tracks play;
+`gain` multiplies every clip's volume on the track. The render honours all three. `normalize()`
+drops the defaults (`false`, `false`, `[1, 1]`), so a track at unity stores and hashes exactly
+like one that never had a mixer.
 
 **Timing.** A clip lasts `(out − in) / speed` ticks, which must be whole. Fades are plain ticks:
 `fade_in`, `fade_out` ≥ 0 and `fade_in + fade_out` ≤ the item's duration. Gaps are implied by `at`;
@@ -123,7 +132,11 @@ item whose own id is malformed or duplicated anywhere in the doc leaves `id` off
    transition sorts at the start of its overlap); markers sorted by `(at, id)`. Item and marker list order is not meaningful; track
    order is (it is fixed by role and checked).
 3. Drop `version` and `hash`. Everything else, including `schema_version`, is hashed (any other
-   `schema_version` value fails validation first).
+   `schema_version` value fails validation first). In clip `props`, the four keys hs.timeline/1
+   shipped with (`volume`, `speed`, `crop`, `look`) are always hashed with defaults filled in;
+   any prop added since (`transform`, `keyframes`, `gain_keys`, and anything later) is hashed **only when it
+   is set** (not `null`). Adding an optional prop must never change the hash of a document that
+   doesn't use it, or every op log written before it stops replaying. A golden-hash test pins this.
 4. `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, UTF-8. The doc has no
    floats, so no number formatting choices remain. Strings are hashed as given (they must already
    be NFC).
@@ -148,7 +161,8 @@ timeline duration) with an `ExternalReference`; speed adds a `LinearTimeWarp`. G
 xfade is a Transition at the start of the overlap (`in_offset` 0, `out_offset` dur), with the
 outgoing clip trimmed by dur. Text items are clips with a `GeneratorReference`
 (`hermes_studio.text`). Tracks whose items overlap are split into lanes (`A2`, `A2.1`). Markers go
-on the top-level stack. Fades, props, anchors, `split_from` and the media table travel in
+on the top-level stack. A muted track's first lane exports with `enabled = false`. Fades, props,
+anchors, `split_from`, track `mute`/`solo`/`gain` and the media table travel in
 `metadata["hermes_studio"]`, so `from_otio(to_otio(doc)) == normalize(doc)`.
 
 `otiotool` reads the file and its `--list-tracks`, `--list-clips`, `--list-media`,
@@ -176,4 +190,5 @@ Open questions (Slice 2 notes):
 `track_order`, `item_not_allowed_on_track`, `unknown_media`, `src_out_of_media`, `empty_range`,
 `non_integer_duration`, `fade_too_long`, `at_and_anchor`, `anchor_not_allowed`,
 `anchor_target_missing`, `anchor_target_not_main`, `anchor_before_zero`, `overlap`,
-`bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`.
+`bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`,
+`bad_keyframes`, `bad_order`, `track_audio_only`.

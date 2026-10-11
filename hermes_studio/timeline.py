@@ -51,18 +51,47 @@ TOP_OPTIONAL = {"hash"}
 MEDIA_KEYS = {"path", "dur", "fps"}
 MEDIA_OPTIONAL = {"proxy"}
 TRACK_KEYS = {"id", "role", "items"}
+# Audio tracks only: the track's mixer strip. mute/solo are booleans, gain a [num, den] ratio
+# 0..4 like a clip's volume. Defaults (false, false, [1, 1]) are dropped by normalize(), so a
+# track that never touched its mixer hashes exactly as it did before these fields existed.
+TRACK_OPTIONAL = {"mute", "solo", "gain"}
+TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1]}
 CLIP_KEYS = {"id", "type", "media", "src", "fade_in", "fade_out"}
 TEXT_KEYS = {"id", "type", "dur", "text", "style", "fade_in", "fade_out"}
 TIMED_OPTIONAL = {"at", "anchor", "split_from"}
 CLIP_OPTIONAL = TIMED_OPTIONAL | {"props"}
 TRANSITION_KEYS = {"id", "type", "kind", "between", "dur"}
 MARKER_KEYS = {"id", "at", "label"}
+# A marker's colour: OpenTimelineIO's marker colours bar black and white, so a round trip keeps
+# it. Blue is the default (Resolve's) and is never stored, so an uncoloured marker hashes as before.
+MARKER_OPTIONAL = {"color"}
+MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
+MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade"}
+# A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
+# start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
+# It multiplies props.volume, so the volume stays the clip's overall trim.
+GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None}
+TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
+KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None}
+# Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
+GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
+# The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
+# added since is hashed only when set, so a new optional prop never changes an old doc's hash.
+HASHED_V1_PROPS = frozenset({"volume", "speed", "crop", "look"})
 VOLUME_MAX = Fraction(4)
 SPEED_MIN, SPEED_MAX = Fraction(1, 10), Fraction(10)
+# Transform ranges: position is a fraction of the canvas (so it can move a frame's width),
+# scale is a positive multiplier, rotate is any angle in degrees.
+TRANSFORM_POS_MAX = Fraction(4)
+SCALE_MIN, SCALE_MAX = Fraction(1, 100), Fraction(100)
+ROTATE_MAX = Fraction(3600)
+# A clip may carry at most this many keyframes; enough for a smooth move without letting a
+# bad write balloon the doc.
+MAX_KEYFRAMES = 64
 NOT_HASHED = ("version", "hash")
 
 # Every rule id the validator can report (docs/timeline.md describes each).
@@ -74,6 +103,7 @@ RULES = (
     "non_integer_duration", "fade_too_long", "at_and_anchor", "anchor_not_allowed",
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
+    "bad_keyframes", "bad_order", "track_audio_only",
 )
 
 
@@ -129,6 +159,7 @@ _HINTS = {
     "overlap": "Clips on main and voice tracks may only overlap through an xfade transition.",
     "anchor_not_allowed": "Only text items and clips on music tracks can be anchored.",
     "track_order": "List tracks as text, main, voice, music (text highest number first, audio lowest first).",
+    "track_audio_only": "mute, solo and gain belong to voice and music tracks; text and the main track have none.",
 }
 
 
@@ -386,7 +417,7 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     seen: list[tuple[str, str]] = []
     for ti, tr in enumerate(tracks):
         tp = _j("", "tracks", ti)
-        if not c.keys(tr, tp, TRACK_KEYS):
+        if not c.keys(tr, tp, TRACK_KEYS, TRACK_OPTIONAL):
             continue
         role, tid = tr["role"], tr["id"]
         if not isinstance(role, str) or role not in ROLES:
@@ -403,6 +434,14 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             continue
         claim(tid, tp)
         seen.append((role, tid))
+        for k in sorted(TRACK_OPTIONAL & set(tr)):
+            if role not in ("voice", "music"):
+                c.bad("track_audio_only", _j(tp, k), f"a {role} track has no '{k}'")
+            elif k in ("mute", "solo"):
+                if not isinstance(tr[k], bool):
+                    c.bad("wrong_type", _j(tp, k), f"'{k}' must be true or false")
+            else:
+                c.ratio(tr[k], _j(tp, k), Fraction(0), VOLUME_MAX)
         if not isinstance(tr["items"], list):
             c.bad("wrong_type", _j(tp, "items"), "must be a list")
             continue
@@ -439,12 +478,14 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
     for mi, mk in enumerate(markers):
         mp = _j("", "markers", mi)
         c.cur = mk.get("id") if isinstance(mk, dict) and isinstance(mk.get("id"), str) else None
-        if not c.keys(mk, mp, MARKER_KEYS):
+        if not c.keys(mk, mp, MARKER_KEYS, MARKER_OPTIONAL):
             continue
         if c.ident(mk["id"], _j(mp, "id")):
             claim(mk["id"], mp)
         c.ticks(mk["at"], _j(mp, "at"))
         c.string(mk["label"], _j(mp, "label"), empty=True)
+        if "color" in mk and mk["color"] not in MARKER_COLORS[1:]:
+            c.bad("out_of_range", _j(mp, "color"), f"color must be one of {', '.join(MARKER_COLORS[1:])} (blue is the default: leave it out)")
     c.cur = None
 
     if not c.problems:
@@ -461,12 +502,65 @@ def _track_key(rt: tuple[str, str]) -> tuple[int, int]:
     return ROLE_ORDER.index(role), (n if ROLES[role][0] == "A" else -n)
 
 
+def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
+    """A keyframe list is a sorted, non-empty list of {at, x, y, scale, rotate}, where `at` is
+    ticks from the clip's start and the transform values share the transform's ranges. `at` may
+    be negative or beyond the clip: the render clamps a keyframe track to the clip's span, so a
+    move that begins before the clip simply starts already in progress."""
+    if not isinstance(kfs, list) or not kfs:
+        c.bad("bad_keyframes", path, "keyframes must be a non-empty list")
+        return
+    if len(kfs) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} keyframes")
+        return
+    prev_at = None
+    for i, kf in enumerate(kfs):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, KEYFRAME_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        for k in ("x", "y"):
+            c.ratio(kf[k], _j(kp, k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+        c.ratio(kf["scale"], _j(kp, "scale"), SCALE_MIN, SCALE_MAX)
+        c.ratio(kf["rotate"], _j(kp, "rotate"), -ROTATE_MAX, ROTATE_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "keyframes must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
+def _check_gain_keys(c: _Checker, keys: Any, path: str) -> None:
+    """A volume envelope: a sorted, non-empty list of {at, gain} (same rule ids as keyframes)."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_keyframes", path, "gain_keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} gain keys")
+        return
+    prev_at = None
+    for i, k in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(k, kp, GAIN_KEY_KEYS):
+            continue
+        ok_at = c.ticks(k["at"], _j(kp, "at"), signed=True)
+        c.ratio(k["gain"], _j(kp, "gain"), Fraction(0), VOLUME_MAX)
+        if ok_at and _is_int(k["at"]):
+            if prev_at is not None and k["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "gain keys must be in strictly increasing time order")
+            prev_at = k["at"]
+
+
 def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict) -> None:
     if typ == "transition":
         if not c.keys(it, ip, TRANSITION_KEYS):
             return
-        if it["kind"] != "xfade":
-            c.bad("bad_transition", _j(ip, "kind"), "the only transition kind is 'xfade'")
+        from . import transitions as _XT
+        if not isinstance(it["kind"], str) or not it["kind"]:
+            c.bad("bad_transition", _j(ip, "kind"), "kind must be a transition name")
+        elif it["kind"] == "xfade":  # a project written before kinds: it was always a cross-dissolve
+            it["kind"] = "fade"
+        elif it["kind"] not in _XT.kinds():
+            c.bad("bad_transition", _j(ip, "kind"), f"unknown transition kind {it['kind']!r}")
         c.ticks(it["dur"], _j(ip, "dur"), positive=True)
         b = it["between"]
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b) and b[0] != b[1]):
@@ -505,6 +599,51 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.bad("out_of_range", _j(ip, "props", "crop"), "crop must be a non-empty box inside the frame")
             if pr.get("look") is not None:
                 c.string(pr["look"], _j(ip, "props", "look"))
+            if pr.get("grade") is not None and c.keys(pr["grade"], _j(ip, "props", "grade"), set(), GRADE_KEYS):
+                from hermes_studio import grade as _G
+
+                gr = pr["grade"]
+                for k in ("lift", "gamma", "gain"):
+                    if k not in gr:
+                        continue
+                    if not (isinstance(gr[k], list) and len(gr[k]) == 3):
+                        c.bad("wrong_type", _j(ip, "props", "grade", k), f"{k} must be [r, g, b]")
+                        continue
+                    lo, hi = _G.RANGES[k]
+                    for n, v in enumerate(gr[k]):
+                        c.ratio(v, _j(ip, "props", "grade", k, n), lo, hi, lo_open=(k == "gamma" and lo == 0))
+                if "sat" in gr:
+                    c.ratio(gr["sat"], _j(ip, "props", "grade", "sat"), *_G.SAT)
+                for k in ("temp", "tint"):
+                    if k in gr:
+                        c.ratio(gr[k], _j(ip, "props", "grade", k), *_G.WB)
+                if "curves" in gr and c.keys(gr["curves"], _j(ip, "props", "grade", "curves"), set(), set(_G.CURVE_KEYS)):
+                    for ck, pts in gr["curves"].items():
+                        cp = _j(ip, "props", "grade", "curves", ck)
+                        if not (isinstance(pts, list) and 2 <= len(pts) <= _G.CURVE_MAX):
+                            c.bad("wrong_type", cp, f"a curve is 2 to {_G.CURVE_MAX} [x, y] points")
+                            continue
+                        xs = []
+                        for n, pt in enumerate(pts):
+                            if not (isinstance(pt, list) and len(pt) == 2):
+                                c.bad("wrong_type", _j(cp, n), "a curve point is [x, y]")
+                                xs = None
+                                break
+                            x = c.ratio(pt[0], _j(cp, n, 0), Fraction(0), Fraction(1))
+                            c.ratio(pt[1], _j(cp, n, 1), Fraction(0), Fraction(1))
+                            xs.append(x)
+                        if xs and None not in xs and (xs[0] != 0 or xs[-1] != 1 or any(b <= a for a, b in zip(xs, xs[1:]))):
+                            c.bad("out_of_range", cp, "curve points must rise in x from 0 to 1")
+            if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
+                tf = pr["transform"]
+                for k in ("x", "y"):
+                    c.ratio(tf[k], _j(ip, "props", "transform", k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
+                c.ratio(tf["scale"], _j(ip, "props", "transform", "scale"), SCALE_MIN, SCALE_MAX)
+                c.ratio(tf["rotate"], _j(ip, "props", "transform", "rotate"), -ROTATE_MAX, ROTATE_MAX)
+            if pr.get("keyframes") is not None:
+                _check_keyframes(c, pr["keyframes"], _j(ip, "props", "keyframes"))
+            if pr.get("gain_keys") is not None:
+                _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
@@ -650,6 +789,9 @@ def normalize(doc: dict) -> dict:
     d = copy.deepcopy(doc)
     when = resolve(d)
     for tr in d["tracks"]:
+        for k, v in TRACK_DEFAULTS.items():
+            if k in tr and tr[k] == v:
+                del tr[k]
         for it in tr["items"]:
             if it["type"] == "clip":
                 it["props"] = {**DEFAULT_PROPS, **it.get("props", {})}
@@ -660,6 +802,14 @@ def normalize(doc: dict) -> dict:
 
 def _canonical_bytes(doc: dict) -> bytes:
     body = {k: v for k, v in normalize(doc).items() if k not in NOT_HASHED}
+    # Props added after hs.timeline/1 was frozen only count toward the hash when they are set.
+    # Otherwise adding an optional prop (transform, keyframes, ...) re-hashes every saved doc and
+    # every op log written before it stops replaying -- which is exactly what happened when
+    # transform landed.
+    for tr in body["tracks"]:
+        for it in tr["items"]:
+            if it["type"] == "clip":
+                it["props"] = {k: v for k, v in it["props"].items() if k in HASHED_V1_PROPS or v is not None}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
@@ -691,8 +841,12 @@ def stamp_hash(doc: dict) -> tuple[dict, str]:
     return d, h
 
 
-def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1080, 1920)) -> dict:
-    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music."""
+def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1920, 1080)) -> dict:
+    """An empty document with Glyph's four tracks: T1 text, V1 main, A1 voice, A2 music.
+
+    The default canvas is 1920x1080 (Sir, 2026-10-10): the desk is worked on a desktop, so a
+    new cut should open widescreen and let the person choose Phone or Square when they mean it.
+    """
     return {
         "schema_version": SCHEMA_VERSION, "id": project_id, "version": 0, "tick_rate": TICK_RATE,
         "fps": list(fps), "size": list(size), "media": {},
@@ -749,7 +903,10 @@ def to_otio(doc: dict):
                 lanes.append([it])
         for ln, lane in enumerate(lanes or [[]]):
             ot = otio.schema.Track(name=track["id"] if ln == 0 else f"{track['id']}.{ln}", kind=kind)
-            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln}
+            ot.metadata[_META] = {"id": track["id"], "role": track["role"], "lane": ln,
+                                  **{k: track[k] for k in sorted(TRACK_OPTIONAL) if k in track}}
+            if ln == 0 and track.get("mute"):
+                ot.enabled = False  # what an OTIO reader understands as a muted track
             pos = 0
             for it in lane:
                 s, e = when[it["id"]]
@@ -781,7 +938,8 @@ def to_otio(doc: dict):
                 pos = e - trim
             tl.tracks.append(ot)
     for mk in doc["markers"]:
-        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0))
+        m = otio.schema.Marker(name=mk["label"], marked_range=rng(mk["at"], 0),
+                               color=mk.get("color", MARKER_DEFAULT_COLOR).upper())
         m.metadata[_META] = {"id": mk["id"]}
         tl.tracks.markers.append(m)
     return tl
@@ -819,7 +977,8 @@ def from_otio(tl) -> dict:
     for ot in tl.tracks:
         tm = _plain(ot.metadata[_META])
         if tm["lane"] == 0:
-            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": []})
+            doc["tracks"].append({"id": tm["id"], "role": tm["role"], "items": [],
+                                  **{k: tm[k] for k in sorted(TRACK_OPTIONAL) if k in tm}})
         out = doc["tracks"][-1]["items"]
         pos = 0
         for child in ot:
@@ -859,6 +1018,9 @@ def from_otio(tl) -> dict:
     for mk in tl.tracks.markers:
         doc["markers"].append({"id": _plain(mk.metadata[_META])["id"], "at": _ticks(mk.marked_range.start_time),
                                "label": mk.name})
+        color = str(mk.color or "").lower()
+        if color in MARKER_COLORS[1:]:
+            doc["markers"][-1]["color"] = color
     return normalize(validate_or_raise(doc))
 
 

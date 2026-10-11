@@ -252,6 +252,14 @@ def changed_ids(before: dict, after: dict) -> list[str]:
 # Public ops are what callers send; internal ops only appear in inverses (and so in undo entries).
 
 
+def _need_str(a: dict, k: str, default: str | None = None) -> str:
+    """A required non-empty string arg (or the default when absent)."""
+    v = a.get(k, default)
+    if not isinstance(v, str) or not v.strip():
+        raise _OpError("bad_arg", f"{k} must be a non-empty string", k)
+    return v.strip()
+
+
 def _need_ticks(a: dict, k: str, *, signed: bool = False) -> int:
     v = a[k]
     if not T._is_int(v):
@@ -364,7 +372,11 @@ def op_add_text(ctx: _Ctx, a: dict) -> list[dict]:
 
 def op_add_transition(ctx: _Ctx, a: dict) -> list[dict]:
     a.setdefault("track", T.MAIN_TRACK)
-    a.setdefault("kind", "xfade")
+    # Legacy: "xfade" was the only kind and named the filter, not a transition. It means a
+    # cross-dissolve, which ffmpeg calls "fade".
+    a.setdefault("kind", "fade")
+    if a.get("kind") == "xfade":
+        a["kind"] = "fade"
     _, tr = _track(ctx.doc, a["track"])
     iid = _new_id(ctx, a, "tr")
     tr["items"].append(
@@ -375,8 +387,33 @@ def op_add_transition(ctx: _Ctx, a: dict) -> list[dict]:
 
 def op_add_marker(ctx: _Ctx, a: dict) -> list[dict]:
     iid = _new_id(ctx, a, "mk")
-    ctx.doc["markers"].append({"id": iid, "at": a["at"], "label": a["label"]})
+    mk = {"id": iid, "at": a["at"], "label": a["label"]}
+    if a.get("color") not in (None, T.MARKER_DEFAULT_COLOR):
+        mk["color"] = a["color"]
+    ctx.doc["markers"].append(mk)
     return [{"op": "remove_marker", "id": iid}]
+
+
+def op_set_marker(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move, rename or recolour a marker: only the fields given change. ``color`` null or
+    "blue" (the default) removes the field. The values are checked by the validator after the
+    op (ticks, label, colour), under their own rule ids."""
+    given = [k for k in ("at", "label", "color") if k in a]
+    if not given:
+        raise _OpError("missing_arg", "set_marker needs 'at', 'label' and/or 'color'")
+    for mk in ctx.doc["markers"]:
+        if mk["id"] == a["id"]:
+            break
+    else:
+        raise _OpError("not_found", f"no marker {a['id']!r}", "id", code="not_found", ident=a["id"])
+    inverse = {"op": "set_marker", "id": mk["id"]}
+    for k in given:
+        inverse[k] = copy.deepcopy(mk.get(k))
+        if k == "color" and a[k] in (None, T.MARKER_DEFAULT_COLOR):
+            mk.pop("color", None)
+        else:
+            mk[k] = copy.deepcopy(a[k])
+    return [inverse]
 
 
 def op_remove_marker(ctx: _Ctx, a: dict) -> list[dict]:
@@ -463,6 +500,70 @@ def _set(ctx: _Ctx, iid: str, sets: dict, unset: list[str] = ()) -> list[dict]:
 def op_shift_items(ctx: _Ctx, a: dict) -> list[dict]:
     _shift(ctx.doc, a["ids"], a["by"])
     return [{"op": "shift_items", "ids": list(a["ids"]), "by": -a["by"]}]
+
+
+def _anchored_to(d: dict, iid: str) -> list[dict]:
+    """Items anywhere in the doc whose anchor points at ``iid``. They keep their place as an
+    absolute ``at`` when the target goes away, so deleting an anchor target must pin them."""
+    return [x for tr in d["tracks"] for x in tr["items"] if (x.get("anchor") or {}).get("to") == iid]
+
+
+def op_move_items(ctx: _Ctx, a: dict) -> list[dict]:
+    """Move several items together by the same amount (a group drag). One undo step for the
+    whole group. ``ids`` keep their order; the shift is relative, so nothing collides that
+    didn't already."""
+    ids = a["ids"]
+    if not ids:
+        raise _OpError("bad_arg", "ids must not be empty", "ids")
+    if len(set(ids)) != len(ids):
+        raise _OpError("bad_arg", "ids must not repeat an id", "ids")
+    by = _need_ticks(a, "by", signed=True)  # a group drag can move items backwards
+    olds = []
+    for iid in ids:
+        _, _, it = _find(ctx.doc, iid)
+        if "at" not in it:
+            raise _OpError("bad_arg", f"{iid!r} is anchored and can't be moved; use set_anchor", "ids")
+        olds.append(it["at"])
+    _shift(ctx.doc, ids, by)
+    return [{"op": "move_items", "ids": list(ids), "by": -by}]
+
+
+def op_delete_items(ctx: _Ctx, a: dict) -> list[dict]:
+    """Delete several items as one step. Transitions touching a deleted item go with it; items
+    anchored to a deleted item keep their place as an absolute ``at``. With ``ripple``, later
+    items on each track close the holes, in time order so one pass can't overtake another."""
+    ids = a["ids"]
+    ripple = _need_bool(a, "ripple")
+    if not ids:
+        raise _OpError("bad_arg", "ids must not be empty", "ids")
+    if len(set(ids)) != len(ids):
+        raise _OpError("bad_arg", "ids must not repeat an id", "ids")
+    inv: list[dict] = []
+    for iid in ids:
+        tr, _, it = _find(ctx.doc, iid)
+        if it["type"] == "transition":
+            if ripple:
+                raise _OpError("bad_arg", "a transition can't be ripple-deleted", "ripple")
+            inv = op_delete_item(ctx, {"id": iid}) + inv
+            continue
+        start, dur = _start(ctx.doc, it), _dur(it)
+        for x in _anchored_to(ctx.doc, it["id"]):
+            inv += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
+        gone = sorted(
+            ((i, x) for i, x in enumerate(tr["items"])
+             if x["id"] == iid or (x["type"] == "transition" and iid in x["between"])),
+            key=lambda p: p[0], reverse=True,
+        )
+        for i, x in gone:
+            del tr["items"][i]
+            inv.append({"op": "insert_item", "track": tr["id"], "index": i, "item": x})
+        if ripple and tr["role"] != "text":
+            later = _later(ctx.doc, tr, start + dur, iid)
+            if later:
+                _shift(ctx.doc, later, -dur)
+                inv.append({"op": "shift_items", "ids": later, "by": dur})
+    inv.reverse()  # put the log back the way it was, earliest first
+    return inv
 
 
 def op_move_clip(ctx: _Ctx, a: dict) -> list[dict]:
@@ -620,10 +721,8 @@ def op_delete_clip(ctx: _Ctx, a: dict) -> list[dict]:
         return op_delete_item(ctx, {"id": it["id"]})
     start, dur = _start(ctx.doc, it), _dur(it)
     inv_anchor: list[dict] = []
-    for t2 in ctx.doc["tracks"]:
-        for x in t2["items"]:
-            if x.get("anchor", {}).get("to") == it["id"]:
-                inv_anchor += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
+    for x in _anchored_to(ctx.doc, it["id"]):
+        inv_anchor += _set(ctx, x["id"], {"at": start + x["anchor"]["offset"]}, ["anchor"])
     gone = sorted(
         (
             (i, x)
@@ -684,6 +783,39 @@ def op_edit_text(ctx: _Ctx, a: dict) -> list[dict]:
     return _set(ctx, it["id"], {k: a[k] for k in _TEXT_FIELDS if k in a})
 
 
+def op_set_canvas(ctx: _Ctx, a: dict) -> list[dict]:
+    """Set the canvas. Inverse restores the old size so undo works."""
+    w, h = a["width"], a["height"]
+    if not (isinstance(w, int) and isinstance(h, int) and not isinstance(w, bool) and not isinstance(h, bool)):
+        raise _OpError("bad_arg", "width and height must be integers", "width")
+    if not (1 <= w <= 16384 and 1 <= h <= 16384):
+        raise _OpError("out_of_range", "width and height must be from 1 to 16384", "width")
+    old = list(ctx.doc["size"])
+    ctx.doc["size"] = [w, h]
+    return [{"op": "set_canvas", "width": old[0], "height": old[1]}]
+
+
+def op_set_track(ctx: _Ctx, a: dict) -> list[dict]:
+    """An audio track's mixer strip: ``mute``, ``solo`` (booleans) and ``gain`` ([num, den], 0..4).
+    Only the fields given change. A default value (false, false, [1, 1]) removes the field, so a
+    track set back to unity stores and hashes exactly as one that was never touched. The value
+    itself is checked by the validator after the op, under its own rule ids."""
+    given = [k for k in ("mute", "solo", "gain") if k in a]
+    if not given:
+        raise _OpError("missing_arg", "set_track needs 'mute', 'solo' and/or 'gain'")
+    _, tr = _track(ctx.doc, a["id"], "id")
+    if tr["role"] not in ("voice", "music"):
+        raise _OpError("track_audio_only", f"{tr['id']} is a {tr['role']} track; only voice and music tracks have a mixer", "id")
+    inverse = {"op": "set_track", "id": tr["id"]}
+    for k in given:
+        inverse[k] = copy.deepcopy(tr.get(k, T.TRACK_DEFAULTS[k]))
+        if a[k] == T.TRACK_DEFAULTS[k] and type(a[k]) is type(T.TRACK_DEFAULTS[k]):
+            tr.pop(k, None)
+        else:
+            tr[k] = copy.deepcopy(a[k])
+    return [inverse]
+
+
 def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     if a["anchor"] is None:
@@ -693,6 +825,68 @@ def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
     if "at" in a:
         raise _OpError("bad_arg", "give 'anchor' or 'at', not both", "at")
     return _set(ctx, it["id"], {"anchor": copy.deepcopy(a["anchor"])}, ["at"])
+
+
+def op_set_transition(ctx: _Ctx, a: dict) -> list[dict]:
+    """Put a transition between two consecutive clips (``kind`` names the ffmpeg xfade to use;
+    'fade', a cross-dissolve, is the default).
+
+    The schema models a transition as an overlap: the two clips must overlap by exactly
+    ``dur``. So to create one we move the second clip earlier by ``dur`` and insert the
+    item; the inverse deletes the item and moves the clip back. Passing ``dur`` 0 (the
+    default) removes any transition, giving a hard cut.
+    """
+    a_id, b_id = a["between"]
+    if a_id == b_id:
+        raise _OpError("bad_arg", "between must be two different clips", "between")
+    tr_a, _, it_a = _find(ctx.doc, a_id)
+    tr_b, _, it_b = _find(ctx.doc, b_id)
+    if tr_a["id"] != tr_b["id"]:
+        raise _OpError("bad_arg", "both clips must be on the same track", "between")
+    if it_a["type"] != "clip" or it_b["type"] != "clip":
+        raise _OpError("bad_arg", "a transition sits between two clips", "between")
+    if "at" not in it_a or "at" not in it_b:
+        raise _OpError("bad_arg", "both clips need an 'at' (not anchored)", "between")
+    start_a, dur_a = it_a["at"], _dur(it_a)
+    start_b = it_b["at"]
+    if start_b < start_a:
+        raise _OpError("bad_arg", "between must be in timeline order (a before b)", "between")
+    dur = _need_ticks(a, "dur")
+    if dur < 0:
+        raise _OpError("bad_arg", "dur must be 0 or more", "dur")
+    # The overlap can never eat past either clip, and a frame is the smallest unit.
+    limit = min(dur_a, _dur(it_b))
+    if dur > limit:
+        raise _OpError("out_of_range", "dur cannot be longer than the shorter clip", "dur")
+    if dur > 0 and start_b - (start_a + dur_a) > 0:
+        raise _OpError("bad_arg", "the clips must be adjacent to cross-dissolve", "between")
+
+    existing = next(
+        (it for it in tr_a["items"]
+         if it.get("type") == "transition" and it.get("between") == [a_id, b_id]),
+        None,
+    )
+    inverse: list[dict] = []
+    if existing:
+        # Removing or resizing an existing transition: undo puts it and the clip back.
+        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": existing["dur"],
+                         "kind": existing.get("kind", "fade")})
+        tr_a["items"].remove(existing)
+    else:
+        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
+
+    if dur == 0:
+        # A hard cut: restore b to where it was before this op moved it.
+        it_b["at"] = it_b["at"] + (existing["dur"] if existing else 0)
+        return inverse
+
+    tid = _new_id(ctx, a, "t")
+    it_b["at"] = start_a + dur_a - dur
+    tr_a["items"].append(
+        {"id": tid, "type": "transition", "kind": _need_str(a, "kind", "fade"),
+         "between": [a_id, b_id], "dur": dur}
+    )
+    return inverse
 
 
 # name -> (handler, required args, optional args)
@@ -709,6 +903,9 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_props": (op_set_props, frozenset({"id", "props"}), frozenset()),
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
+    "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
+    "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain"})),
+    "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur", "kind"})),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
     "add_text": (
         op_add_text,
@@ -718,8 +915,11 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "add_transition": (op_add_transition, frozenset({"between", "dur"}), frozenset({"id", "track", "kind"})),
     "add_track": (op_add_track, frozenset({"role"}), frozenset({"id"})),
     "remove_track": (op_remove_track, frozenset({"id"}), frozenset()),
-    "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id"})),
+    "add_marker": (op_add_marker, frozenset({"at", "label"}), frozenset({"id", "color"})),
     "remove_marker": (op_remove_marker, frozenset({"id"}), frozenset()),
+    "set_marker": (op_set_marker, frozenset({"id"}), frozenset({"at", "label", "color"})),
+    "move_items": (op_move_items, frozenset({"ids", "by"}), frozenset()),
+    "delete_items": (op_delete_items, frozenset({"ids"}), frozenset({"ripple"})),
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fields": (op_set_fields, frozenset({"id"}), frozenset({"set", "unset"})),

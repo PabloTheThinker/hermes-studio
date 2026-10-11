@@ -289,7 +289,8 @@
     .dz-acts { display: flex; gap: .35rem; margin-top: .3rem; }
     .dz-agent { margin-top: 2.5rem; padding: 1.1rem 1.2rem; border: 1px solid var(--line); border-left: 2px solid var(--amber); border-radius: 0 10px 10px 0; color: var(--mute); }
     .dz-agent p { margin: .2rem 0; } .dz-agent .mono { color: var(--ink); font-size: .85em; }
-    body.designing main { padding: 0; overflow: hidden; } body.designing .wrap { max-width: none; height: 100%; }
+    body.designing main, body.editing main { padding: 0; overflow: hidden; }
+    body.designing .wrap, body.editing .wrap { max-width: none; height: 100%; }
     .ed { display: grid; grid-template-columns: 74px 250px minmax(0, 1fr) 270px; grid-template-rows: 52px minmax(0, 1fr) 118px; height: calc(100vh - 64px); }
     .ed-top { grid-column: 1 / -1; display: flex; align-items: center; gap: .5rem; padding: 0 .9rem; border-bottom: 1px solid var(--line); min-width: 0; }
     .ed-top .btn.sm, .ed-props .btn.sm, .ed-pages .btn.sm { padding: .3rem .65rem; font-size: .8rem; }
@@ -364,6 +365,7 @@
         <p class="rail-h">Desk</p>
         <nav class="rail" id="pages">
           <button data-page="clips" class="on"><span class="nm">Clips</span><span class="ct" id="clip-ct" title="Clip runs"></span></button>
+          <button data-page="edit"><span class="nm">Edit</span></button>
           <button data-page="design"><span class="nm">Design</span><span class="ct" id="design-ct"></span></button>
           <button data-page="create"><span class="nm">Other tools</span></button>
           <button data-page="library"><span class="nm">Library</span><span class="ct" id="lib-ct" title="Saved runs"></span></button>
@@ -380,6 +382,10 @@
     <main id="main"><div class="wrap"></div></main>
   </div>
   <script src="/design/fabric.min.js"></script>
+  <script src="/mix.js?v=5"></script>
+  <script src="/scopes.js?v=3"></script>
+  <script src="/wheels.js?v=3"></script>
+  <script src="/editor.js?v=94"></script>
   <script src="/design/design.js"></script>
   <script>
     const FALLBACK_TOOLS = [
@@ -477,7 +483,7 @@
         if (live && JSON.stringify(live.clips.map(c => [c.file, c.title])) !== JSON.stringify(state.open.clips.map(c => [c.file, c.title]))) { state.open = live; render(); }
         return;
       }
-      if (state.page === "create" || state.page === "design") return;
+      if (state.page === "create" || state.page === "design" || state.page === "edit") return;
       if (state.page === "library" && state.open) return;
       const sig = JSON.stringify([state.page, state.q, state.jobs.map(j => [j.id, j.status, j.progress, j.message]), state.library.length]);
       if (sig === state.sig) return;
@@ -495,20 +501,24 @@
       state.err = ""; state.tx = null;
       if (page === "tools") { state.page = "create"; state.open = null; if (arg && toolById(arg)) { state.tool = arg; Object.assign(state, toolById(arg).defaults || {}); } else state.tool = null; }
       else if (page === "design") { state.page = "design"; state.designId = arg; state.open = null; }
+      else if (page === "edit") { state.page = "edit"; state.editId = arg; state.open = null; }
       else if (page === "library" || page === "jobs" || page === "settings") { state.page = page; state.open = arg ? (state.library.find(j => j.id === arg) || null) : null; }
       else { state.page = "clips"; state.open = arg ? (state.library.find(j => j.id === arg) || { id: arg, clips: [], pending: true }) : null; if (!state.clipInit) { Object.assign(state, (toolById("clip") || {}).defaults || {}); state.clipInit = true; } }
       renderRail(); render();
       if (state.page === "library" && state.open) openRun(state.open.id, true);
     }
     window.addEventListener("popstate", applyRoute);
+    window.addEventListener("hashchange", applyRoute);
     document.querySelectorAll("#pages [data-page]").forEach(b => b.addEventListener("click", () => nav(b.dataset.page)));
 
     function render() {
       const main = $("#main .wrap");
+      if (window.HSEdit && state.page !== "edit") HSEdit.leave();
       if (window.HSDesign) {
         if (state.page === "design") { state.designId ? HSDesign.open(main, state.designId) : HSDesign.home(main); return; }
         HSDesign.leave();
       }
+      if (state.page === "edit" && window.HSEdit) { HSEdit.open(main, state.editId || ""); return; }
       main.innerHTML = state.page === "clips" ? clipsPage() : state.page === "create" ? createPage() : state.page === "library" ? libraryPage() : state.page === "settings" ? settingsPage() : jobsPage();
       bind();
     }
