@@ -62,6 +62,11 @@
       .tl-wheel b{font:500 10px var(--mono);color:var(--ink)}
       .tl-wsat{display:flex;gap:6px;align-items:center;margin-top:6px;font:500 10px var(--mono);color:var(--dim)}
       .tl-curves{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+      .tl-kfcurve{margin:6px 0 2px;border:1px solid var(--line);border-radius:5px;padding:5px;background:#08090a}
+      .tl-kfcurve nav{display:flex;gap:2px;margin-bottom:4px}
+      .tl-kfcurve nav button{flex:1;padding:2px 0;font:600 10px var(--mono);color:var(--dim)}
+      .tl-kfcurve nav button.on{background:var(--amber);color:var(--amber-ink)}
+      .tl-kfcurvec{display:block;width:100%;height:120px;cursor:crosshair;touch-action:none}
       .tl-wbal{display:grid;grid-template-columns:auto 1fr 28px;gap:3px 6px;align-items:center;margin:0 0 8px;font:500 10px var(--mono);color:var(--dim)}
       .tl-wbal input[type=range]{margin:0;-webkit-appearance:none;appearance:none;height:6px;border-radius:3px}
       .tl-wbal input[data-wb=temp]{background:linear-gradient(90deg,#4f8dff,#d9d9d9 50%,#ffae42)}
@@ -435,6 +440,167 @@
     });
     // Esc closes the picker (the global key handler runs first; this is the fallback).
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") xfClosePick(); });
+  }
+
+  // ---- keyframe curves -------------------------------------------------------------------
+  // A graph per animated property (Scale, Pos X, Pos Y, Rotate): click to add a point, drag to
+  // move it, double-click to remove it. This is the authoring surface Resolve's keyframe editor
+  // and Final Cut's video animation editor give you; the timeline diamonds stay as the compact
+  // view and the two are the same data (one "keyframes" op, one undo step).
+  let kfTab = "scale", kfCurveDrag = null;
+  const KF_PROPS = {
+    scale: { label: "Scale", lo: 0.1, hi: 3, fmt: (v) => v.toFixed(2) + "×" },
+    x: { label: "Pos X", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
+    y: { label: "Pos Y", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
+    rotate: { label: "Rotate", lo: -360, hi: 360, fmt: (v) => v.toFixed(0) + "°" },
+  };
+  function kfClipDur() { const it = find(sel); return (it && it.dur) || 1; }
+  // The graph's margins in CSS pixels. The drawing multiplies by the device pixel ratio for the
+  // backing store; a pointer arrives in CSS pixels. Both use these numbers, so a click lands on
+  // the value the graph draws.
+  const KF_M = { l: 30, r: 6, t: 8, b: 14 };
+  function drawKfCurve() {
+    const cv = root && root.querySelector("[data-kfcurve]");
+    if (!cv) return;
+    const it = find(sel);
+    const kfs = (it && it.keyframes) || [];
+    const P = KF_PROPS[kfTab] || KF_PROPS.scale;
+    const k = window.devicePixelRatio || 1;
+    const W = Math.max(1, Math.round(cv.clientWidth * k)), H = Math.max(1, Math.round(cv.clientHeight * k));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
+    const M = { l: KF_M.l * k, r: KF_M.r * k, t: KF_M.t * k, b: KF_M.b * k };
+    const dur = kfClipDur();
+    const X = (t) => M.l + (t / dur) * (W - M.l - M.r);
+    const Y = (v) => H - M.b - ((v - P.lo) / (P.hi - P.lo)) * (H - M.t - M.b);
+    ctx.fillStyle = "#08090a"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(242,239,232,.09)"; ctx.lineWidth = 1;
+    ctx.font = `${8 * k}px var(--mono, monospace)`; ctx.fillStyle = "rgba(242,239,232,.35)";
+    for (let g = 0; g <= 4; g++) {
+      const v = P.lo + ((P.hi - P.lo) * g) / 4, y = Y(v);
+      ctx.beginPath(); ctx.moveTo(M.l, y); ctx.lineTo(W - M.r, y); ctx.stroke();
+      ctx.fillText(P.fmt(v).replace(/[×°]$/, ""), 2 * k, y + 3 * k);
+    }
+    ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, H - M.b); ctx.stroke();
+    // The line: linear between keys (the render is piecewise-linear too), flat before/after.
+    ctx.strokeStyle = "var(--amber)"; ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
+    ctx.beginPath();
+    if (kfs.length) {
+      const first = kfs[0];
+      ctx.moveTo(X(0), Y(first[kfTab]));
+      for (let i = 0; i < kfs.length; i++) { const p = kfs[i]; ctx.lineTo(X(p.at), Y(p[kfTab])); }
+      const last = kfs[kfs.length - 1];
+      ctx.lineTo(X(dur), Y(last[kfTab]));
+    }
+    ctx.stroke();
+    ctx.fillStyle = "rgba(242,239,232,.35)";
+    ctx.fillText("0s", M.l, H - 3 * k);
+    ctx.textAlign = "right"; ctx.fillText(dur.toFixed(1) + "s", W - M.r, H - 3 * k); ctx.textAlign = "left";
+    kfs.forEach((p, i) => {
+      const on = kfCurveDrag && kfCurveDrag.i === i;
+      const px = X(p.at), py = Y(p[kfTab]);
+      ctx.fillStyle = on ? "#fff" : "#DEAB42";
+      ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 1.5 * k;
+      ctx.beginPath(); ctx.arc(px, py, (on ? 5 : 4) * k, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    });
+  }
+  function kfAt(e) { // pointer -> [t (s), v (this property's units)]
+    const cv = e.currentTarget;
+    const r = cv.getBoundingClientRect();
+    const P = KF_PROPS[kfTab] || KF_PROPS.scale;
+    const W = r.width, H = r.height;
+    const t = ((e.clientX - r.left - KF_M.l) / Math.max(1, W - KF_M.l - KF_M.r)) * kfClipDur();
+    // Inverse of the drawing's Y(v) = H - b - ((v - lo) / (hi - lo)) * (H - t - b):
+    // v = lo + ((H - b - Y) / (H - t - b)) * (hi - lo), where Y is the pointer's offset from
+    // the canvas top. (The top margin belongs in the denominator's span, not in Y.)
+    const v = P.lo + ((H - KF_M.b - (e.clientY - r.top)) / Math.max(1, H - KF_M.t - KF_M.b)) * (P.hi - P.lo);
+    return [Math.min(kfClipDur(), Math.max(0, t)), Math.min(P.hi, Math.max(P.lo, v))];
+  }
+  async function commitKfCurve() {
+    const it = find(sel);
+    if (!it) return;
+    const kfs = (it.keyframes || []).map((p) => ({ ...p }));
+    kfs.sort((a, b) => a.at - b.at);
+    await commit({ op: "keyframes", id: sel, keyframes: kfs.length >= 2 ? kfs : null });
+    // Keep the curve in view: commit() repaints the inspector, and without this the graph can
+    // scroll out of sight mid-edit (bad UX, and it breaks a follow-up double-click gesture).
+    const cv = root && root.querySelector("[data-kfcurve]");
+    if (cv) cv.scrollIntoView({ block: "nearest" });
+  }
+  function wireKfCurve() {
+    if (!root) return;
+    root.querySelectorAll("[data-kftab]").forEach((b) => b.addEventListener("click", () => { kfTab = b.dataset.kftab; paint(); }));
+    const cv = root.querySelector("[data-kfcurve]");
+    if (!cv) return;
+    cv.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const it = find(sel);
+      const kfs = (it && it.keyframes ? it.keyframes : []).map((p) => ({ ...p }));
+      const [t, v] = kfAt(e);
+      const r = cv.getBoundingClientRect();
+      const P2 = KF_PROPS[kfTab];
+      // Plain pixel distance to each drawn point, in CSS pixels -- the same numbers the
+      // drawing uses -- so "within 9 px" means what it says on any graph size.
+      const dur2 = kfClipDur();
+      const hit = kfs.findIndex((p) => {
+        const dx = ((p.at - t) / dur2) * (r.width - KF_M.l - KF_M.r);
+        const dy = ((p[kfTab] - v) / (P2.hi - P2.lo)) * (r.height - KF_M.t - KF_M.b);
+        return Math.hypot(dx, dy) < 9;
+      });
+      if (hit < 0) { // add a key where you clicked
+        if (kfs.length >= 64) return;
+        // Carry the values the curve already has at that time (the last key at or before t,
+        // else the first key), so only the property you clicked on changes.
+        const before = [...kfs].reverse().find((p) => p.at <= t);
+        const base = before || kfs[0] || { x: 0, y: 0, scale: 1, rotate: 0 };
+        const key = { ...base, at: t, [kfTab]: v };
+        kfs.push(key);
+        kfs.sort((a, b) => a.at - b.at);
+        selKf = kfs.indexOf(key);
+      } else {
+        selKf = hit;
+      }
+      find(sel).keyframes = kfs;
+      kfCurveDrag = { i: selKf };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
+      drawKfCurve();
+    });
+    cv.addEventListener("pointermove", (e) => {
+      if (!kfCurveDrag) return;
+      const kfs = find(sel).keyframes || [];
+      const i = kfCurveDrag.i, [t, v] = kfAt(e);
+      const lo = i > 0 ? kfs[i - 1].at : 0;
+      const hi = i < kfs.length - 1 ? kfs[i + 1].at : kfClipDur();
+      kfs[i].at = Math.min(hi - 0.02, Math.max(lo + 0.02, t));
+      kfs[i][kfTab] = v;
+      drawKfCurve();
+    });
+    const up = () => { if (!kfCurveDrag) return; kfCurveDrag = null; drawKfCurve(); commitKfCurve(); paint(); };
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", up);
+    // Double-click to remove a point. A native dblclick, not pointer timing: the commit
+    // round-trip between two taps can outlast any ms window, and the browser already knows what
+    // a double-click is. Find the point under the cursor and drop it.
+    cv.addEventListener("dblclick", async (e) => {
+      const it = find(sel);
+      const kfs = (it && it.keyframes ? it.keyframes : []).map((p) => ({ ...p }));
+      const [t, v] = kfAt(e);
+      const r = cv.getBoundingClientRect();
+      const P2 = KF_PROPS[kfTab];
+      const hit = kfs.findIndex((p) => {
+        const dx = ((p.at - t) / kfClipDur()) * (r.width - KF_M.l - KF_M.r);
+        const dy = ((p[kfTab] - v) / (P2.hi - P2.lo)) * (r.height - KF_M.t - KF_M.b);
+        return Math.hypot(dx, dy) < 9;
+      });
+      if (hit < 0) return;
+      kfs.splice(hit, 1);
+      find(sel).keyframes = kfs.length >= 2 ? kfs : null;
+      selKf = -1;
+      paint();
+      await commitKfCurve();
+    });
+    drawKfCurve();
   }
 
   // ---- custom curves -----------------------------------------------------------------
@@ -1011,7 +1177,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             ${pid === "demo" ? `<div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>` : ""}
           </aside>
@@ -1107,6 +1273,7 @@
     wireBalance();
     wireTransitions();
     loadXcat();
+    wireKfCurve();
     updateScope(true);
     applySplit();
     sizeFrame();
