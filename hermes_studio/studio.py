@@ -728,7 +728,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             except ValueError:
                 return _json(self, 400, {"ok": False, "error": "bad time"})
             try:
-                data = editor.frame_jpeg(parts[2], at)
+                mid = (qs.get("media") or [None])[0]
+                data = editor.media_frame(parts[2], mid, at) if mid else editor.frame_jpeg(parts[2], at)
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
             self.send_response(200)

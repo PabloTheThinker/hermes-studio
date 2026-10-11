@@ -2616,3 +2616,61 @@ def test_the_desk_takes_a_video_upload_into_the_bin(desk, home):
     c.request("POST", "/api/editor/demo", body=b"{}",
               headers={"Host": f"127.0.0.1:{desk}", "Content-Type": "application/octet-stream", "Content-Length": "2"})
     assert c.getresponse().status == 415
+
+
+def test_edit_points_land_on_the_frame_grid(home):
+    """A pointer time between frames (10.0249 s, which the clock shows as 00:00:10:00) puts the
+    edit on that frame, not 0.025 s past it -- insert, overwrite and freeze alike."""
+    ids = _bin_project(home, "gridA")
+    E.place("gridA", ids["Shot B"], 0, 1, "insert", 2.0249)
+    doc = E._log(E._dir("gridA")).doc
+    b = next(i for t in doc["tracks"] if t["role"] == "main" for i in t["items"] if i.get("media") == ids["Shot B"])
+    assert b["at"] == 2 * T.TICK_RATE
+    E.freeze("gridA", next(i["id"] for t in doc["tracks"] if t["role"] == "main" for i in t["items"] if i.get("media") == ids["Shot A"]), 0.51, 0.49)
+    doc = E._log(E._dir("gridA")).doc
+    still = next(i for t in doc["tracks"] for i in t["items"] if (i.get("props") or {}).get("hold"))
+    frame = T.TICK_RATE // 30
+    assert still["at"] % frame == 0 and still["props"]["hold"] % frame == 0
+
+
+def test_a_fresh_demo_plate_survives_parallel_first_requests(home):
+    """After a reset the page asks for a frame, a thumbnail and the file at once; each must get a
+    picture (two unlocked draws into one temp file made one of them fail)."""
+    import concurrent.futures as cf
+
+    E.create("demo")
+    jobs = [lambda: E.frame_jpeg("demo", 1.0), lambda: E.media_frame("demo", "m1", 1.0),
+            lambda: E.project_media("demo", "talk.mp4"), lambda: E.frame_jpeg("demo", 2.0)]
+    with cf.ThreadPoolExecutor(4) as ex:
+        out = [f.result() for f in [ex.submit(j) for j in jobs]]
+    assert all(out)
+
+
+def test_a_sound_item_on_a_silent_file_renders_as_silence(home):
+    """The demo's sound clip sits on a plate with no audio stream. The render sent [n:a] for it
+    and ffmpeg refused the whole graph ("matches no streams"): the demo couldn't render at all."""
+    from hermes_studio import render_timeline as R
+
+    E.create("demo")
+    E.frame_jpeg("demo", 1.0)  # draws the (silent) plate
+    out = R.render_project("demo")["path"]
+    assert _len(out) == pytest.approx(32.0, abs=0.1)
+
+
+def test_a_cut_mixing_vertical_and_horizontal_shots_renders(home):
+    """A 9:16 shot scales to 608x1080 with SAR 1215:1216; a 16:9 shot stays 1:1; concat refused
+    the pair, so mixing phone and camera footage could not render. Both now land square."""
+    from hermes_studio import render_timeline as R
+
+    ids = _bin_project(home, "mixA")  # A is 320x180 (16:9)
+    tall = home / "tall.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=360x640:r=30:d=2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(tall)], check=True)
+    E.import_media("mixA", tall, "Tall")
+    mid = next(m["id"] for m in E.view(E._log(E._dir("mixA")).doc)["bin"] if m["name"] == "Tall")
+    E.place("mixA", mid, 0, 2, "append")
+    out = R.render_project("mixA")["path"]
+    assert _len(out) == pytest.approx(6.0, abs=0.1)
+    sar = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=sample_aspect_ratio",
+                          "-of", "csv=p=0", out], capture_output=True, text=True).stdout.strip()
+    assert sar in ("1:1", "N/A", "0:1")

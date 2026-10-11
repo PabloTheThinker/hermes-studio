@@ -26,6 +26,39 @@
       .tl button.on{color:var(--ink);border-color:var(--amber);background:rgba(255,200,61,.08)}
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden}
+      .tl-stage.withbin{grid-template-columns:210px minmax(0,1fr) 280px}
+      .tl-bin{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--bg)}
+      .tl-binhd{display:flex;align-items:center;gap:8px;padding:12px 12px 8px;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink)}
+      .tl-binhd .n{color:var(--dim);font-weight:500}
+      .tl-binhd button{margin-left:auto}
+      .tl-binmsg{padding:0 12px;font:500 11px var(--mono);color:var(--amber);min-height:0}
+      .tl-binmsg:empty{display:none}
+      .tl-binlist{overflow:auto;min-height:0;padding:4px 8px 12px;display:grid;gap:6px;align-content:start}
+      .tl-binit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;padding:5px;border:1px solid var(--line);border-radius:3px;cursor:pointer}
+      .tl-binit:hover{border-color:var(--line-2)}
+      .tl-binit.on{border-color:var(--amber);box-shadow:inset 0 0 0 1px var(--amber)}
+      .tl-binit:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+      .tl-binit img{grid-row:1/3;width:64px;height:36px;object-fit:cover;background:#050505;border-radius:2px}
+      .tl-binit .nm{text-transform:none;letter-spacing:0;font:500 12px var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:end}
+      .tl-binit .du{text-transform:none;letter-spacing:0;font:500 10px var(--mono);color:var(--dim)}
+      .tl-binit .du i{font-style:normal;color:var(--amber)}
+      .tl-binempty{margin:8px 4px;font:400 12px/1.5 var(--sans);color:var(--dim)}
+      .tl-binempty b{color:var(--ink);font-weight:600}
+      .tl-view.src{grid-template-rows:minmax(0,1fr) auto;place-items:stretch}
+      .tl-view.src .tl-frame{place-self:center}
+      .tl-srcslot{display:none}
+      .tl-view.src .tl-srcslot{display:block;position:absolute;inset:0;z-index:4;background:#050505}
+      .tl-srcvid{width:100%;height:100%;object-fit:contain;display:block}
+      .tl-view.src .tl-frame .big,.tl-view.src .tl-frame .who,.tl-view.src .tl-frame .tl-bar{visibility:hidden}
+      .tl-srcbar{display:grid;gap:6px;padding:8px 12px 10px;border-top:1px solid var(--line);min-width:0}
+      .tl-srcbar .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font:500 11px var(--mono);color:var(--dim)}
+      .tl-srcbar .lab{color:var(--amber);font-weight:600;letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40%}
+      .tl-srcbar .tc{color:var(--ink)}
+      .tl-srcbar .io b{color:var(--ink)}
+      .tl-srcbar .to{margin-left:auto;color:var(--dim)}
+      .tl-srcstrip{position:relative;height:14px;background:var(--line);border-radius:2px;cursor:pointer;touch-action:none}
+      .tl-srcstrip .rng{position:absolute;top:0;bottom:0;background:rgba(222,171,66,.35);border-left:2px solid var(--amber);border-right:2px solid var(--amber)}
+      .tl-srcstrip .ph{position:absolute;top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--ink)}
       .tl-view{display:grid;place-items:center;border-right:1px solid var(--line);min-width:0;min-height:0;overflow:hidden}
       .tl-frame{height:auto;width:auto;max-height:96%;max-width:96%;aspect-ratio:16/9;background:#050505;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:flex-end;padding:14px;position:relative;overflow:hidden;box-sizing:border-box}
       .tl-vid,.tl-pic{object-fit:contain}
@@ -585,6 +618,209 @@
       if (c2) c2.scrollIntoView({ block: "nearest" });
     });
     drawSpeed();
+  }
+
+  // ---- bin + source viewer (Editor 1.0, M2) ----------------------------------------------
+  // Resolve's media pool on the left; click a file and the viewer becomes the SOURCE viewer
+  // (Final Cut's one-viewer model), with its own playhead and In/Out. W inserts, D overwrites,
+  // E appends the marked range at the timeline In mark (or the playhead): three-point editing.
+  let binOpen = true, srcId = null, srcMode = false, srcMarks = {}, srcVid = null, importing = "";
+  try { binOpen = localStorage.getItem("tl-bin") !== "0"; } catch (e) { /* private mode */ }
+  function loadSrcMarks() {
+    try { srcMarks = JSON.parse(localStorage.getItem("tl-srcmarks:" + pid) || "{}") || {}; } catch (e) { srcMarks = {}; }
+  }
+  function saveSrcMarks() { try { localStorage.setItem("tl-srcmarks:" + pid, JSON.stringify(srcMarks)); } catch (e) { /* private mode */ } }
+  function binItem(id) { return ((doc && doc.bin) || []).find((m) => m.id === id) || null; }
+  function srcFps(m) { const f = (m && m.fps) || [30, 1]; return f[0] / f[1]; }
+  // A source second on the file's own frame grid, inside the file.
+  function srcSnap(m, t) { const f = srcFps(m); return Math.max(0, Math.min(m.dur, Math.round(t * f) / f)); }
+  function srcRange(m) {
+    const mk = srcMarks[m.id] || {};
+    const a = mk.in != null ? mk.in : 0, b = mk.out != null ? mk.out : m.dur;
+    return b > a ? [a, b] : [0, m.dur];
+  }
+  function srcVideo() {
+    if (!srcVid) {
+      srcVid = document.createElement("video");
+      srcVid.className = "tl-srcvid";
+      srcVid.playsInline = true;
+      srcVid.preload = "auto";
+      srcVid.addEventListener("timeupdate", srcTick);
+      srcVid.addEventListener("seeked", srcTick);
+      srcVid.addEventListener("pause", srcTick);
+      srcVid.addEventListener("play", srcTick);
+    }
+    return srcVid;
+  }
+  function loadSource(id, show = true) {
+    const m = binItem(id);
+    if (!m) return;
+    if (playing) { stop(); }
+    srcId = id;
+    srcMode = show;
+    const v = srcVideo();
+    const url = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(m.file);
+    if (v.dataset.file !== m.file) {
+      v.dataset.file = m.file;
+      v.src = url;
+      const mk = srcMarks[id] || {};
+      v.addEventListener("loadedmetadata", () => { v.currentTime = mk.in != null ? mk.in : 0; }, { once: true });
+    }
+    paint();
+  }
+  // The bar under the source picture: range, playhead, timecodes. Updated in place while the
+  // source plays, so a repaint isn't needed every frame.
+  function srcTick() {
+    if (!root || !srcVid || !srcId) return;
+    const m = binItem(srcId);
+    if (!m) return;
+    const t = srcVid.currentTime || 0;
+    const ph = root.querySelector(".tl-srcstrip .ph");
+    if (ph) ph.style.left = `${(t / Math.max(m.dur, 0.001)) * 100}%`;
+    const tcel = root.querySelector(".tl-srcbar .tc");
+    if (tcel) tcel.textContent = tc(t);
+    const pb = root.querySelector('[data-act="src-play"]');
+    if (pb) pb.textContent = srcVid.paused ? "Play" : "Pause";
+    const [a, b] = srcRange(m);
+    if (!srcVid.paused && srcMarks[m.id] && srcMarks[m.id].out != null && t >= b) { srcVid.pause(); srcVid.currentTime = b; }
+    void a;
+  }
+  function setSrcMark(which) {
+    const m = binItem(srcId);
+    if (!m) return;
+    const t = srcSnap(m, srcVid ? srcVid.currentTime || 0 : 0);
+    const mk = srcMarks[m.id] || (srcMarks[m.id] = {});
+    mk[which] = t;
+    if (which === "in" && mk.out != null && mk.out <= t) mk.out = null;
+    if (which === "out" && mk.in != null && mk.in >= t) mk.in = null;
+    saveSrcMarks();
+    paint();
+  }
+  function srcStep(frames) {
+    const m = binItem(srcId);
+    if (!m || !srcVid) return;
+    srcVid.pause();
+    srcVid.currentTime = srcSnap(m, (srcVid.currentTime || 0) + frames / srcFps(m));
+  }
+  async function srcEdit(mode) {
+    const m = binItem(srcId);
+    if (!m) { msg = "Pick a clip in the bin first."; paint(); return; }
+    if (srcVid) srcVid.pause();
+    const [a, b] = srcRange(m);
+    // Three-point editing: the source In/Out plus ONE timeline point -- the timeline In mark if
+    // there is one, else the playhead. Append ignores it and goes to the end.
+    const at = inOut.in != null ? inOut.in : play;
+    const before = doc.duration;
+    await commit({ op: "place", media: m.id, src_in: a, src_out: b, mode, at });
+    const len = b - a;
+    if (mode === "append") play = Math.max(0, doc.duration - 0.001);
+    else play = Math.min(doc.duration, Math.min(at, before) + len); // the playhead lands after the edit
+    head();
+    paint();
+  }
+  async function importFiles(files) {
+    for (const f of files) {
+      importing = `Importing ${f.name}…`;
+      paint();
+      try {
+        const res = await new Promise((resolve, reject) => {
+          const x = new XMLHttpRequest();
+          x.open("POST", "/api/editor/" + encodeURIComponent(pid) + "/upload?name=" + encodeURIComponent(f.name));
+          x.setRequestHeader("Content-Type", "application/octet-stream");
+          x.upload.onprogress = (ev) => {
+            if (!ev.lengthComputable) return;
+            const el = root && root.querySelector(".tl-binmsg");
+            if (el) el.textContent = `Importing ${f.name}… ${Math.round((ev.loaded / ev.total) * 100)}%`;
+          };
+          x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch (e) { /* not JSON */ } (x.status === 200 && d.ok) ? resolve(d) : reject(new Error(d.error || x.statusText)); };
+          x.onerror = () => reject(new Error("the upload failed"));
+          x.send(f);
+        });
+        doc = res.project;
+        msg = doc.summary || `Imported ${f.name}.`;
+      } catch (e) {
+        msg = `${f.name}: ${e.message}`;
+      }
+    }
+    importing = "";
+    if (mix) mix.load(doc, pid);
+    await loadHist();
+    paint();
+  }
+  function binMarkup() {
+    const bin = (doc && doc.bin) || [];
+    const thumb = (m) => "/api/editor/" + encodeURIComponent(pid) + "/frame?media=" + encodeURIComponent(m.id) + "&t=" + Math.min(1, m.dur / 3).toFixed(2);
+    return `<aside class="tl-bin" aria-label="Bin">
+      <div class="tl-binhd"><b>Bin</b><span class="n">${bin.length}</span><button type="button" data-act="import" title="Import video files into this cut's bin">Import</button><input type="file" data-import accept="video/*,.mov,.mkv,.m4v,.webm" multiple hidden></div>
+      <div class="tl-binmsg">${esc(importing)}</div>
+      <div class="tl-binlist">${bin.length ? bin.map((m) => `<button type="button" class="tl-binit${m.id === srcId ? " on" : ""}" data-bin="${esc(m.id)}" title="${esc(m.name)} · ${esc(tc(m.dur))}${m.audio ? "" : " · no sound"} · click to open in the source viewer">
+          <img loading="lazy" alt="" src="${esc(thumb(m))}"><span class="nm">${esc(m.name)}</span><span class="du">${esc(tc(m.dur))}${m.uses ? ` · <i>in cut</i>` : ""}</span></button>`).join("")
+        : `<p class="tl-binempty">No files yet. <b>Import</b> a video, mark In and Out (I, O), then <b>W</b> insert, <b>D</b> overwrite, <b>E</b> append at the playhead.</p>`}</div>
+    </aside>`;
+  }
+  function srcBarMarkup() {
+    const m = binItem(srcId);
+    if (!srcMode || !m) return "";
+    const [a, b] = srcRange(m);
+    const mk = srcMarks[m.id] || {};
+    const pct = (x) => `${(x / Math.max(m.dur, 0.001)) * 100}%`;
+    const t = srcVid ? srcVid.currentTime || 0 : 0;
+    const where = inOut.in != null ? `timeline In ${tc(inOut.in)}` : `playhead ${tc(play)}`;
+    return `<div class="tl-srcbar">
+        <div class="row"><span class="lab">Source · ${esc(m.name)}</span><span class="tc">${esc(tc(t))}</span><span class="io">${mk.in != null ? "In " + esc(tc(a)) : "In —"} · ${mk.out != null ? "Out " + esc(tc(b)) : "Out —"} · <b>${esc(tc(b - a))}</b></span></div>
+        <div class="tl-srcstrip" data-srcstrip title="Click or drag to scrub the source"><i class="rng" style="left:${pct(a)};width:${pct(b - a)}"></i><i class="ph" style="left:${pct(t)}"></i></div>
+        <div class="row btns"><button type="button" data-act="src-play">${srcVid && !srcVid.paused ? "Pause" : "Play"}</button><button type="button" data-act="src-in" title="Mark source In (I)">In</button><button type="button" data-act="src-out" title="Mark source Out (O)">Out</button>
+          <span class="to" title="Where W and D put the clip">→ ${esc(where)}</span>
+          <button type="button" class="tl-go" data-act="src-insert" title="Insert at the ${esc(where)}, pushing the rest out (W)">Insert W</button><button type="button" class="tl-go" data-act="src-over" title="Overwrite from the ${esc(where)} (D)">Overwrite D</button><button type="button" class="tl-go" data-act="src-append" title="Append to the end of the cut (E)">Append E</button><button type="button" data-act="src-close" title="Back to the timeline viewer (Esc)">Timeline</button></div>
+      </div>`;
+  }
+  function wireBin() {
+    root.querySelectorAll("[data-bin]").forEach((b) => b.addEventListener("click", () => loadSource(b.dataset.bin)));
+    const inp = root.querySelector("[data-import]");
+    if (inp) inp.addEventListener("change", () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) importFiles(fs); });
+    const slot = root.querySelector(".tl-srcslot");
+    if (slot && srcVid) slot.appendChild(srcVid);
+    const strip = root.querySelector("[data-srcstrip]");
+    if (strip) strip.addEventListener("pointerdown", (e) => {
+      const m = binItem(srcId);
+      if (!m || !srcVid) return;
+      strip.setPointerCapture(e.pointerId);
+      const seek = (ev) => {
+        const r = strip.getBoundingClientRect();
+        srcVid.pause();
+        srcVid.currentTime = srcSnap(m, ((ev.clientX - r.left) / Math.max(1, r.width)) * m.dur);
+      };
+      seek(e);
+      const mv = (ev) => seek(ev);
+      const up = () => { strip.removeEventListener("pointermove", mv); strip.removeEventListener("pointerup", up); };
+      strip.addEventListener("pointermove", mv);
+      strip.addEventListener("pointerup", up);
+    });
+  }
+  // Keys while a source is loaded. Returns true when it took the key.
+  function binKey(e, code) {
+    if (!srcId) return false;
+    const plain = !e.altKey && !e.metaKey && !e.ctrlKey;
+    if (plain && (code === "KeyW" || code === "KeyD" || code === "KeyE")) {
+      e.preventDefault();
+      srcEdit(code === "KeyW" ? "insert" : code === "KeyD" ? "overwrite" : "append");
+      return true;
+    }
+    if (!srcMode) return false;
+    if (code === "Escape") { e.preventDefault(); if (srcVid) srcVid.pause(); srcMode = false; paint(); return true; }
+    if (code === "KeyI" || code === "KeyO") {
+      e.preventDefault();
+      const which = code === "KeyI" ? "in" : "out";
+      if (e.altKey) { const mk = srcMarks[srcId] || {}; mk[which] = null; srcMarks[srcId] = mk; saveSrcMarks(); paint(); }
+      else setSrcMark(which);
+      return true;
+    }
+    if (plain && (code === "Space" || code === "KeyK")) { e.preventDefault(); const v = srcVideo(); if (v.paused) { const [a, b] = srcRange(binItem(srcId)); if (v.currentTime >= b - 0.01) v.currentTime = a; v.play(); } else v.pause(); return true; }
+    if (plain && code === "KeyL") { e.preventDefault(); const v = srcVideo(); v.playbackRate = v.paused ? 1 : Math.min(4, v.playbackRate * 2); v.play(); return true; }
+    if (plain && code === "KeyJ") { e.preventDefault(); srcStep(-Math.round(srcFps(binItem(srcId)))); return true; } // a <video> can't run backwards: J jumps back a second
+    if (code === "ArrowLeft" || code === "Comma") { e.preventDefault(); srcStep(e.shiftKey ? -10 : -1); return true; }
+    if (code === "ArrowRight" || code === "Period") { e.preventDefault(); srcStep(e.shiftKey ? 10 : 1); return true; }
+    return false;
   }
 
   // ---- keyframe curves -------------------------------------------------------------------
@@ -1292,14 +1528,17 @@
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
           <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
           <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
+          <button type="button" data-act="bin" class="${binOpen ? "on" : ""}" title="Show or hide the bin">Bin</button>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
           <button type="button" class="tl-go" data-act="render" title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
-        <div class="tl-stage">
-          <div class="tl-view"><div class="tl-frame" style="aspect-ratio:${cw}/${ch}">
+        <div class="tl-stage${binOpen ? " withbin" : ""}">
+          ${binOpen ? binMarkup() : ""}
+          <div class="tl-view${srcMode && binItem(srcId) ? " src" : ""}"><div class="tl-frame" style="aspect-ratio:${cw}/${ch}">
+            <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
             <span class="tl-shade"></span>
@@ -1307,7 +1546,7 @@
             <span class="big">${esc(fmt(play))}</span>
             <span class="who">${esc(it ? it.label : "No clip under the playhead")}</span>
             <span class="tl-bar" style="width:${(play / w) * 100}%"></span>
-          </div></div>
+          </div>${srcBarMarkup()}</div>
           <aside class="tl-insp">
             ${scopeMode !== "off" ? `<div class="tl-scope"><canvas class="tl-scopec" width="230" height="132" aria-label="${scopeMode === "vector" ? "Vectorscope" : scopeMode === "parade" ? "RGB parade" : "Luma waveform"} of the graded preview"></canvas><div class="tl-sread"></div><nav>` : `<div class="tl-scope"><nav>`}${[["wave", "Wave"], ["parade", "Parade"], ["vector", "Vector"], ["off", "Off"]].map(([m, l]) => `<button type="button" data-scope="${m}" class="${scopeMode === m ? "on" : ""}" title="${m === "off" ? "Hide the scopes" : l + " of the graded picture"}">${l}</button>`).join("")}</nav></div>
             <h3>${esc(it ? it.label : "Nothing selected")}</h3>
@@ -1375,6 +1614,7 @@
       bindFilm(keep);
     }
     root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
+    wireBin();
     // Volume is a live slider: update the readout as it drags, and commit on release.
     const vol = root.querySelector("[data-vol]");
     if (vol) {
@@ -1777,7 +2017,10 @@
     } else if (e.target.closest("[data-lane]")) {
       // A drag on empty lane is a marquee selection; a plain click seeks. Only starts a
       // marquee once it moves, so a click never leaves a phantom box behind.
-      const box = e.currentTarget.closest(".tl-stack").getBoundingClientRect();
+      // .tl-stack sits INSIDE the scroller this listener is on (closest() looked upward and
+      // found nothing, so an empty-lane click threw: no seek, no marquee).
+      const stackEl = e.currentTarget.querySelector(".tl-stack") || e.currentTarget.closest(".tl-stack") || e.currentTarget;
+      const box = stackEl.getBoundingClientRect();
       drag = { kind: "marq", x0: e.clientX, y0: e.clientY, bx: box.left, by: box.top, bw: box.width, bh: box.height,
         at0: snap(Math.max(0, Math.min(doc.duration, xToTime(e)))), group: e.shiftKey ? [...selSet] : null, moved: false };
       if (!e.shiftKey) { play = snap(Math.max(0, Math.min(doc.duration, xToTime(e)))); head(); }
@@ -2034,6 +2277,8 @@
   // After an edit lands: fetch any new sound, and if the mix is playing keep it in step. A
   // mixer move (mute/solo/gain) glides live; anything else re-schedules from where we are.
   function afterEdit(body) {
+    // An edit (or an undo) can shorten the cut under the playhead: keep it inside the cut.
+    if (doc && play > doc.duration) play = doc.duration;
     if (!mix || !doc) return;
     mix.load(doc, pid);
     if (!mixing) return;
@@ -2339,6 +2584,7 @@
   // for it: browsers only start audio, and an unmuted <video>, from one.
   function transport(r) {
     stop();
+    if (srcMode) { srcMode = false; if (srcVid) srcVid.pause(); }
     rate = r;
     if (r > 0 && play >= doc.duration - 0.01) play = 0;
     if (r < 0 && play <= 0.01) play = doc.duration;
@@ -2405,6 +2651,15 @@
       if (s3 && s3.speed_keys) await commit({ op: "speed_keys", id: sel, keys: null });
       return;
     }
+    if (name === "import") { const inp = root.querySelector("[data-import]"); if (inp) inp.click(); return; }
+    if (name === "bin") { binOpen = !binOpen; try { localStorage.setItem("tl-bin", binOpen ? "1" : "0"); } catch (e) { /* private */ } paint(); return; }
+    if (name === "src-insert" || name === "src-over" || name === "src-append") {
+      await srcEdit(name === "src-insert" ? "insert" : name === "src-over" ? "overwrite" : "append");
+      return;
+    }
+    if (name === "src-in" || name === "src-out") { setSrcMark(name === "src-in" ? "in" : "out"); return; }
+    if (name === "src-play") { const v = srcVideo(); if (v.paused) { const [a, b] = srcRange(binItem(srcId)); if (v.currentTime >= b - 0.01) v.currentTime = a; v.play(); } else v.pause(); return; }
+    if (name === "src-close") { if (srcVid) srcVid.pause(); srcMode = false; paint(); return; }
     if (name === "freeze") {
       await freezeHere();
       return;
@@ -2592,6 +2847,7 @@
     if (e.target.closest("input, textarea, select, [contenteditable]")) return;
     if (picking && e.key === "Escape") { e.preventDefault(); armPick(false); paint(); return; }
     const k = e.key.toLowerCase();
+    if (binKey(e, e.code || "")) return;
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
     // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
     const code = e.code || "";
@@ -2747,6 +3003,9 @@
       msg = data.project.summary || "";
       if (mix) mix.load(doc, pid);
       inOut = loadMarks(pid);
+      loadSrcMarks();
+      srcId = null; srcMode = false;
+      if (srcVid) { srcVid.pause(); srcVid.removeAttribute("src"); delete srcVid.dataset.file; srcVid.load(); }
       await loadWords();
       await loadHist();
       paint();

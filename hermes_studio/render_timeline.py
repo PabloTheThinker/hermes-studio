@@ -290,12 +290,6 @@ TB = 1000000.0  # internal 'seconds' unit for a speed-ramp setpts expression
 REVERSE_CHUNK_S = 4.0  # seconds per reversed piece: ffmpeg's reverse filter buffers every frame
 
 
-def _has_audio(path: Path) -> bool:
-    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
-                        "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
-    return bool(r.stdout.strip())
-
-
 def _reversed_source(folder: Path, path: Path, i0: int, o1: int, rate: int) -> Path:
     """The source window [i0, o1) played backwards, as a cached file the render then treats as an
     ordinary forward clip (so speed, ramps, grade and fades apply to it unchanged).
@@ -505,6 +499,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
     # clip still counts toward the length, so muting never changes how long the cut is.
     audio_tracks = [tr for tr in doc["tracks"] if tr.get("role") in ("voice", "music")]
     any_solo = any(tr.get("solo") for tr in audio_tracks)
+    sounding: dict[str, bool] = {}
     for tr in audio_tracks:
         role = tr["role"]
         gain = _level(tr.get("gain"))
@@ -528,6 +523,13 @@ def _build_plan(doc: dict, folder: Path) -> dict:
             path = resolve_media(folder, rel)
             if not path.is_file():
                 raise RenderError(f"sound file is missing: {path.name}")
+            # A sound item on a file with no sound stream (a silent screen recording, the demo
+            # plate) plays as silence. It used to reach the graph as [n:a] and fail the whole
+            # render with "matches no streams".
+            if rel not in sounding:
+                sounding[rel] = _has_audio(path)
+            if not sounding[rel]:
+                continue
             if (it.get("props") or {}).get("reverse") is True:
                 path = _reversed_source(folder, path, i0, o1, rate)
                 rel = "reverse/" + path.name
@@ -881,17 +883,20 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 fr = 1.0 / (fps if fps > 0 else 30.0)
                 chain = (f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts=PTS-STARTPTS,"
                          f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}"
-                         f"{vfade},format=yuv420p")
+                         f"{vfade},setsar=1,format=yuv420p")
                 fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{chain}[v{n}]")
             else:
-                chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
+                # setsar=1 on every piece: scaling a 9:16 phone shot to whole pixels leaves it SAR
+                # 1215:1216, a 16:9 shot stays 1:1, and concat refuses to join the two -- any cut
+                # mixing vertical and horizontal footage failed to render. The canvas is square.
+                chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},setsar=1,format=yuv420p"
                 fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")
             seg_ids.append(None)
             seg_durs.append(dur)
-            fc.append(f"[{inp['idx']}:v]trim=start=0:end={dur:.3f},setpts=PTS-STARTPTS,fps={fps:.3f},format=yuv420p[v{n}]")
+            fc.append(f"[{inp['idx']}:v]trim=start=0:end={dur:.3f},setpts=PTS-STARTPTS,fps={fps:.3f},setsar=1,format=yuv420p[v{n}]")
 
     fc.extend(_assemble_video(v_in, seg_ids, seg_durs, plan["transitions"], rate))
 

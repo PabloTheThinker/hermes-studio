@@ -32,7 +32,7 @@ the video editor."*
 8. **Undo and recover.** Undo back to the empty timeline and redo to the end, losing nothing.
    Kill the server mid-edit and reopen: the log is intact.
 9. **Keyboard.** The whole film can be cut with the keyboard (J/K/L, I/O, B/A, comma/period,
-   Q/W/E for insert/overwrite/append), and a shortcut sheet lists every key.
+   W/D/E for insert/overwrite/append (Final Cut's keys)), and a shortcut sheet lists every key.
 
 If any step fails, 1.0 is not done.
 
@@ -52,7 +52,7 @@ Each of these is a 1.x item after 1.0 ships.
 
 | Area | Shipped | Missing for 1.0 |
 |---|---|---|
-| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range | **media bin + source viewer + insert/overwrite/append** (3-point editing); shortcut sheet |
+| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range, **bin (import/upload) + source viewer + insert W / overwrite D / append E** (3-point editing, frame-grid edit points) | shortcut sheet (M9); drag from bin to timeline |
 | Playback | real preview mix on the audio clock, J/K/L shuttle, frame step, timecode, adaptive ruler | — |
 | Transitions | all 58 ffmpeg xfade kinds, picker, drag to resize | — |
 | Keyframes | position, scale, rotate, Ken Burns, curve editor, diamonds, drag handles, volume rubber band | opacity keyframes; easing (ease in/out) |
@@ -78,7 +78,7 @@ render or real CDP input before its commit.
 | # | Milestone | Done when |
 |---|---|---|
 | **M1** ✅ | **Speed finish**: reverse, freeze frame (hold N seconds), sound handled (reversed / silence) | a reversed clip renders frames in reverse order (frame-number probe); a freeze holds one frame for its length. **Done** `1b3b641`, `775a541` + the freeze commit |
-| **M2** | **Media bin + source viewer + 3-point editing**: bin of imported media, source monitor with its own In/Out, insert (ripple), overwrite, append, keys Q/W/E | a cut is built entirely from the bin with the keyboard; each edit is one undo step |
+| **M2** ✅ | **Media bin + source viewer + 3-point editing**: bin of imported media, source monitor with its own In/Out, insert (ripple), overwrite, append, keys W / D / E (Final Cut) | a cut is built entirely from the bin with the keyboard; each edit is one undo step. **Done** `b0a8e4d` + the UI commit |
 | **M3** | **Titles**: text objects on T1 (font, size, colour, position, box), fade/slide in-out, lower-third and end-card templates, rendered with drawtext/ASS | a title appears at the same place and size in the preview and the export (pixel-checked) |
 | **M4** | **Audio finish**: pan, ducking (music under voice, sidechaincompress), export loudness (ebur128) shown after a render | music measurably drops under voice; the export reads −14 LUFS ±1 |
 | **M5** | **Export presets**: 1080p H.264, 4K, 1080p vertical, ProRes 422, custom fps/quality; progress bar, cancel, ffprobe summary | each preset verified with ffprobe; cancel leaves no half file |

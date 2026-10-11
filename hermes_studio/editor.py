@@ -758,11 +758,11 @@ def freeze(pid: str, item_id: str, at_seconds: float, hold_seconds: float = 2.0)
         raise EditorError("freeze a clip on the main track")
     if (me.get("props") or {}).get("hold"):
         raise EditorError("that clip is already a freeze frame")
-    hold = T.seconds_to_ticks(float(hold_seconds))
+    hold = _frames(doc, float(hold_seconds))
     if not (T.seconds_to_ticks(0.1) <= hold <= T.seconds_to_ticks(600)):
         raise EditorError("hold between 0.1 and 600 seconds")
     start, length = me["at"], T.item_duration(me)
-    cut = T.seconds_to_ticks(float(at_seconds))
+    cut = _at_frame(doc, float(at_seconds))  # the frame under the playhead, like every edit point
     if not start <= cut < start + length:
         raise EditorError("the playhead isn't on that clip")
     # The frame shown at the playhead, snapped to the media's own frame grid.
@@ -925,7 +925,9 @@ def place(pid: str, media_id: str, src_in: float, src_out: float, mode: str, at:
     else:
         if at is None:
             raise EditorError("place needs a timeline point")
-        cut = max(0, T.seconds_to_ticks(float(at)))
+        # Edit points sit on the project's frame grid (a pointer time between frames used to
+        # land the clip 0.025 s off the frame the clock showed).
+        cut = max(0, _at_frame(doc, float(at)))
         end = _track_end(main)
         if cut > end:
             cut = end  # past the end, an edit lands at the end (no gap made silently)
@@ -1359,6 +1361,17 @@ def _frames(doc: dict, seconds: float) -> int:
     return int(round(Fraction(seconds) * T.TICK_RATE / frame) * frame)
 
 
+def _at_frame(doc: dict, seconds: float) -> int:
+    """A timeline POINT (the playhead, an In mark) as ticks: the start of the frame that point
+    is in. The page's clock floors (frameOf), so this is the frame the user sees under the
+    playhead; lengths round instead (_frames)."""
+    import math
+
+    num, den = (doc.get("fps") or [30, 1])
+    frame = Fraction(T.TICK_RATE * den, num)
+    return int(math.floor(Fraction(seconds) * T.TICK_RATE / frame + Fraction(1, 10**6)) * frame)
+
+
 def move_items(pid: str, ids: list[str], by_seconds: float) -> dict:
     """Move several items together by one offset (a group drag): one undo step for the group."""
     out = _known_ids(pid, ids)
@@ -1481,6 +1494,15 @@ def resolve_media(folder: Path, rel: str) -> Path:
     return path
 
 
+def _ensure_demo_plate(folder: Path, path: Path) -> None:
+    """Draw the demo plate once, under the project lock. The page asks for a frame and for the
+    file at the same moment after a reset; unlocked, both drew into one temp file and one of
+    the two requests failed (a 404 picture on a fresh demo)."""
+    with _locked(folder):
+        if not path.is_file():
+            _demo_plate(path)
+
+
 def _demo_plate(dest: Path) -> None:
     """A short 9:16 plate so the demo has a real picture. Not a stand-in for a user's film."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1523,11 +1545,28 @@ def frame_jpeg(pid: str, seconds: float) -> bytes:
     if not hit:
         raise EditorError("no picture at this time")
     media_id, src_s = hit
+    return _media_jpeg(folder, doc, media_id, src_s)
+
+
+def media_frame(pid: str, media_id: str, seconds: float) -> bytes:
+    """One JPEG of a bin file at a source second (the bin thumbnail; the source viewer's still).
+    The same per-media cache as the playhead frame."""
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    doc = _log(folder).doc
+    m = doc.get("media", {}).get(media_id)
+    if not isinstance(m, dict):
+        raise EditorError("no such media")
+    return _media_jpeg(folder, doc, media_id, max(0.0, min(float(seconds), m["dur"] / doc["tick_rate"] - 0.04)))
+
+
+def _media_jpeg(folder: Path, doc: dict, media_id: str, src_s: float) -> bytes:
     rel = str(doc.get("media", {}).get(media_id, {}).get("path") or "")
     path = resolve_media(folder, rel)
     if not path.is_file():
-        if rel == "media/talk.mp4":
-            _demo_plate(path)
+        if rel == "media/talk.mp4" and doc.get("id") == DEMO:
+            _ensure_demo_plate(folder, path)
         else:
             raise EditorError("picture file is missing")
     slot = max(0, int(round(src_s * 5)))
@@ -1541,7 +1580,9 @@ def frame_jpeg(pid: str, seconds: float) -> bytes:
     cache = folder / "frames" / mkey / f"{slot:05d}.jpg"
     if not cache.is_file() or cache.stat().st_size < 100:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        tmp = cache.with_name("." + cache.stem + ".tmp.jpg")
+        # A temp name of its own: two requests for one frame (the playhead still and a bin
+        # thumbnail, say) used to write the same temp file and one of them failed.
+        tmp = cache.with_name(f".{cache.stem}.{secrets.token_hex(4)}.tmp.jpg")
         proc = subprocess.run(
             [
                 "ffmpeg",
@@ -1725,9 +1766,7 @@ def project_media(pid: str, name: str) -> Path:
     if not path.is_file() and pid == DEMO and name == "talk.mp4":
         # The demo's plate is drawn on first use. frame_jpeg drew it, but playback asks for the
         # file directly, so a freshly reset demo handed the <video> a 404 and Play did nothing.
-        with _locked(_dir(pid)):
-            if not path.is_file():
-                _demo_plate(path)
+        _ensure_demo_plate(_dir(pid), path)
     if not path.is_file():
         raise EditorError("no such picture")
     return path
