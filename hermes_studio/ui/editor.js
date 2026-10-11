@@ -61,6 +61,11 @@
       .tl-wheel input[type=range]{width:100%;margin:0}
       .tl-wheel b{font:500 10px var(--mono);color:var(--ink)}
       .tl-wsat{display:flex;gap:6px;align-items:center;margin-top:6px;font:500 10px var(--mono);color:var(--dim)}
+      .tl-curves{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+      .tl-curves nav{display:flex;gap:2px;margin-bottom:4px}
+      .tl-curves nav button{flex:1;padding:2px 0;font:600 10px var(--mono)}
+      .tl-curves nav button.flat{flex:1.6;font-weight:500;color:var(--dim)}
+      .tl-curvec{display:block;width:100%;height:150px;border-radius:4px;cursor:crosshair;touch-action:none;background:#08090a}
       .tl-wsat input{flex:1;margin:0}
       .tl-insp h3{margin:0 0 8px;font:600 11px var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
       .tl-row{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--line);padding:8px 0;font-size:13px}
@@ -262,7 +267,9 @@
       // base: the committed grade as the op would send it, so a commit that changes nothing
       // (a click on a slider, a puck put back where it was) is skipped instead of logged.
       const st = window.HSWheels.fromGrade(it.grade);
-      wheel = { id: it.id, st, live: false, base: gradeKeyOf(window.HSWheels.toGrade(st)) };
+      const cv0 = window.HSWheels.cleanCurves(st.curves);
+      wheel = { id: it.id, st, live: false, base: gradeKeyOf(window.HSWheels.toGrade(st)),
+        cbase: curvesKey(cv0) };
     }
     const st = wheel.st, ring = window.HSWheels.ringStops();
     const one = (kind, label) => {
@@ -276,8 +283,123 @@
       <div class="tl-wheels">${one("lift", "Lift")}${one("gamma", "Gamma")}${one("gain", "Gain")}</div>
       <label class="tl-wsat">Sat <input type="range" data-wsat min="0" max="2" step="0.01" value="${st.sat.toFixed(2)}" aria-label="Saturation"><b data-wv="sat">${st.sat.toFixed(2)}</b></label>
       <label class="tl-wsat">Look <select data-glook style="flex:1" aria-label="Look" title="A starting grade: the wheels show it and can take it further">
-        ${it.grade && !it.look ? `<option value="__custom" selected disabled>Custom</option>` : ""}<option value="" ${it.grade ? "" : "selected"}>None</option>${["warm", "cool", "punch", "mono", "film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select></label></div>`;
+        ${it.grade && !it.look ? `<option value="__custom" selected disabled>Custom</option>` : ""}<option value="" ${it.grade ? "" : "selected"}>None</option>${["warm", "cool", "punch", "mono", "film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select></label>
+      <div class="tl-curves"><nav>${[["m", "Master"], ["r", "R"], ["g", "G"], ["b", "B"]].map(([k, l]) => `<button type="button" data-ctab="${k}" class="${curveTab === k ? "on" : ""}" title="${k === "m" ? "Master curve: all three channels" : l + " channel curve"}${st.curves[k] ? " (shaped)" : ""}">${l}${st.curves[k] ? "•" : ""}</button>`).join("")}<button type="button" class="flat" data-cflat title="Make this curve a straight line again">Flat</button></nav>
+        <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div></div>`;
   }
+  // ---- custom curves -----------------------------------------------------------------
+  // Master / R / G / B, like Resolve's Custom Curves. Click to add a point, drag to move it,
+  // double-click to remove it; the ends move up and down only. A drag grades the preview and
+  // the scopes live (wheels.js mirrors grade.py's PCHIP); release commits one "grade" op that
+  // carries only the curves, so the wheels are kept.
+  let curveTab = "m", curveDrag = null;
+  const CURVE_INK = { m: [242, 239, 232], r: [255, 90, 80], g: [90, 220, 110], b: [100, 150, 255] };
+  const curvePts = (k) => (wheel.st.curves[k] ? wheel.st.curves[k] : [[0, 0], [1, 1]]);
+  function drawCurves() {
+    const cv = root && root.querySelector("[data-curve]");
+    if (!cv || !wheel || !window.HSWheels) return;
+    const k = window.devicePixelRatio || 1;
+    const W = Math.max(1, Math.round(cv.clientWidth * k)), H = Math.max(1, Math.round(cv.clientHeight * k));
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
+    const P = 6 * k, X = (x) => P + x * (W - 2 * P), Y = (y) => H - P - y * (H - 2 * P);
+    ctx.fillStyle = "#08090a"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(242,239,232,.08)"; ctx.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      ctx.beginPath(); ctx.moveTo(X(i / 4), Y(0)); ctx.lineTo(X(i / 4), Y(1)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(0), Y(i / 4)); ctx.lineTo(X(1), Y(i / 4)); ctx.stroke();
+    }
+    ctx.setLineDash([3 * k, 3 * k]); ctx.strokeStyle = "rgba(242,239,232,.18)";
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(1), Y(1)); ctx.stroke(); ctx.setLineDash([]);
+    const line = (key, alpha, width) => {
+      const pts = curvePts(key), c = CURVE_INK[key];
+      ctx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`; ctx.lineWidth = width * k;
+      ctx.beginPath();
+      for (let i = 0; i <= 128; i++) { const x = i / 128, y = window.HSWheels.pchip(pts, x); if (i) ctx.lineTo(X(x), Y(y)); else ctx.moveTo(X(x), Y(y)); }
+      ctx.stroke();
+    };
+    for (const key of ["m", "r", "g", "b"]) if (key !== curveTab && wheel.st.curves[key]) line(key, 0.3, 1);
+    line(curveTab, 0.95, 1.6);
+    const c = CURVE_INK[curveTab];
+    curvePts(curveTab).forEach((p, i, a) => {
+      ctx.fillStyle = curveDrag && curveDrag.i === i ? "#fff" : `rgb(${c[0]},${c[1]},${c[2]})`;
+      ctx.strokeStyle = "rgba(0,0,0,.7)"; ctx.lineWidth = 1.5 * k;
+      const r = 4 * k;
+      ctx.beginPath();
+      if (i === 0 || i === a.length - 1) ctx.rect(X(p[0]) - r, Y(p[1]) - r, 2 * r, 2 * r); else ctx.arc(X(p[0]), Y(p[1]), r, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    });
+  }
+  function curvesKey(cv) {
+    return JSON.stringify(cv ? Object.fromEntries(Object.entries(cv).map(([k, pts]) => [k, pts.map(([x, y]) => [r4(x), r4(y)])])) : null);
+  }
+  async function commitCurves() {
+    if (!wheel) return;
+    const cv = window.HSWheels.cleanCurves(wheel.st.curves);
+    const key = curvesKey(cv);
+    wheel.live = false;
+    if (key === wheel.cbase) return; // nothing changed
+    await commit({ op: "grade", id: wheel.id, curves: JSON.parse(key) });
+  }
+  function wireCurves() {
+    if (!root || !wheel) return;
+    root.querySelectorAll("[data-ctab]").forEach((b) => b.addEventListener("click", () => { curveTab = b.dataset.ctab; paint(); }));
+    const flat = root.querySelector("[data-cflat]");
+    if (flat) flat.addEventListener("click", () => {
+      if (!wheel.st.curves[curveTab]) return;
+      delete wheel.st.curves[curveTab];
+      wheel.live = true; liveGrade(); drawCurves(); commitCurves();
+    });
+    const cv = root.querySelector("[data-curve]");
+    if (!cv) return;
+    const P = 6;
+    const at = (e) => {
+      const r = cv.getBoundingClientRect();
+      return [Math.min(1, Math.max(0, (e.clientX - r.left - P) / (r.width - 2 * P))),
+        Math.min(1, Math.max(0, 1 - (e.clientY - r.top - P) / (r.height - 2 * P)))];
+    };
+    let lastTap = { i: -1, t: 0 };
+    cv.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const r = cv.getBoundingClientRect(), [x, y] = at(e);
+      const pts = curvePts(curveTab).map((p) => [p[0], p[1]]);
+      let hit = -1, best = 9; // the nearest point within 9 px
+      pts.forEach((p, i) => {
+        const d = Math.hypot((p[0] - x) * (r.width - 2 * P), (p[1] - y) * (r.height - 2 * P));
+        if (d < best) { best = d; hit = i; }
+      });
+      const now = performance.now();
+      if (hit > 0 && hit < pts.length - 1 && lastTap.i === hit && now - lastTap.t < 350) { // double-click: remove
+        pts.splice(hit, 1);
+        wheel.st.curves[curveTab] = pts; wheel.live = true; lastTap = { i: -1, t: 0 };
+        liveGrade(); drawCurves(); commitCurves();
+        return;
+      }
+      if (hit < 0) { // add a point where you clicked, unless one already sits that close in x
+        if (pts.length >= 16 || pts.some((p) => Math.abs(p[0] - x) < 0.01)) return;
+        pts.push([x, y]); pts.sort((a, b) => a[0] - b[0]);
+        hit = pts.findIndex((p) => p[0] === x);
+      }
+      lastTap = { i: hit, t: now };
+      wheel.st.curves[curveTab] = pts; wheel.live = true;
+      curveDrag = { i: hit };
+      try { cv.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
+      liveGrade(); drawCurves();
+    });
+    cv.addEventListener("pointermove", (e) => {
+      if (!curveDrag) return;
+      const pts = wheel.st.curves[curveTab], i = curveDrag.i, [x, y] = at(e);
+      const end = i === 0 || i === pts.length - 1; // the ends move up and down only
+      pts[i] = [end ? pts[i][0] : Math.min(pts[i + 1][0] - 0.01, Math.max(pts[i - 1][0] + 0.01, x)), y];
+      liveGrade(); drawCurves();
+    });
+    const up = () => { if (!curveDrag) return; curveDrag = null; drawCurves(); commitCurves(); };
+    cv.addEventListener("pointerup", up);
+    cv.addEventListener("pointercancel", up);
+    drawCurves();
+  }
+
   // You grade what you see (Resolve's rule: the current clip is the one on the viewer). If the
   // playhead is on another clip when a wheel, slider or look is touched, bring it into the clip
   // being graded first, so the preview and the scopes show the change. Paused only.
@@ -772,6 +894,7 @@
     }));
     if (pic) pic.addEventListener("load", () => updateScope(true));
     wireWheels();
+    wireCurves();
     updateScope(true);
     applySplit();
     sizeFrame();

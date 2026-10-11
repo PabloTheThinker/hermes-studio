@@ -48,7 +48,7 @@ def test_the_live_preview_pack_equals_grade_py(g):
 def test_neutral_is_no_grade():
     r = _run("const st = W.neutral(); const g = W.toGrade(st); console.log(JSON.stringify({ st, g, neutral: W.isNeutral(g), prev: W.preview(g) }))")
     assert r["neutral"] and r["prev"] is None
-    assert r["g"] == {"lift": [0, 0, 0], "gamma": [1, 1, 1], "gain": [1, 1, 1], "sat": 1}
+    assert r["g"] == {"lift": [0, 0, 0], "gamma": [1, 1, 1], "gain": [1, 1, 1], "sat": 1, "curves": None}
     for k in ("lift", "gamma", "gain"):
         assert abs(r["st"][k]["x"]) < 1e-12 and abs(r["st"][k]["y"]) < 1e-12
 
@@ -116,3 +116,33 @@ def test_the_ring_puts_red_where_the_vectorscope_does():
     assert r.startswith("#") and "deg" in r
     red_deg = float(r.split("#ff3b30 ")[1].split("deg")[0])
     assert 270 < red_deg < 360  # up-left of centre, clockwise from the top
+
+
+CURVES = [
+    {"m": [[0, 0], [0.25, 0.15], [0.75, 0.85], [1, 1]]},
+    {"r": [[0, 0.1], [0.3, 0.2], [0.6, 0.65], [1, 0.95]], "b": [[0, 0], [0.5, 0.35], [1, 1]],
+     "m": [[0, 0.05], [0.2, 0.5], [0.4, 0.55], [0.7, 0.56], [1, 1]]},
+]
+
+
+@pytest.mark.parametrize("cv", CURVES)
+def test_the_live_preview_with_curves_equals_grade_py(cv):
+    """A curve drag grades the preview from wheels.js; the same numbers must come back from
+    grade.py when the op lands (pchip mirrored line for line)."""
+    g = {"lift": [0.05, 0, -0.02], "gamma": [1, 1.2, 0.9], "gain": [1, 0.95, 1.1], "sat": 1.1, "curves": cv}
+    js = _run(f"console.log(JSON.stringify(W.preview({json.dumps(g)})))")
+    py = G.preview(G.parse(G.store(**g)))
+    for ch in range(3):
+        diffs = [abs(a - b) for a, b in zip(js["tables"][ch], py["tables"][ch])]
+        assert max(diffs) <= 2e-5, (ch, max(diffs))  # store() rounds points to 1e-4; tables to 1e-5
+
+
+def test_curves_ride_along_in_the_wheel_state():
+    r = _run("""
+const g = { lift: [0,0,0], gamma: [1,1,1], gain: [1,1,1], sat: 1, curves: { m: [[0,0],[0.5,0.7],[1,1]], g: [[0,0],[1,1]] } };
+const st = W.fromGrade(g); const back = W.toGrade(st);
+console.log(JSON.stringify({ st: st.curves, back: back.curves, neutralWithCurve: W.isNeutral(back),
+  straightOnly: W.isNeutral(W.toGrade(W.fromGrade({ ...g, curves: { m: [[0,0],[1,1]] } }))) }));
+""")
+    assert r["st"] == {"m": [[0, 0], [0.5, 0.7], [1, 1]]}  # the straight green curve is no curve
+    assert r["back"] == r["st"] and r["neutralWithCurve"] is False and r["straightOnly"] is True

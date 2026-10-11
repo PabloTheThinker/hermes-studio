@@ -45,6 +45,15 @@
     return off.map((o) => clamp(kind === "lift" ? m + k * o : m * (1 + k * o), lo, hi));
   }
 
+  // Curves: { m | r | g | b: [[x, y], ...] } with x rising from 0 to 1. A straight line
+  // (two points, 0->0 and 1->1) is no curve.
+  const straight = (pts) => pts.length === 2 && Math.abs(pts[0][1]) < 1e-9 && Math.abs(pts[1][1] - 1) < 1e-9;
+  function cleanCurves(cv) {
+    const out = {};
+    for (const k of ["m", "r", "g", "b"]) if (cv && cv[k] && cv[k].length >= 2 && !straight(cv[k])) out[k] = cv[k].map((p) => [p[0], p[1]]);
+    return Object.keys(out).length ? out : null;
+  }
+
   // The page's wheel state -> grade numbers (what the "grade" op takes).
   function toGrade(st) {
     return {
@@ -52,13 +61,14 @@
       gamma: channels("gamma", st.gamma.m, st.gamma.x, st.gamma.y),
       gain: channels("gain", st.gain.m, st.gain.x, st.gain.y),
       sat: clamp(st.sat, RANGE.sat[0], RANGE.sat[1]),
+      curves: cleanCurves(st.curves),
     };
   }
 
   // Grade numbers (view row .grade, or null) -> wheel state. Exact inverse of toGrade for
   // anything toGrade produced; for other grades it shows the nearest balance + master.
   function fromGrade(g) {
-    const st = { sat: g && g.sat != null ? g.sat : 1 };
+    const st = { sat: g && g.sat != null ? g.sat : 1, curves: cleanCurves(g && g.curves) || {} };
     for (const kind of ["lift", "gamma", "gain"]) {
       const v = g && g[kind] ? g[kind] : [NEUTRAL[kind], NEUTRAL[kind], NEUTRAL[kind]];
       const m = luma(v[0], v[1], v[2]);
@@ -75,14 +85,44 @@
   function neutral() { return fromGrade(null); }
   function isNeutral(g) {
     const e = 1e-6;
-    return ["lift", "gamma", "gain"].every((k) => g[k].every((v) => Math.abs(v - NEUTRAL[k]) < e)) && Math.abs(g.sat - 1) < e;
+    return ["lift", "gamma", "gain"].every((k) => g[k].every((v) => Math.abs(v - NEUTRAL[k]) < e)) && Math.abs(g.sat - 1) < e && !cleanCurves(g.curves);
   }
 
   // ---- the preview pack, computed here for a live drag (mirrors grade.py) ----------------
+  // Monotone cubic (Fritsch-Carlson PCHIP): grade.pchip, line for line.
+  function pchip(pts, x) {
+    const n = pts.length;
+    if (x <= pts[0][0]) return pts[0][1];
+    if (x >= pts[n - 1][0]) return pts[n - 1][1];
+    if (n === 2) { const [[x0, y0], [x1, y1]] = pts; return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0); }
+    const h = [], d = [];
+    for (let k = 0; k < n - 1; k++) { h.push(pts[k + 1][0] - pts[k][0]); d.push((pts[k + 1][1] - pts[k][1]) / h[k]); }
+    const m = new Array(n).fill(0);
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let k = 1; k < n - 1; k++) {
+      if (d[k - 1] * d[k] <= 0) m[k] = 0;
+      else { const w1 = 2 * h[k] + h[k - 1], w2 = h[k] + 2 * h[k - 1]; m[k] = (w1 + w2) / (w1 / d[k - 1] + w2 / d[k]); }
+    }
+    for (const [e, dd] of [[0, d[0]], [n - 1, d[n - 2]]]) {
+      if (m[e] * dd <= 0) m[e] = 0;
+      else if (Math.abs(m[e]) > 3 * Math.abs(dd)) m[e] = 3 * dd;
+    }
+    let k = 0;
+    while (k < n - 2 && x > pts[k + 1][0]) k++;
+    const t = (x - pts[k][0]) / h[k], t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * pts[k][1] + (t3 - 2 * t2 + t) * h[k] * m[k] + (-2 * t3 + 3 * t2) * pts[k + 1][1] + (t3 - t2) * h[k] * m[k + 1];
+  }
   function curve(g, ch, x) {
     const lo = g.lift[ch], hi = g.gain[ch], gm = g.gamma[ch];
-    const y = clamp(lo + x * (hi - lo), 0, 1);
-    return Math.pow(y, 1 / gm);
+    let y = Math.pow(clamp(lo + x * (hi - lo), 0, 1), 1 / gm);
+    const cv = g.curves;
+    if (cv) {
+      if (cv.m) y = pchip(cv.m, y);
+      const ck = "rgb"[ch];
+      if (cv[ck]) y = pchip(cv[ck], y);
+      y = clamp(y, 0, 1);
+    }
+    return y;
   }
   function satMatrix(s) {
     const k = 1 - s;
@@ -118,7 +158,7 @@
     return `${edge} 0deg, ` + stops.map(([a, c]) => `${c} ${a.toFixed(1)}deg`).join(", ") + `, ${edge} 360deg`;
   }
 
-  const api = { K, RANGE, offset, puck, channels, toGrade, fromGrade, neutral, isNeutral, curve, satMatrix, preview, ringStops, TABLE_POINTS };
+  const api = { K, RANGE, offset, puck, channels, toGrade, fromGrade, neutral, isNeutral, curve, pchip, cleanCurves, satMatrix, preview, ringStops, TABLE_POINTS };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.HSWheels = api;
 })(typeof window !== "undefined" ? window : globalThis);
