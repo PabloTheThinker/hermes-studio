@@ -100,7 +100,7 @@ def _is_straight(pts) -> bool:
 
 
 def is_identity(g: dict) -> bool:
-    return (all(abs(a - b) < 1e-9 for k in ("lift", "gamma", "gain") for a, b in zip(g[k], IDENTITY[k]))
+    return (all(abs(a - b) < 1e-9 for k in ("lift", "gamma", "gain") for a, b in zip(g[k], IDENTITY[k], strict=False))
             and abs(g["sat"] - 1.0) < 1e-9 and not g.get("curves")
             and abs(g.get("temp", 0)) < 1e-9 and abs(g.get("tint", 0)) < 1e-9)
 
@@ -246,7 +246,7 @@ def ffmpeg_chain(g: dict | None, lut_dir: Path | None = None) -> str:
         if lut_dir is None:
             raise ValueError("a grade with curves needs a folder for its LUT")
         text = _cube_text(g)
-        path = Path(lut_dir) / f"grade-{hashlib.sha1(text.encode()).hexdigest()[:16]}.cube"
+        path = Path(lut_dir) / f"grade-{hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()[:16]}.cube"
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
@@ -270,7 +270,7 @@ def ffmpeg_chain(g: dict | None, lut_dir: Path | None = None) -> str:
         m = sat_matrix(g["sat"])
         names = [f"{o}{i}" for o in CHANNELS for i in CHANNELS]
         vals = [m[r][i] for r in range(3) for i in range(3)]
-        parts.append("colorchannelmixer=" + ":".join(f"{n}={v:.9g}" for n, v in zip(names, vals)))
+        parts.append("colorchannelmixer=" + ":".join(f"{n}={v:.9g}" for n, v in zip(names, vals, strict=False)))
     return ",".join(parts)
 
 
@@ -324,7 +324,7 @@ def _store_curves(curves: Any) -> dict | None:
         pts.sort()
         if any(not (0 <= x <= 1 and 0 <= y <= 1) for x, y in pts):
             raise ValueError(f"curve {k} points must be inside 0..1")
-        if any(b[0] - a[0] < 1e-3 for a, b in zip(pts, pts[1:])):
+        if any(b[0] - a[0] < 1e-3 for a, b in zip(pts, pts[1:], strict=False)):
             raise ValueError(f"curve {k} has two points at the same input")
         if pts[0][0] != 0 or pts[-1][0] != 1:
             raise ValueError(f"curve {k} must run from input 0 to input 1")
@@ -352,7 +352,7 @@ def store(lift=None, gamma=None, gain=None, sat=None, curves=None, temp=None, ti
         if len(g[k]) != 3:
             raise ValueError(f"{k} needs three numbers (r, g, b)")
         lo, hi = RANGES[k]
-        for c, v in zip(CHANNELS, g[k]):
+        for c, v in zip(CHANNELS, g[k], strict=False):
             if not (float(lo) <= v <= float(hi)):
                 raise ValueError(f"{k} {c} must be between {float(lo):g} and {float(hi):g}")
     if not (float(SAT[0]) <= g["sat"] <= float(SAT[1])):

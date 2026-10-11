@@ -6,8 +6,8 @@ The desk and tests call open / apply / undo / redo. Nothing else writes the time
 
 from __future__ import annotations
 
-import copy
 import contextlib
+import copy
 import json
 import math
 import os
@@ -21,8 +21,8 @@ from pathlib import Path
 
 from hermes_studio import grade as _GR
 from hermes_studio import oplog as O
-from hermes_studio import transitions as _XT
 from hermes_studio import timeline as T
+from hermes_studio import transitions as _XT
 
 HUMAN = O.Session(O.Actor("human", "pablo"))
 
@@ -38,7 +38,14 @@ def root() -> Path:
 def _dir(pid: str) -> Path:
     if not T.ID_RE.fullmatch(pid or ""):
         raise EditorError("bad project id")
-    return root() / pid
+    folder = root() / pid
+    # Containment stated where the path is made: the id arrives off a URL, so prove the
+    # resolved folder sits under the editor root before anything opens a file inside it.
+    base = os.path.realpath(root())
+    real = os.path.realpath(folder)
+    if real != base and not real.startswith(base + os.sep):
+        raise EditorError("bad project id")
+    return folder
 
 
 def _cid() -> str:
@@ -1685,7 +1692,7 @@ def _media_jpeg(folder: Path, doc: dict, media_id: str, src_s: float) -> bytes:
     import hashlib as _hl
 
     mkey = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in str(media_id))[:40]
-    mkey += "-" + _hl.sha1(str(media_id).encode()).hexdigest()[:8]
+    mkey += "-" + _hl.sha1(str(media_id).encode(), usedforsecurity=False).hexdigest()[:8]
     cache = folder / "frames" / mkey / f"f{slot:07d}.jpg"
     if not cache.is_file() or cache.stat().st_size < 100:
         cache.parent.mkdir(parents=True, exist_ok=True)

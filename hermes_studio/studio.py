@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-import secrets
 import os
 import queue
+import secrets
 import threading
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

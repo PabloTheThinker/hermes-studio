@@ -18,9 +18,6 @@ Shape of a render:
 
 from __future__ import annotations
 
-from hermes_studio import grade as _G
-from hermes_studio import timeline as T
-
 import math
 import shutil
 import subprocess
@@ -28,6 +25,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from hermes_studio import grade as _G
+from hermes_studio import timeline as T
 from hermes_studio.editor import EditorError, resolve_media
 
 # Voice is the story; music sits under it.
@@ -263,7 +262,7 @@ def _ramp_pts(kfs: list[dict]) -> str:
     t = "((PTS-STARTPTS)*TB)"
     # Output seconds at each key, summed forward. Before key 0 the first speed holds.
     starts = [pts[0][0] / pts[0][1]]
-    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
         d = tb - ta
         if d <= 0:
             starts.append(starts[-1])
@@ -317,7 +316,7 @@ def _reversed_source(folder: Path, path: Path, i0: int, o1: int, rate: int) -> P
     import hashlib
 
     st = path.stat()
-    key = hashlib.sha1(f"{path.name}|{st.st_size}|{st.st_mtime_ns}|{i0}|{o1}|{rate}|rev2".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{path.name}|{st.st_size}|{st.st_mtime_ns}|{i0}|{o1}|{rate}|rev2".encode(), usedforsecurity=False).hexdigest()[:16]
     out = folder / "cache" / "reverse" / f"{key}.mov"
     if out.is_file() and out.stat().st_size > 0:
         return out
@@ -394,14 +393,14 @@ def _audio_segments(row: dict, rate: int) -> list[tuple[float, float, str]]:
     def speed_at(t: float) -> float:
         if t <= ks[0][0]:
             return ks[0][1]
-        for (ta, sa), (tb, sb) in zip(ks, ks[1:]):
+        for (ta, sa), (tb, sb) in zip(ks, ks[1:], strict=False):
             if t <= tb:
                 return sa + (sb - sa) * (t - ta) / (tb - ta) if tb > ta else sb
         return ks[-1][1]
 
     bounds = sorted({0.0, dur, *(min(dur, max(0.0, t)) for t, _ in ks)})
     out = []
-    for a_t, b_t in zip(bounds, bounds[1:]):
+    for a_t, b_t in zip(bounds, bounds[1:], strict=False):
         if b_t - a_t < 1e-6:
             continue
         s0, s1 = speed_at(a_t), speed_at(b_t)
@@ -1183,7 +1182,52 @@ def render_project(pid: str, out_path: Path | None = None, *, start: float | Non
         "range": [round(rng[0], 3), round(rng[1], 3)] if rng else None,
         "bytes": dest.stat().st_size,
         "captions": bool(ass),
+        # What the mix came out at, measured on the exported file (M4's readout).
+        "loudness": _loudness(dest),
     }
 
 
-__all__ = ["RenderError", "render_project", "MIX"]
+TARGET_LUFS = -14.0  # the delivery target for web and social (YouTube, Spotify, Reels)
+TARGET_TOL = 1.0     # how far either side of it still counts as on target
+
+
+def _loudness(path: Path) -> dict | None:
+    """Measure the export's loudness (EBU R128 / ffmpeg ebur128) and report it back with the
+    render, so the level is a fact you can read rather than something to take on trust.
+
+    ``lufs`` is the integrated loudness over the whole file, ``peak`` its true peak in dBTP.
+    Both come from ebur128's summary block, which it prints when it has seen the end of the
+    stream -- so the file is measured to null output, twice over is not needed.
+
+    Returns None when ffmpeg can't measure it (no sound stream, a truncated file): a render
+    must not fail because its loudness couldn't be read.
+    """
+    try:
+        r = subprocess.run(["ffmpeg", "-nostats", "-hide_banner", "-i", str(path), "-filter_complex", "ebur128=peak=true",
+                            "-f", "null", "-"], capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tail = r.stderr[-3000:]
+    lufs = peak = None
+    for line in tail.splitlines():
+        if "I:" in line and "LUFS" in line:
+            #   Integrated loudness:    I:         -14.2 LUFS
+            try:
+                lufs = float(line.split("I:")[1].split("LUFS")[0].strip())
+            except (IndexError, ValueError):
+                pass
+        elif "Peak:" in line and "dBFS" in line:
+            try:
+                peak = float(line.split("Peak:")[1].split("dBFS")[0].strip())
+            except (IndexError, ValueError):
+                pass
+    if lufs is None and peak is None:
+        return None
+    out = {"lufs": lufs, "peak": peak}
+    if lufs is not None:
+        out["on_target"] = abs(lufs - TARGET_LUFS) <= TARGET_TOL
+        out["target"] = TARGET_LUFS
+    return out
+
+
+__all__ = ["RenderError", "render_project", "MIX", "TARGET_LUFS"]

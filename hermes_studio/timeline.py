@@ -613,7 +613,7 @@ def _ramp_I(pts: list[tuple[float, float]], x: float) -> float:
     if x <= pts[0][0]:
         return x / pts[0][1]
     total = pts[0][0] / pts[0][1]
-    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
         if tb <= ta:
             continue
         hi = min(x, tb)
@@ -628,7 +628,7 @@ def _ramp_I(pts: list[tuple[float, float]], x: float) -> float:
 def _ramp_speed(pts: list[tuple[float, float]], x: float) -> float:
     if x <= pts[0][0]:
         return pts[0][1]
-    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
         if x <= tb:
             return sa + (sb - sa) * (x - ta) / (tb - ta) if tb > ta else sb
     return pts[-1][1]
@@ -770,7 +770,7 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                             x = c.ratio(pt[0], _j(cp, n, 0), Fraction(0), Fraction(1))
                             c.ratio(pt[1], _j(cp, n, 1), Fraction(0), Fraction(1))
                             xs.append(x)
-                        if xs and None not in xs and (xs[0] != 0 or xs[-1] != 1 or any(b <= a for a, b in zip(xs, xs[1:]))):
+                        if xs and None not in xs and (xs[0] != 0 or xs[-1] != 1 or any(b <= a for a, b in zip(xs, xs[1:], strict=False))):
                             c.bad("out_of_range", cp, "curve points must rise in x from 0 to 1")
             if pr.get("transform") is not None and c.keys(pr["transform"], _j(ip, "props", "transform"), TRANSFORM_KEYS):
                 tf = pr["transform"]
@@ -855,7 +855,7 @@ def played_offset(item: dict, into: int) -> int:
         u = into / TICK_RATE
         t = None
         acc = 0.0
-        for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+        for (ta, sa), (tb, sb) in zip(pts, pts[1:], strict=False):
             d = tb - ta
             if d <= 0:
                 continue

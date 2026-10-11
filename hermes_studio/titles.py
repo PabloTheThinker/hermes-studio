@@ -180,7 +180,7 @@ def problem(t) -> str | None:
 
 
 def key(t: dict) -> str:
-    return hashlib.sha1(json.dumps({"v": VERSION, "size": t["size"], "layers": t["layers"]}, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha1(json.dumps({"v": VERSION, "size": t["size"], "layers": t["layers"]}, sort_keys=True).encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def png(t: dict, cache: Path) -> Path:
@@ -198,7 +198,7 @@ def png(t: dict, cache: Path) -> Path:
         elif lay["type"] in ("rect", "ellipse", "line"):
             D._draw_shape(base, lay)
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_name(f".{out.stem}.{hashlib.sha1(str(id(base)).encode()).hexdigest()[:6]}.tmp.png")
+    tmp = out.with_name(f".{out.stem}.{hashlib.sha1(str(id(base)).encode(), usedforsecurity=False).hexdigest()[:6]}.tmp.png")
     base.save(tmp, "PNG")
     tmp.replace(out)
     return out

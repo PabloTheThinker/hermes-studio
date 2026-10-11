@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import subprocess
 import json
+import subprocess
 
 import opentimelineio as otio
 import pytest
 
 from hermes_studio import editor as E
 from hermes_studio import timeline as T
-
-
-@pytest.fixture()
-def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("HERMES_STUDIO_EDITOR", str(tmp_path))
-    return tmp_path
+from tests.support import post as _post
 
 
 def test_create_draws_four_tracks(home):
@@ -1064,27 +1059,6 @@ def test_render_plays_a_second_voice_track(home):
     assert _window_db(out, 0.2, 1.8) > -30
 
 
-@pytest.fixture()
-def desk(home):
-    import threading
-    from http.server import ThreadingHTTPServer
-
-    from hermes_studio.studio import StudioHandler
-
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), StudioHandler)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield srv.server_address[1]
-    srv.shutdown()
-
-
-def _post(port, path, body):
-    import http.client
-
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-    c.request("POST", path, body=json.dumps(body).encode(),
-              headers={"Host": f"127.0.0.1:{port}", "Content-Type": "application/json"})
-    r = c.getresponse()
-    return r.status, json.loads(r.read() or b"{}")
 
 
 def test_desk_keeps_a_zero_volume_and_refuses_a_word(desk):
@@ -1783,7 +1757,6 @@ def test_reset_only_ever_rebuilds_the_demo(home, desk):
 def _kind_cut(home, pid, kind, seconds=1.0, colour_a="red", colour_b="blue"):
     """Two solid colour clips with a transition of `kind` between them, rendered."""
     import json as _json
-    import subprocess as _sp
 
     from hermes_studio import oplog as _O
 
@@ -1791,8 +1764,8 @@ def _kind_cut(home, pid, kind, seconds=1.0, colour_a="red", colour_b="blue"):
     (folder / "media").mkdir(parents=True, exist_ok=True)
     for col, name, freq in ((colour_a, "ra", 440), (colour_b, "bl", 660)):
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={col}:s=320x180:d=4:r=30",
-             "-f", "lavfi", f"-i", f"sine=frequency={freq}:duration=4", "-c:v", "libx264",
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={col}:s=320x180:d=4:r=30",
+             "-f", "lavfi", "-i", f"sine=frequency={freq}:duration=4", "-c:v", "libx264",
              "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(folder / "media" / f"{name}.mp4")],
             check=True, capture_output=True,
         )
@@ -1829,8 +1802,8 @@ def _frame_halves(path, at, folder):
 
 
 def test_transition_kinds_resolve_and_render(home):
-    from hermes_studio import transitions as X
     from hermes_studio import render_timeline as R
+    from hermes_studio import transitions as X
 
     assert len(X.kinds()) > 20 and "fade" in X.kinds()
     assert X.resolve("Cross Fade") == "fade" and X.resolve("dip to black") == "fadeblack"
@@ -1897,8 +1870,8 @@ def test_an_old_project_with_kind_xfade_still_loads(home):
 
 
 def test_transitions_catalog_is_grouped_and_every_entry_renders(home):
-    from hermes_studio import transitions as X
     from hermes_studio import render_timeline as R
+    from hermes_studio import transitions as X
 
     cat = X.catalog()
     groups = [g["group"] for g in cat]
@@ -1932,7 +1905,7 @@ def _ramp_project(home, pid, src_seconds=8.0, fps=30):
     folder = E._dir(pid)
     (folder / "media").mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"testsrc2=s=320x180:d={src_seconds}:r={fps}",
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"testsrc2=s=320x180:d={src_seconds}:r={fps}",
          "-f", "lavfi", "-i", f"sine=frequency=440:duration={src_seconds}", "-c:v", "libx264",
          "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(folder / "media" / "src.mp4")],
         check=True, capture_output=True,
@@ -2012,7 +1985,6 @@ def test_the_view_carries_the_ramp_and_its_length(home):
     timeline is the ramp's integral -- the same number the render produces."""
     import math
 
-    from hermes_studio import oplog as _O
 
     pid = _ramp_project(home, "rampV")
     E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 1.0}, {"at": 4.0, "speed": 0.5}, {"at": 8.0, "speed": 1.0}])
@@ -2035,7 +2007,7 @@ def _av_project(home, pid, seconds=8.0):
     folder = E._dir(pid)
     (folder / "media").mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"sine=frequency=440:duration={seconds}",
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
          "-f", "lavfi", "-i", f"testsrc2=s=320x180:d={seconds}:r=30", "-c:v", "libx264",
          "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
          str(folder / "media" / "av.mp4")],
@@ -2662,7 +2634,7 @@ def test_a_cut_mixing_vertical_and_horizontal_shots_renders(home):
     the pair, so mixing phone and camera footage could not render. Both now land square."""
     from hermes_studio import render_timeline as R
 
-    ids = _bin_project(home, "mixA")  # A is 320x180 (16:9)
+    _bin_project(home, "mixA")  # A is 320x180 (16:9)
     tall = home / "tall.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x808080:s=360x640:r=30:d=2",
                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(tall)], check=True)
@@ -3024,3 +2996,26 @@ def test_pan_is_unity_at_centre_and_full_at_an_edge(home):
         E.set_track(pid, a2, pan=2.0)
     with pytest.raises(E.EditorError):
         E.set_track(pid, a2, duck=-1)
+
+
+# ---- M4 part 2: the export's loudness readout ------------------------------------------------
+
+def test_the_render_reports_its_measured_loudness(home):
+    """M4's done-when: the export reads -14 LUFS +-1. The number comes from ebur128 on the
+    exported file itself, and a cut with no authored mix is levelled onto the target."""
+    from hermes_studio import render_timeline as R
+
+    pid = "mxC"
+    _mix_cut(home, pid)  # nothing set by hand, so loudnorm levels the mix
+    out = R.render_project(pid)
+    got = out["loudness"]
+    assert got and got["lufs"] is not None, got
+    assert abs(got["lufs"] - R.TARGET_LUFS) <= R.TARGET_TOL, got
+    assert got["on_target"] is True and got["target"] == -14.0
+    assert got["peak"] is not None and got["peak"] <= -1.0, got  # under the limiter's ceiling
+    # A hand-set mix is respected, not re-levelled, and the readout still says what it came to.
+    _a1, a2 = [t["id"] for t in E._log(E._dir(pid)).doc["tracks"] if t["role"] in ("voice", "music")]
+    E.set_track(pid, a2, duck=6)
+    mine = R.render_project(pid)["loudness"]
+    assert mine and mine["lufs"] is not None
+    assert abs(mine["lufs"] - R.TARGET_LUFS) > 1.0, mine  # the authored level survived

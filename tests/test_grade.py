@@ -8,8 +8,7 @@ import pytest
 from hermes_studio import editor as E
 from hermes_studio import grade as G
 from hermes_studio import timeline as T
-
-from tests.test_editor import _post, desk, home  # noqa: F401  (shared fixtures)
+from tests.support import post as _post
 
 
 def _g(**kw):
@@ -190,7 +189,6 @@ def test_desk_grade(desk):
 def test_preview_frames_are_cached_per_media_not_just_per_time(home):
     """Two clips from different files at the same source second: each preview frame shows its
     own file. The cache used to key on time alone, so the second clip got the first's picture."""
-    import io
 
     pid = "frames2"
     folder = E._dir(pid)

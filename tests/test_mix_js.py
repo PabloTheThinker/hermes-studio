@@ -332,7 +332,6 @@ def test_pan_matches_the_render_and_ducking_rides_the_timeline_clock(tmp_path):
     comes out of the export panned right; the ducking points are the render's own duck_env."""
     got = _run(tmp_path, _doc(a2={"pan": [-1, 1], "duck": 9, "duck_env": [[0.7, 1.0], [1.0, 0.354813], [4.0, 0.354813], [4.3, 1.0]]},
                              music=[_clip("m1", 0.0, 0.0, 6.0)]), 0.0)
-    pan = {tuple(round(x, 6) for x in p): i for i, p in enumerate([[-1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [0.5, 1.0]])}
     hard_left, centre, hard_right, half_right = (got["pan"][i] for i in (0, 1, 2, 3))
     # cos(pi/2) is 6.1e-17, not 0 -- within a hair of silent is silent.
     assert hard_left[0] == 1.0 and hard_left[1] < 1e-9, hard_left
