@@ -252,6 +252,14 @@ def changed_ids(before: dict, after: dict) -> list[str]:
 # Public ops are what callers send; internal ops only appear in inverses (and so in undo entries).
 
 
+def _need_str(a: dict, k: str, default: str | None = None) -> str:
+    """A required non-empty string arg (or the default when absent)."""
+    v = a.get(k, default)
+    if not isinstance(v, str) or not v.strip():
+        raise _OpError("bad_arg", f"{k} must be a non-empty string", k)
+    return v.strip()
+
+
 def _need_ticks(a: dict, k: str, *, signed: bool = False) -> int:
     v = a[k]
     if not T._is_int(v):
@@ -364,7 +372,11 @@ def op_add_text(ctx: _Ctx, a: dict) -> list[dict]:
 
 def op_add_transition(ctx: _Ctx, a: dict) -> list[dict]:
     a.setdefault("track", T.MAIN_TRACK)
-    a.setdefault("kind", "xfade")
+    # Legacy: "xfade" was the only kind and named the filter, not a transition. It means a
+    # cross-dissolve, which ffmpeg calls "fade".
+    a.setdefault("kind", "fade")
+    if a.get("kind") == "xfade":
+        a["kind"] = "fade"
     _, tr = _track(ctx.doc, a["track"])
     iid = _new_id(ctx, a, "tr")
     tr["items"].append(
@@ -816,7 +828,8 @@ def op_set_anchor(ctx: _Ctx, a: dict) -> list[dict]:
 
 
 def op_set_transition(ctx: _Ctx, a: dict) -> list[dict]:
-    """Put a cross-dissolve between two consecutive clips (kind is always 'xfade').
+    """Put a transition between two consecutive clips (``kind`` names the ffmpeg xfade to use;
+    'fade', a cross-dissolve, is the default).
 
     The schema models a transition as an overlap: the two clips must overlap by exactly
     ``dur``. So to create one we move the second clip earlier by ``dur`` and insert the
@@ -856,7 +869,8 @@ def op_set_transition(ctx: _Ctx, a: dict) -> list[dict]:
     inverse: list[dict] = []
     if existing:
         # Removing or resizing an existing transition: undo puts it and the clip back.
-        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": existing["dur"]})
+        inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": existing["dur"],
+                         "kind": existing.get("kind", "fade")})
         tr_a["items"].remove(existing)
     else:
         inverse.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
@@ -869,7 +883,8 @@ def op_set_transition(ctx: _Ctx, a: dict) -> list[dict]:
     tid = _new_id(ctx, a, "t")
     it_b["at"] = start_a + dur_a - dur
     tr_a["items"].append(
-        {"id": tid, "type": "transition", "kind": "xfade", "between": [a_id, b_id], "dur": dur}
+        {"id": tid, "type": "transition", "kind": _need_str(a, "kind", "fade"),
+         "between": [a_id, b_id], "dur": dur}
     )
     return inverse
 
@@ -890,7 +905,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
     "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
     "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain"})),
-    "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur"})),
+    "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur", "kind"})),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
     "add_text": (
         op_add_text,

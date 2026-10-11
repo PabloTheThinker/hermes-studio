@@ -846,7 +846,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_keyframes(pid, str(body.get("id") or ""), body.get("keyframes"))
             elif op == "transition":
                 project = editor.set_transition(
-                    pid, str(body.get("a") or ""), str(body.get("b") or ""), _num(body, "seconds", 0.0)
+                    pid, str(body.get("a") or ""), str(body.get("b") or ""), _num(body, "seconds", 0.0),
+                    (body.get("kind") or None),
                 )
             elif op == "canvas":
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))

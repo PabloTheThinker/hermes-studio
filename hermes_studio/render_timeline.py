@@ -392,6 +392,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                     "b": b_id,
                     "dur": dur,
                     "offset": a_end - dur,  # the blend starts where a would have ended, minus the overlap
+                    "kind": str(it.get("kind") or "fade"),
                 }
             )
 
@@ -523,6 +524,7 @@ def _assemble_video(segs: list, seg_ids: list, seg_durs: list, transitions: list
         return [f"{segs[0]}copy[outv]"]
 
     xf = {(t["a"], t["b"]): _t2s(t["dur"], rate) for t in transitions}
+    xfk = {(t["a"], t["b"]): t.get("kind", "fade") for t in transitions}
 
     fc: list[str] = []
     acc = segs[0]
@@ -537,7 +539,8 @@ def _assemble_video(segs: list, seg_ids: list, seg_durs: list, transitions: list
             # seconds into the output, and it runs for `dur`, so the seam is pulled back
             # by the overlap. ffmpeg needs the offset as a plain number.
             offset = max(0.0, running - dur)
-            fc.append(f"{acc}{segs[i]}xfade=transition=fade:duration={dur:.3f}:offset={offset:.3f}[{out}]")
+            kind = xfk.get((a_id, b_id), "fade")
+            fc.append(f"{acc}{segs[i]}xfade=transition={kind}:duration={dur:.3f}:offset={offset:.3f}[{out}]")
             running = running + seg_durs[i] - dur
         else:
             fc.append(f"{acc}{segs[i]}concat=n=2:v=1:a=0[{out}]")

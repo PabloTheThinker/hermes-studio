@@ -554,8 +554,13 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
     if typ == "transition":
         if not c.keys(it, ip, TRANSITION_KEYS):
             return
-        if it["kind"] != "xfade":
-            c.bad("bad_transition", _j(ip, "kind"), "the only transition kind is 'xfade'")
+        from . import transitions as _XT
+        if not isinstance(it["kind"], str) or not it["kind"]:
+            c.bad("bad_transition", _j(ip, "kind"), "kind must be a transition name")
+        elif it["kind"] == "xfade":  # a project written before kinds: it was always a cross-dissolve
+            it["kind"] = "fade"
+        elif it["kind"] not in _XT.kinds():
+            c.bad("bad_transition", _j(ip, "kind"), f"unknown transition kind {it['kind']!r}")
         c.ticks(it["dur"], _j(ip, "dur"), positive=True)
         b = it["between"]
         if not (isinstance(b, list) and len(b) == 2 and all(isinstance(x, str) for x in b) and b[0] != b[1]):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import json
 
 import opentimelineio as otio
@@ -374,6 +375,11 @@ def _main(v):
     return [t for t in v["tracks"] if t["role"] == "main"][0]["items"]
 
 
+def _tr_of(pid):
+    """The transition item on a project's main track (the engine stores ticks)."""
+    return next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["type"] == "transition")
+
+
 def test_transition_overlaps_clips_and_undo_restores(home):
     pid = _two_clips(home)
     v = E.set_transition(pid, "aa", "bb", 1.0)
@@ -447,7 +453,7 @@ def test_render_applies_a_dissolve_not_a_hard_cut(home):
     # 4 + 4 - 1 (the overlap) = 7s
     assert out["duration"] == pytest.approx(7.0, abs=0.1)
 
-    def avg_rgb(at: float):
+    def avg_rgb(at: float):  # noqa: D401
         jpg = folder / f"_probe_{at}.jpg"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", out["path"],
                         "-frames:v", "1", str(jpg)], check=True, capture_output=True)
@@ -1769,3 +1775,146 @@ def test_reset_only_ever_rebuilds_the_demo(home, desk):
     assert len(E.history("demo")) == 1
     E.reset("demo")
     assert E.history("demo") == []
+
+
+# ------------------------------------------------------------- transition kinds
+
+
+def _kind_cut(home, pid, kind, seconds=1.0, colour_a="red", colour_b="blue"):
+    """Two solid colour clips with a transition of `kind` between them, rendered."""
+    import json as _json
+    import subprocess as _sp
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    for col, name, freq in ((colour_a, "ra", 440), (colour_b, "bl", 660)):
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"color=c={col}:s=320x180:d=4:r=30",
+             "-f", "lavfi", f"-i", f"sine=frequency={freq}:duration=4", "-c:v", "libx264",
+             "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(folder / "media" / f"{name}.mp4")],
+            check=True, capture_output=True,
+        )
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/ra.mp4", "dur": 4 * s, "fps": [30, 1]},
+                  "m2": {"path": "media/bl.mp4", "dur": 4 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [
+        {"id": "aa", "type": "clip", "media": "m1", "src": [0, 4 * s], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "bb", "type": "clip", "media": "m2", "src": [0, 4 * s], "at": 4 * s, "fade_in": 0, "fade_out": 0},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    E.set_transition(pid, "aa", "bb", seconds, kind=kind)
+    return folder
+
+
+def _frame_halves(path, at, folder):
+    """A frame at `at`: (mean rgb of the left half, of the right half), both 0..255."""
+    from PIL import Image
+
+    jpg = folder / f"_half_{at}.jpg"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(at), "-i", str(path),
+                    "-frames:v", "1", str(jpg)], check=True, capture_output=True)
+    im = Image.open(jpg).convert("RGB")
+    w, h = im.size
+    def mean(box):
+        px = list(im.crop(box).resize((8, 8)).get_flattened_data()) if hasattr(im.crop(box), "get_flattened_data") else list(im.crop(box).resize((8, 8)).getdata())
+        return tuple(sum(p[c] for p in px) // len(px) for c in range(3))
+    return mean((0, 0, w // 2, h)), mean((w // 2, 0, w, h))
+
+
+def test_transition_kinds_resolve_and_render(home):
+    from hermes_studio import transitions as X
+    from hermes_studio import render_timeline as R
+
+    assert len(X.kinds()) > 20 and "fade" in X.kinds()
+    assert X.resolve("Cross Fade") == "fade" and X.resolve("dip to black") == "fadeblack"
+    assert X.resolve("Wipe Left") == "wipeleft" and X.resolve("nope") is None
+
+    pid = "xk"
+    _kind_cut(home, pid, "Wipe Right")
+    folder = E._dir(pid)
+    tr = _tr_of(pid)
+    assert tr["kind"] == "wiperight" and tr["dur"] > 0
+    out = R.render_project(pid)
+    assert out["duration"] == pytest.approx(7.0, abs=0.1)
+    # A wipe is not a dissolve: mid-way, one side of the frame has already gone and the other
+    # hasn't, so the halves are strongly red- and blue-dominant in opposite directions. A
+    # dissolve mixes both halves about equally -- that is the difference being asserted.
+    l, r = _frame_halves(out["path"], 3.5, folder)
+    reds, blues = sorted((l, r), key=lambda c: c[0] - c[2], reverse=True)
+    assert reds[0] > reds[2] + 30 and reds[2] < 40, ("no red side", l, r)
+    assert blues[2] > blues[0] + 30 and blues[0] < 40, ("no blue side", l, r)
+
+
+def test_changing_a_kind_is_one_step_and_undo_restores_the_old_kind(home):
+    from hermes_studio import transitions as X
+
+    pid = _two_clips(home, "xkind")
+    E.set_transition(pid, "aa", "bb", 1.0, kind="Wipe Left")
+    E.set_transition(pid, "aa", "bb", 1.5, kind="Fade to Black")  # resize AND re-kind in one op
+    # One step, not two: the kind and the length are the same op.
+    assert [h["summary"] for h in E.history(pid)] == ["Wipe Left 1s", "Fade to Black 1.5s"]
+    assert (_tr_of(pid)["kind"], _tr_of(pid)["dur"]) == ("fadeblack", T.seconds_to_ticks(1.5))
+    E.undo(pid)
+    assert (_tr_of(pid)["kind"], _tr_of(pid)["dur"]) == ("wipeleft", T.seconds_to_ticks(1.0))
+    assert len(E.history(pid)) == 3  # two edits plus the undo itself
+    with pytest.raises(E.EditorError, match="unknown transition kind"):
+        E.set_transition(pid, "aa", "bb", 1.0, kind="no-such-thing")
+    for said in ("cross fade", "Cross-Fade", "crossfade", "dip to black", "DIPBLACK", "dip"):
+        assert X.resolve(said), said
+
+
+def test_an_old_project_with_kind_xfade_still_loads(home):
+    """Projects written before kinds stored kind 'xfade' (the filter name). They must keep
+    opening, as a cross-dissolve."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    pid = "xlegacy"
+    folder = E._dir(pid)
+    folder.mkdir(parents=True, exist_ok=True)
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/talk.mp4", "dur": 60 * s, "fps": [30, 1]}}
+    by["V1"]["items"] = [
+        {"id": "aa", "type": "clip", "media": "m1", "src": [0, 8 * s], "at": 0, "fade_in": 0, "fade_out": 0},
+        {"id": "bb", "type": "clip", "media": "m1", "src": [0, 8 * s], "at": 7 * s, "fade_in": 0, "fade_out": 0},
+        {"id": "t1", "type": "transition", "kind": "xfade", "between": ["aa", "bb"], "dur": s},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    assert _tr_of(pid)["kind"] == "fade"
+
+
+def test_transitions_catalog_is_grouped_and_every_entry_renders(home):
+    from hermes_studio import transitions as X
+    from hermes_studio import render_timeline as R
+
+    cat = X.catalog()
+    groups = [g["group"] for g in cat]
+    assert groups == ["Dissolve", "Wipe", "Slide", "Shape", "Other"]
+    assert sum(len(g["kinds"]) for g in cat) == len(X.kinds())
+    for k in X.kinds():
+        assert X.resolve(X.label(k)) == k or X.resolve(k) == k, k
+    # Spot-render one kind from each group, to prove the names ffmpeg lists really work.
+    for kind in ("fade", "wipeleft", "slideup", "circlecrop", "pixelize"):
+        pid = f"xc_{kind}"
+        folder = _kind_cut(home, pid, kind)
+        out = R.render_project(pid)
+        assert out["duration"] == pytest.approx(7.0, abs=0.1), kind
+    # And a dissolve, for contrast: it mixes both halves, so neither half is one colour.
+    folder = _kind_cut(home, "xc_dissolve", "Cross Fade")
+    out = R.render_project("xc_dissolve")
+    l, r = _frame_halves(out["path"], 3.5, folder)
+    for half in (l, r):
+        assert half[0] > 40 and half[2] > 40, ("dissolve must mix", half)

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from hermes_studio import grade as _GR
 from hermes_studio import oplog as O
+from hermes_studio import transitions as _XT
 from hermes_studio import timeline as T
 
 HUMAN = O.Session(O.Actor("human", "pablo"))
@@ -217,7 +218,7 @@ def view(doc: dict) -> dict:
                     {
                         "id": it["id"],
                         "type": "transition",
-                        "kind": it.get("kind", "xfade"),
+                        "kind": "fade" if it.get("kind", "fade") == "xfade" else it.get("kind", "fade"),
                         "at": round(at / rate, 3),
                         "dur": round(it.get("dur", 0) / rate, 3),
                         "between": [a_id, b_id],
@@ -593,11 +594,22 @@ def move(pid: str, item_id: str, at_seconds: float) -> dict:
     return apply(pid, [{"op": "move_clip", "id": item_id, "at": at}], f"Move {item_id}")
 
 
-def set_transition(pid: str, a_id: str, b_id: str, seconds: float = 0.0) -> dict:
-    """Cross-dissolve (or remove it) between two consecutive clips. dur 0 = a hard cut."""
+def set_transition(pid: str, a_id: str, b_id: str, seconds: float = 0.0, kind: str | None = None) -> dict:
+    """Put a transition between two consecutive clips (dur 0 = a hard cut).
+
+    ``kind`` names the ffmpeg xfade to use and defaults to 'fade' (a cross-dissolve). Pass an
+    alias like "cross fade" or "dip to black" and it resolves; an unknown name is refused, not
+    silently downgraded to a dissolve. ``transitions.kinds()`` lists what this ffmpeg supports
+    and ``transitions.catalog()`` the same names grouped for the page."""
     dur = max(0, T.seconds_to_ticks(seconds))
-    return apply(pid, [{"op": "set_transition", "between": [a_id, b_id], "dur": dur}],
-                 f"Dissolve {seconds:g}s" if dur else "Hard cut")
+    if dur:
+        k = _XT.resolve(kind or "fade")
+        if k is None:
+            raise EditorError(f"unknown transition kind {kind!r}")
+    else:
+        k = None
+    return apply(pid, [{"op": "set_transition", "between": [a_id, b_id], "dur": dur, "kind": k}],
+                 f"{_XT.label(k)} {seconds:g}s" if dur else "Hard cut")
 
 
 def set_canvas(pid: str, width: int, height: int) -> dict:
