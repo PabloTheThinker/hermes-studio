@@ -129,21 +129,7 @@ def _crop(it: dict) -> dict | None:
     return {"x": x, "y": y, "w": w, "h": h}
 
 
-# Named looks: each maps to an ffmpeg eq/colorbalance chain. Kept small and warm-neutral so
-# they read as a grade, not a gimmick; an unknown name is passed through unchanged.
-_LOOKS: dict[str, str] = {
-    "warm": "eq=contrast=1.06:saturation=1.12,colorbalance=rs=0.06:gs=0.01:bs=-0.05",
-    "cool": "eq=contrast=1.06:saturation=1.05,colorbalance=rs=-0.05:gs=0.0:bs=0.07",
-    "punch": "eq=contrast=1.18:saturation=1.25:gamma_r=1.02",
-    "mono": "eq=saturation=0,eq=contrast=1.12",
-    "film": "eq=contrast=1.08:saturation=0.92,colorbalance=rs=0.03:bs=0.04:gm=-0.01",
-}
-
-
-def _look_chain(look: str | None) -> str:
-    if not look:
-        return ""
-    return _LOOKS.get(look, "")
+# Named looks are grades now (grade.LOOKS): see grade.py for the fitted presets.
 
 
 def _transform(it: dict) -> dict | None:
@@ -318,7 +304,9 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         transform = _transform(it)
         keyframes = _keyframes(it, rate)
         fi, fo = it.get("fade_in") or 0, it.get("fade_out") or 0
-        grade = _G.parse((it.get("props") or {}).get("grade"))
+        props_ = it.get("props") or {}
+        # A legacy props.look renders as that look's grade (the eq/colorbalance chains are gone).
+        grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
         clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes}
         if idx is None:
             idx = len(inputs)
@@ -619,8 +607,6 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             else:
                 crop_filter = ""
             dw, dh, x, y = _contain(sw, sh, w, h)
-            look = _look_chain(inp.get("look"))
-            look_filter = f"{look}," if look else ""
             # The primary grade (grade.py): on the clip's own pixels, right after the scale and
             # before transform/pad, so a lift never lifts the letterbox. Same formula the
             # preview shows.
@@ -675,7 +661,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
             pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
-            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}{look_filter}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
+            chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},format=yuv420p"
             fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)

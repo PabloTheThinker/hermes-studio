@@ -224,3 +224,64 @@ def test_preview_frames_are_cached_per_media_not_just_per_time(home):
     blue = mean_rgb(E.frame_jpeg(pid, 3.0))  # clip b, source 1.0 s too
     assert red[0] > 150 and red[2] < 80, red
     assert blue[2] > 150 and blue[0] < 80, blue
+
+
+# ---------------------------------------------------------------- looks are grades
+
+
+def test_every_look_is_a_valid_grade_and_reads_back_as_its_name():
+    for name in G.LOOKS:
+        stored = G.look(name)
+        assert stored is not None and G.parse(stored) is not None
+        assert G.look_name(stored) == name
+    assert G.look(None) is None and G.look_name(None) is None
+    assert G.look_name(G.store(sat=0.5)) is None  # a grade that is no look
+
+
+def test_mono_desaturates_about_rec709_luma():
+    g = G.parse(G.look("mono"))
+    for rgb in ((1, 0, 0), (0, 1, 0), (0.2, 0.5, 0.9)):
+        out = G.apply_pixel(g, rgb)
+        assert max(out) - min(out) < 1e-9  # grey
+
+
+def test_set_look_writes_the_grade_and_the_wheels_can_take_it_further(home):
+    pid = _cut("look1")
+    E.set_look(pid, "c1", "warm")
+    row = _row(pid)
+    assert row["look"] == "warm" and row["grade"] is not None and row["grade_preview"] is not None
+    raw = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == "c1")
+    assert raw["props"]["grade"] == G.look("warm") and raw["props"].get("look") is None
+    # Move the grade off the look: it is a custom grade now, not "warm".
+    g = row["grade"]
+    E.set_grade(pid, "c1", lift=g["lift"], gamma=g["gamma"], gain=g["gain"], sat=g["sat"] + 0.2)
+    assert _row(pid)["look"] is None and _row(pid)["grade"] is not None
+    E.set_look(pid, "c1", None)
+    assert _row(pid)["grade"] is None
+    with pytest.raises(E.EditorError, match="unknown look"):
+        E.set_look(pid, "c1", "vaporwave")
+
+
+def test_a_legacy_look_shows_and_renders_as_its_grade(home):
+    """A doc from before looks were grades (props.look only): the view reports the look and
+    sends its grade for the preview, and the render applies that same grade."""
+    from hermes_studio import oplog as O
+    from hermes_studio import render_timeline as R
+
+    pid = _cut("legacy", colour="0x808080")
+    folder = E._dir(pid)
+    d = json.loads((folder / "base.json").read_text())
+    d["tracks"][[t["id"] for t in d["tracks"]].index("V1")]["items"][0]["props"] = {"look": "punch"}
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(json.dumps(d))
+    (folder / "oplog.jsonl").unlink(missing_ok=True)
+    E._save_current(folder, O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    row = _row(pid)
+    assert row["look"] == "punch" and row["grade_preview"] is not None
+    out = R.render_project(pid)
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", "1", "-i", str(out.get("path") or out.get("file")),
+                          "-vf", "crop=8:8:76:41", "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+                         check=True, capture_output=True).stdout
+    got = [sum(raw[i::3]) / (len(raw) // 3) for i in range(3)]
+    want = [v * 255 for v in G.apply_pixel(G.parse(G.look("punch")), (128 / 255,) * 3)]
+    assert all(abs(a - b) <= 4 for a, b in zip(got, want)), (got, want)

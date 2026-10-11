@@ -247,11 +247,14 @@ def view(doc: dict) -> dict:
                 row["src_out"] = round(it["src"][1] / rate, 3)
                 row["speed"] = round(speed, 4)
                 props = it.get("props") or {}
-                row["look"] = props.get("look") or None
+                # A legacy props.look (from before looks were grades) reads as that look's grade,
+                # so old docs show in the preview the way they render.
+                _stored = props.get("grade") or (_GR.look(props["look"]) if props.get("look") in _GR.LOOKS else None)
+                row["look"] = _GR.look_name(_stored)
                 row["volume"] = _pair_to_float(props.get("volume"))
                 row["crop"] = _crop_view(props.get("crop"))
                 row["transform"] = _transform_view(props.get("transform"))
-                _g = _GR.parse(props.get("grade"))
+                _g = _GR.parse(_stored)
                 row["grade"] = _GR.view(_g)
                 row["grade_preview"] = _GR.preview(_g)
                 row["keyframes"] = _keyframes_view(props.get("keyframes"), rate)
@@ -630,14 +633,17 @@ def set_speed(pid: str, item_id: str, speed: float) -> dict:
 
 
 def set_look(pid: str, item_id: str, look: str | None) -> dict:
-    """Apply a named colour grade to a clip, or clear it (None). The render maps the name to
-    an eq/colorbalance chain; an unknown name is refused here rather than silently ignored."""
-    from hermes_studio.render_timeline import _LOOKS
-
+    """Apply a named look to a clip (it becomes the clip's grade, so the preview, scopes and
+    wheels show it and the wheels can take it further), or clear the grade (None). Clears any
+    legacy ``props.look`` in the same op. An unknown name is refused, not ignored."""
     name = (look or "").strip().lower() or None
-    if name is not None and name not in _LOOKS:
-        raise EditorError(f"unknown look {look!r}; choose from {', '.join(sorted(_LOOKS))}")
-    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"look": name}}], f"Look {name or 'none'}")
+    if name is not None and name not in _GR.LOOKS:
+        raise EditorError(f"unknown look {look!r}; choose from {', '.join(_GR.LOOKS)}")
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can take a look")
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": _GR.look(name), "look": None}}],
+                 f"Look {name or 'none'}")
 
 
 def set_volume(pid: str, item_id: str, volume: float) -> dict:

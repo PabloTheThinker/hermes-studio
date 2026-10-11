@@ -586,12 +586,13 @@ def test_render_applies_crop_and_look(home):
         graph, _ = R._build_graph(plan, None)
         assert ("crop=" in graph) is expect_crop
 
-    # mono is a real grade: it desaturates, so the graph carries an eq=saturation=0 chain.
+    # mono is a real grade: a legacy props.look renders as its grade.LOOKS preset, whose
+    # saturation 0 is a colorchannelmixer (the old eq chains are gone).
     make({"look": "mono"}, "mono2")
     mplan = R._build_plan(E._log(E._dir("mono2")).doc, E._dir("mono2"))
     mplan["cache"] = str(E._dir("mono2") / "cache")
     mgraph, _ = R._build_graph(mplan, None)
-    assert "saturation=0" in mgraph
+    assert "colorchannelmixer=" in mgraph and "eq=" not in mgraph
 
 
 def test_render_fades_video_to_and_from_black(home):

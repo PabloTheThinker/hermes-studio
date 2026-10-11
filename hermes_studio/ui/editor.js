@@ -274,10 +274,24 @@
     };
     return `<div class="tl-colour"><h4>Colour <button type="button" data-act="grade-reset" title="Back to no grade">Reset</button></h4>
       <div class="tl-wheels">${one("lift", "Lift")}${one("gamma", "Gamma")}${one("gain", "Gain")}</div>
-      <label class="tl-wsat">Sat <input type="range" data-wsat min="0" max="2" step="0.01" value="${st.sat.toFixed(2)}" aria-label="Saturation"><b data-wv="sat">${st.sat.toFixed(2)}</b></label></div>`;
+      <label class="tl-wsat">Sat <input type="range" data-wsat min="0" max="2" step="0.01" value="${st.sat.toFixed(2)}" aria-label="Saturation"><b data-wv="sat">${st.sat.toFixed(2)}</b></label>
+      <label class="tl-wsat">Look <select data-glook style="flex:1" aria-label="Look" title="A starting grade: the wheels show it and can take it further">
+        ${it.grade && !it.look ? `<option value="__custom" selected disabled>Custom</option>` : ""}<option value="" ${it.grade ? "" : "selected"}>None</option>${["warm", "cool", "punch", "mono", "film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select></label></div>`;
+  }
+  // You grade what you see (Resolve's rule: the current clip is the one on the viewer). If the
+  // playhead is on another clip when a wheel, slider or look is touched, bring it into the clip
+  // being graded first, so the preview and the scopes show the change. Paused only.
+  function viewGraded() {
+    const it = wheel && find(wheel.id);
+    if (!it || playing) return;
+    const cur = mainClip(play);
+    if (cur && cur.id === it.id) return;
+    play = Math.min(it.at + it.dur - 1 / fpsOf(), it.at + Math.min(1, it.dur / 2));
+    head();
   }
   // Grade the preview from the wheels without a round trip (the drag is still going).
   function liveGrade() {
+    viewGraded();
     const it = wheel && find(wheel.id);
     if (!it) return;
     const g = window.HSWheels.toGrade(wheel.st);
@@ -341,6 +355,15 @@
       sl.addEventListener("input", () => { wheel.live = true; wheel.st[kind].m = parseFloat(sl.value); liveGrade(); });
       sl.addEventListener("change", () => commitGradeSoon());
       sl.addEventListener("dblclick", () => { wheel.st[kind].m = kind === "lift" ? 0 : 1; wheel.live = true; liveGrade(); commitGrade(); });
+    });
+    const lk = root.querySelector("[data-glook]");
+    if (lk) lk.addEventListener("change", async () => {
+      // "None" (the empty value) clears the grade; a name applies that look. "Custom" is only a
+      // label for a grade the wheels moved off every look, so it can't be chosen.
+      if (lk.value === "__custom") return;
+      viewGraded();
+      wheel = null;
+      await commit({ op: "look", id: sel, look: lk.value || null });
     });
     const sat = root.querySelector("[data-wsat]");
     if (sat) {
@@ -567,8 +590,16 @@
     return null;
   }
 
+  // The inspector controls a person drives from the keyboard. paint() rebuilds the DOM, so the
+  // focused one is noted before and focused again after: otherwise a commit made by the first
+  // arrow press on a menu or slider dropped focus and the next presses went nowhere.
+  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname"];
   function paint() {
     if (!root || !doc) return;
+    const ae = document.activeElement;
+    const focusSel = ae && root.contains(ae)
+      ? KEEP_FOCUS.filter((a) => ae.hasAttribute(a)).map((a) => `[${a}${ae.getAttribute(a) ? `="${ae.getAttribute(a)}"` : ""}]`)[0]
+      : null;
     const live = root.querySelector(".tl-vid");
     const keep = live && !live.paused ? live : null;
     if (keep) keep.remove();
@@ -637,7 +668,6 @@
             ${rows.map(([k, v]) => `<div class="tl-row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
             ${nextNeighbor ? `<div class="tl-row"><span></span><button type="button" data-act="dissolve">Dissolve to next</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Speed</span><span style="display:flex;gap:4px;align-items:center"><select data-speed style="flex:1">${[0.25,0.5,0.75,1,1.25,1.5,2,4].map((v) => `<option value="${v}" ${Math.abs(curSpeed - v) < 1e-6 ? "selected" : ""}>${v}×</option>`).join("")}</select><button type="button" data-act="apply-speed">Set</button></span></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Look</span><span style="display:flex;gap:4px;align-items:center"><select data-look style="flex:1"><option value="" ${it.look ? "" : "selected"}>None</option>${["warm","cool","punch","mono","film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select><button type="button" data-act="apply-look">Set</button></span></div>` : ""}
             ${it && it.type === "clip" && window.HSWheels ? colourSection(it) : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Volume</span><span style="display:flex;gap:4px;align-items:center"><input data-vol type="range" min="0" max="2" step="0.05" value="${it.volume != null ? it.volume : 1}" style="flex:1"><b style="min-width:34px;text-align:right">${(it.volume != null ? it.volume : 1).toFixed(2)}×</b></span></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
@@ -732,6 +762,7 @@
     }));
     const pic = root.querySelector(".tl-pic");
     if (pic) pic.addEventListener("error", () => { pic.hidden = true; });
+    if (focusSel) { const f = root.querySelector(focusSel); if (f) f.focus({ preventScroll: true }); }
     showGrade(); // the DOM was just rebuilt: put the clip's grade back on the picture
     showFrame();
     root.querySelectorAll("[data-scope]").forEach((b) => b.addEventListener("click", () => {
@@ -1698,13 +1729,6 @@
       if (!s2 || s2.type !== "clip") return;
       wheel = null;
       await commit({ op: "grade", id: s2.id });
-      return;
-    }
-    if (name === "apply-look") {
-      const s2 = find(sel);
-      const pick = root.querySelector("[data-look]");
-      if (!s2 || !pick) return;
-      await commit({ op: "look", id: s2.id, look: pick.value || null });
       return;
     }
     if (name === "apply-fade") {
