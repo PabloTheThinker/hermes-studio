@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from hermes_studio import grade as _G
 
+import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -218,6 +219,76 @@ def _volume(it: dict) -> float:
     return _level((it.get("props") or {}).get("volume"))
 
 
+def _speed_keys(it: dict, rate: int) -> list[dict] | None:
+    """The clip's speed ramp as [{at: clip-local seconds, speed: float}], or None. `at` is ticks
+    from the clip's start, speed a reduced [num, den] pair. The render integrates 1/speed over
+    source time (see _ramp_pts), matching timeline._ramp_dur_ticks that sizes the clip."""
+    raw = (it.get("props") or {}).get("speed_keys")
+    if not isinstance(raw, list) or len(raw) < 2:
+        return None
+    out = []
+    for k in raw:
+        if not (isinstance(k, dict) and isinstance(k.get("at"), int)):
+            return None
+        sp = k.get("speed")
+        if not (isinstance(sp, (list, tuple)) and len(sp) == 2):
+            return None
+        try:
+            num, den = float(sp[0]), float(sp[1])
+            sv = num / den if den != 0 else None
+        except (TypeError, ValueError, ZeroDivisionError):
+            sv = None
+        if sv is None or sv <= 0:
+            return None
+        out.append({"at": k["at"] / rate, "speed": sv})
+    out.sort(key=lambda k: k["at"])
+    return out or None
+
+
+def _ramp_pts(kfs: list[dict]) -> str:
+    """A setpts expression that plays a clip through a speed ramp, in timebase ticks.
+
+    The output timestamp of a source frame at time ``t`` is ``integral(1/speed)`` from the clip
+    start to ``t``. Between two keys the speed is linear in ``t``, so ``1/speed`` integrates to
+    a natural log; outside the keys the speed holds the end value (a plain divide). ``t`` here is
+    ``PTS-STARTPTS`` rebased to seconds via the source timebase, so the expression multiplies
+    back into ticks at the end. Keys before the clip start are clamped (the ramp starts already
+    in progress), matching how the clip is sized."""
+    def v(x: float) -> str:
+        return f"{x:.6f}"
+
+    first, last = kfs[0], kfs[-1]
+    # Before the first key: hold the first speed -> out = t / s0.
+    before = f"(PTS-STARTPTS)/{TB}/{v(first['speed'])}*{TB}"
+    # Build from the last segment back. Each segment [a,b] with linear speed s0->s1:
+    #   out = C + (1/k) * ln((s0 + k*(t - ta)) / s0),  k = (s1 - s0)/(tb - ta)
+    # C is the accumulated output time at the segment's start.
+    expr = f"(PTS-STARTPTS)/{TB}/{v(last['speed'])}*{TB}"  # after the last key: hold last speed
+    acc = 0.0
+    for i in range(len(kfs) - 1, 0, -1):
+        a, b = kfs[i - 1], kfs[i]
+        s0, s1, ta, tb = a["speed"], b["speed"], a["at"], b["at"]
+        if tb <= ta:
+            continue
+        k = (s1 - s0) / (tb - ta)
+        seg_dur = tb - ta
+        if abs(k) < 1e-12:
+            seg_out = seg_dur / s0
+        else:
+            seg_out = (math.log(s1) - math.log(s0)) / k
+        C = acc  # output time at ta
+        t_expr = f"(PTS-STARTPTS)/{TB}"
+        if abs(k) < 1e-12:
+            piece = f"{v(C)}+({t_expr}-{v(ta)})/{v(s0)}*{TB}"
+        else:
+            piece = (f"{v(C)}+(1.0/{v(k)})*log(({v(s0)}+{v(k)}*({t_expr}-{v(ta)}))/{v(s0)})*{TB}")
+        expr = f"if(lt({t_expr},{v(tb)}),{piece},{expr})"
+        acc += seg_out
+    # Guard before the first key.
+    t_expr = f"(PTS-STARTPTS)/{TB}"
+    return f"if(lt({t_expr},{v(first['at'])}),{before},{expr})"
+
+
 def _gain_keys(it: dict, rate: int) -> list[dict] | None:
     """The clip's volume envelope as [{at: clip-local seconds, gain: float}], or None."""
     raw = (it.get("props") or {}).get("gain_keys")
@@ -228,6 +299,9 @@ def _gain_keys(it: dict, rate: int) -> list[dict] | None:
         if isinstance(k, dict) and isinstance(k.get("at"), int):
             out.append({"at": _t2s(k["at"], rate), "gain": _level(k.get("gain"))})
     return out or None
+
+
+TB = 1000000.0  # internal 'seconds' unit for a speed-ramp setpts expression
 
 
 def _ass_escape_path(path: Path) -> str:
@@ -283,9 +357,31 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         if i0 >= o1:
             raise RenderError("a clip has no length")
         speed = _speed(it)
+        speed_keys = _speed_keys(it, rate)
         # The source window is read at `speed`; a clip played faster than 1x covers fewer
         # ticks on the timeline than the source range it spans, and slower covers more.
-        tl_dur = int(round((o1 - i0) / speed))
+        # A speed ramp replaces the constant: the timeline length is the integral of 1/speed
+        # over the source window (timeline._ramp_dur_ticks sizes it the same way).
+        if speed_keys:
+            from fractions import Fraction as _F
+            acc = 0.0
+            u = 0.0
+            end = (o1 - i0) / rate
+            for a, b in zip(speed_keys, speed_keys[1:]):
+                ta, tb = a["at"], b["at"]
+                s0, s1 = a["speed"], b["speed"]
+                lo, hi = max(u, ta), min(end, tb)
+                if hi > lo:
+                    k = (s1 - s0) / (tb - ta) if tb > ta else 0.0
+                    acc += (hi - lo) / s0 if abs(k) < 1e-12 else (math.log(s0 + k * (hi - lo)) - math.log(s0)) / k
+                    u = hi
+                if u >= end:
+                    break
+            if u < end:
+                acc += (end - u) / speed_keys[-1]["speed"]
+            tl_dur = max(1, int(round(acc * rate)))
+        else:
+            tl_dur = int(round((o1 - i0) / speed))
         if tl_dur <= 0:
             raise RenderError("a clip has no length")
         rel = str(media.get(it.get("media") or "", {}).get("path") or "")
@@ -307,7 +403,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         props_ = it.get("props") or {}
         # A legacy props.look renders as that look's grade (the eq/colorbalance chains are gone).
         grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
-        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes}
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform, "keyframes": keyframes, "speed_keys": speed_keys}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -655,7 +751,12 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # Re-base the trimmed segment to zero, then rescale by 1/speed so it plays
             # faster (shorter output) or slower (longer). fps= re-timestamps to the canvas
             # rate. At speed 1 the expression is a no-op, which keeps the normal path exact.
-            pts = f"(PTS-STARTPTS)/{speed:.6f}" if abs(speed - 1.0) > 1e-9 else "PTS-STARTPTS"
+            if inp.get("speed_keys"):
+                # A speed ramp: setpts carries the exact integral of 1/speed, then fps re-timestamps.
+                # The expression has commas (nested if), so it is quoted inside the filter option.
+                pts = f"'{_ramp_pts(inp['speed_keys'])}'"
+            else:
+                pts = f"(PTS-STARTPTS)/{speed:.6f}" if abs(speed - 1.0) > 1e-9 else "PTS-STARTPTS"
             # Video fades to/from black sit after setpts so their start times are on the
             # final (speed-adjusted) timeline. fade_in opens from black; fade_out closes to
             # it, starting dur-fo seconds in so it lands exactly on the clip's last frame.

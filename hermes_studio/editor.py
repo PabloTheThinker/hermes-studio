@@ -916,6 +916,40 @@ def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"keyframes": out}}], f"Animate ({len(out)} keys)")
 
 
+def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
+    """Set a clip's speed ramp. Each key is {at, speed} with `at` in seconds from the clip's
+    start and `speed` a multiplier (0.1 to 10). Between keys the speed ramps linearly; before
+    the first and after the last key it holds that key's speed. A ramp replaces the clip's
+    constant speed for the render; a single-key or empty list clears it (back to the constant
+    props.speed). One set_props op: one undo step. See render_timeline._speed_ramp for how the
+    render integrates it exactly."""
+    from fractions import Fraction
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    if not keys or len(keys) < 2:
+        # A ramp needs at least two keys to mean anything; fewer clears it. The constant speed
+        # stays whatever it was, so a one-key "ramp" is just that constant.
+        return apply(pid, [{"op": "set_props", "id": item_id, "props": {"speed_keys": None}}], "Speed ramp cleared")
+    if len(keys) > 64:
+        raise EditorError("at most 64 speed keys")
+    out = []
+    prev = None
+    for kf in keys:
+        at = float(kf.get("at", 0.0))
+        sp = float(kf.get("speed", 1.0))
+        if not (0.1 <= sp <= 10.0):
+            raise EditorError("speed must be between 0.1 and 10")
+        ticks = T.seconds_to_ticks(at)
+        if prev is not None and ticks <= prev:
+            raise EditorError("speed keys must be in strictly increasing time order")
+        prev = ticks
+        out.append({"at": ticks, "speed": pair(sp)})
+    return apply(pid, [{"op": "set_props", "id": item_id, "props": {"speed_keys": out}}], f"Speed ramp ({len(out)} keys)")
+
+
 def _transitions_on(pid: str, item_id: str) -> list[dict]:
     """Every transition whose seam involves the given clip."""
     doc = _log(_dir(pid)).doc

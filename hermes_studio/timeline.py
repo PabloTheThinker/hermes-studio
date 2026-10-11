@@ -68,7 +68,7 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
 # It multiplies props.volume, so the volume stays the clip's overall trim.
@@ -76,7 +76,14 @@ GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None}
+SPEEDKEY_KEYS = {"at", "speed"}
+# A speed ramp: a sorted, non-empty list of {at, speed}, `at` in ticks from the clip's start and
+# `speed` a reduced [num, den] pair in SPEED_MIN..SPEED_MAX. Between keys the speed ramps
+# linearly; before the first and after the last key it holds that key's speed. A ramp replaces
+# the clip's constant props.speed for the render (the schema treats a clip as either constant or
+# ramped, never both meaningfully).
+
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
 GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
@@ -103,7 +110,7 @@ RULES = (
     "non_integer_duration", "fade_too_long", "at_and_anchor", "anchor_not_allowed",
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
-    "bad_keyframes", "bad_order", "track_audio_only",
+    "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
 )
 
 
@@ -529,6 +536,73 @@ def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
             prev_at = kf["at"]
 
 
+def _check_speed_keys(c: _Checker, keys: Any, path: str) -> None:
+    """A speed ramp: a sorted, non-empty list of {at, speed} (same rule ids as keyframes). `at`
+    is ticks from the clip's start; the render clamps a ramp to the clip's span, so a ramp that
+    begins before the clip simply starts already in progress."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_speed_keys", path, "speed_keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} speed keys")
+        return
+    prev_at = None
+    for i, kf in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, SPEEDKEY_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        c.ratio(kf["speed"], _j(kp, "speed"), SPEED_MIN, SPEED_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "speed keys must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
+def _ramp_dur_ticks(keys: Any, src_ticks: int) -> int | None:
+    """Timeline length in whole ticks of a source window played through a speed ramp: the
+    integral of 1/speed over source time, clamped to the window. None if the keys are malformed
+    (the validator reports them separately). Between two keys the speed is linear in source
+    seconds, so 1/speed integrates to a natural log; outside the keys it holds the end speed."""
+    import math
+
+    if not isinstance(keys, list) or len(keys) < 2:
+        return None
+    pts = []
+    for k in keys:
+        if not (isinstance(k, dict) and _is_int(k.get("at"))):
+            return None
+        sp = k.get("speed")
+        if not (isinstance(sp, (list, tuple)) and len(sp) == 2):
+            return None
+        try:
+            sv = sp[0] / sp[1]
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+        if sv <= 0:
+            return None
+        pts.append((k["at"] / TICK_RATE, sv))
+    pts.sort()
+    total = 0.0
+    u = 0.0  # source seconds elapsed
+    end = src_ticks / TICK_RATE
+    # Walk the source window [0, end]; speed at u is the piecewise-linear ramp, held at the ends.
+    for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+        a, b = max(u, ta), min(end, tb)
+        if b > a:
+            k = (sb - sa) / (tb - ta) if tb > ta else 0.0
+            if abs(k) < 1e-12:
+                total += (b - a) / sa
+            else:
+                total += (math.log(sa + k * (b - a)) - math.log(sa)) / k
+            u = b
+        if u >= end:
+            break
+    if u < end:  # after the last key: hold the last speed
+        total += (end - u) / pts[-1][1]
+    return max(0, int(round(total * TICK_RATE)))
+
+
 def _check_gain_keys(c: _Checker, keys: Any, path: str) -> None:
     """A volume envelope: a sorted, non-empty list of {at, gain} (same rule ids as keyframes)."""
     if not isinstance(keys, list) or not keys:
@@ -644,6 +718,8 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 _check_keyframes(c, pr["keyframes"], _j(ip, "props", "keyframes"))
             if pr.get("gain_keys") is not None:
                 _check_gain_keys(c, pr["gain_keys"], _j(ip, "props", "gain_keys"))
+            if pr.get("speed_keys") is not None:
+                _check_speed_keys(c, pr["speed_keys"], _j(ip, "props", "speed_keys"))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
@@ -655,6 +731,19 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                 c.bad("empty_range", _j(ip, "src"), "src in must be before src out")
             elif _is_int(mdur) and src[1] > mdur:
                 c.bad("src_out_of_media", _j(ip, "src"), "src out is past the end of the media")
+            elif (it.get("props") or {}).get("speed_keys") is not None:
+                # A speed ramp: the timeline length is the integral of 1/speed over the source
+                # window (render_timeline computes the same integral). Rounded to a whole
+                # tick; a ramp's length is inherently approximate at frame boundaries.
+                rd = _ramp_dur_ticks(it["props"]["speed_keys"], src[1] - src[0])
+                if rd is None:
+                    pass  # malformed keys already reported by _check_speed_keys
+                elif rd <= 0:
+                    c.bad("bad_speed_keys", _j(ip, "props", "speed_keys"), "the speed ramp gives the clip no length")
+                elif rd > MAX_TICKS:
+                    c.bad("out_of_range", _j(ip, "src"), f"the speed ramp makes the clip longer than {MAX_TICKS} ticks")
+                else:
+                    dur = rd
             elif speed is not None:
                 d = Fraction(src[1] - src[0]) / speed
                 if d.denominator != 1:

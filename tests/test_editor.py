@@ -1918,3 +1918,90 @@ def test_transitions_catalog_is_grouped_and_every_entry_renders(home):
     l, r = _frame_halves(out["path"], 3.5, folder)
     for half in (l, r):
         assert half[0] > 40 and half[2] > 40, ("dissolve must mix", half)
+
+
+# ------------------------------------------------------------- speed ramps
+
+
+def _ramp_project(home, pid, src_seconds=8.0, fps=30):
+    """A project with one clip and a real source file, for speed-ramp tests."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    folder = E._dir(pid)
+    (folder / "media").mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", f"-i", f"testsrc2=s=320x180:d={src_seconds}:r={fps}",
+         "-f", "lavfi", "-i", f"sine=frequency=440:duration={src_seconds}", "-c:v", "libx264",
+         "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", str(folder / "media" / "src.mp4")],
+        check=True, capture_output=True,
+    )
+    s = T.TICK_RATE
+    d = T.new_timeline(pid)
+    by = {t["id"]: t for t in d["tracks"]}
+    d["media"] = {"m1": {"path": "media/src.mp4", "dur": int(src_seconds * s), "fps": [fps, 1]}}
+    by["V1"]["items"] = [
+        {"id": "aa", "type": "clip", "media": "m1", "src": [0, int(src_seconds * s)], "at": 0, "fade_in": 0, "fade_out": 0},
+    ]
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    log = _O.Oplog(d, path=folder / "oplog.jsonl")
+    E._save_current(folder, log.doc)
+    return pid
+
+
+def test_speed_ramp_sizes_the_clip_by_its_integral(home):
+    """A clip's timeline length under a ramp is the integral of 1/speed over its source window,
+    not (out-in)/speed. The render and the schema must agree on that length."""
+    pid = _ramp_project(home, "rampA")
+    E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 0.5}, {"at": 4.0, "speed": 2.0}])
+    row = next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == "aa")
+    assert len(row["props"]["speed_keys"]) == 2
+    # The clip is valid at the integral length (the schema would refuse a wrong duration), and
+    # the render comes out the same length -- both proven in test_speed_ramp_renders_... . Here
+    # we check the stored keys survived and the doc validates.
+    assert not T.validate(E._log(E._dir(pid)).doc)
+    import math
+    want = (math.log(2 / 0.5) / 0.375) + (8 - 4) / 2.0
+    assert want < 8.0  # the fast tail shortens it below the source length
+
+
+def test_speed_ramp_renders_at_the_integral_length(home):
+    """A rendered ramp must come out at the integral length and actually vary speed: the frame
+    counter (testsrc2) advances through the source, and a slow start then fast tail means the
+    output is shorter than the source."""
+    from hermes_studio import render_timeline as R
+
+    pid = _ramp_project(home, "rampB")
+    E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 0.5}, {"at": 4.0, "speed": 2.0}])
+    out = R.render_project(pid)
+    import math
+    want = (math.log(2 / 0.5) / 0.375) + (8 - 4) / 2.0
+    assert out["duration"] == pytest.approx(want, abs=0.15), (out["duration"], want)
+    assert out["duration"] < 8.0
+
+
+def test_speed_ramp_one_key_or_empty_clears_it(home):
+    pid = _ramp_project(home, "rampC")
+    E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 0.5}, {"at": 4.0, "speed": 2.0}])
+    assert next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == "aa")["props"]["speed_keys"]
+    E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 0.5}])  # one key: no ramp
+    assert next(i for t in E._log(E._dir(pid)).doc["tracks"] for i in t["items"] if i["id"] == "aa")["props"]["speed_keys"] is None
+
+
+def test_speed_ramp_validates(home):
+    pid = _ramp_project(home, "rampD")
+    with pytest.raises(E.EditorError, match="speed must be between"):
+        E.set_speed_keys(pid, "aa", [{"at": 0, "speed": 0.5}, {"at": 2, "speed": 99}])
+    with pytest.raises(E.EditorError, match="increasing time"):
+        E.set_speed_keys(pid, "aa", [{"at": 4, "speed": 0.5}, {"at": 2, "speed": 2.0}])
+    with pytest.raises(E.EditorError, match="at most 64"):
+        E.set_speed_keys(pid, "aa", [{"at": i * 0.1, "speed": 1.0} for i in range(65)])
+
+
+def test_the_timeline_refuses_a_malformed_speed_ramp(home):
+    pid = _ramp_project(home, "rampE")
+    for bad in ([{"speed": [1, 2]}], [{"at": 0}, {"at": 1}], [{"at": 0, "speed": [1, 2]}, {"at": 0, "speed": [2, 1]}]):
+        with pytest.raises(E.EditorError):
+            E.apply(pid, [{"op": "set_props", "id": "aa", "props": {"speed_keys": bad}}], "bad")

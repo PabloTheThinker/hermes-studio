@@ -254,6 +254,8 @@ BAD = {
     "keyframes not a list": (_set("@c3.props.keyframes", {}), "bad_keyframes"),
     "keyframes empty": (_set("@c3.props.keyframes", []), "bad_keyframes"),
     "keyframes out of order": (_set("@c3.props.keyframes", [{"at": 8 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}]), "bad_order"),
+    "speed_keys not a list": (_set("@c3.props.speed_keys", {}), "bad_speed_keys"),
+    "speed_keys empty": (_set("@c3.props.speed_keys", []), "bad_speed_keys"),
     "mute on the main track": (lambda d: track(d, "V1").__setitem__("mute", True), "track_audio_only"),
     "solo on a text track": (lambda d: track(d, "T1").__setitem__("solo", True), "track_audio_only"),
     "track mute not a boolean": (lambda d: track(d, "A1").__setitem__("mute", 1), "wrong_type"),
@@ -627,7 +629,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 39  # out_of_range also covers values past 2^53; no new id
+    assert len(T.RULES) == 40  # out_of_range also covers values past 2^53; bad_speed_keys is the one added
 
 
 def _huge_scaled_src(d):
