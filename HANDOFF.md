@@ -151,7 +151,7 @@ python3 -m venv .venv
 - **0aaa289 / 81279f8** — Roll trim (Alt-drag an edge). v=58.
 - **a02cb2f / c9ffac9** — Slide (Alt+Shift-drag body). v=59.
 
-Phase B timeline tools (plan §4): multi-select, markers, ripple, roll, slip, slide, J/K/L, I/O, `,`/`.` all done. 848 tests pass (umask failure pre-existing). Render proofs: `~/.hermes/cache/scratch/{slip,roll,slide}_proof.py`.
+Phase B timeline tools (plan §4): multi-select, markers, ripple, roll, slip, slide, J/K/L, I/O, `,`/`.` all done. 848 tests pass (umask failure pre-existing). Render proofs: scratch proof scripts for slip, roll and slide.
 - **237d411 → 0f68e49 — Colour phase (plan §4 F), done except LUT import:** `grade.py` is the one formula (WB → lift/gamma/gain → curves → saturation), rendered by `lutrgb`/`lut1d` + `colorchannelmixer`, previewed by an SVG filter from the same tables (`wheels.js` mirrors the maths; Node tests pin it). Live graded preview, scopes (wave/parade/vector, `scopes.js`), wheels, looks as fitted presets, PCHIP curves, temp/tint + exact eyedropper. Safety fixes on the way: per-project write lock (`cad5f3a`), demo-only reset, preview-frame cache keyed by media.
 - Open: captions `_ass_escape_path` quotes the path (breaks on a `'` in the project path); `.cube` LUT import; the old umask test.
 - **d47fb71 — Keyframe curve editor (plan §4 D):** per-property graph (Scale/Pos X/Pos Y/Rotate) under the inspector; click adds a point at the clicked value, drag moves it, double-click removes it; piecewise-linear like the render; one `keyframes` op per gesture. Timeline diamonds remain the compact view. editor.js v=94.

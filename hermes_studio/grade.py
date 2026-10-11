@@ -377,7 +377,7 @@ def store(lift=None, gamma=None, gain=None, sat=None, curves=None, temp=None, ti
 # mono is set by hand: saturation 0 about Rec.709 luma plus the old contrast lift. The old
 # chain's eq=saturation=0 used Rec.601 luma, which no HD grade should, so mono differs on
 # saturated colours by design (greys stay within 4 code values of the old look).
-# Script: ~/.hermes/cache/scratch/fit_looks.py (kept out of the package; it needs ffmpeg).
+# Fitted by a scratch script (kept out of the package; it needs ffmpeg).
 LOOKS: dict[str, dict[str, Any]] = {
     "warm": {"lift": (-0.033, -0.033, -0.05), "gamma": (0.99, 0.999, 1.007), "gain": (1.018, 1.035, 1.018), "sat": 1.052},
     "cool": {"lift": (-0.046, -0.027, -0.031), "gamma": (1.007, 0.999, 0.989), "gain": (1.017, 1.029, 1.014), "sat": 0.997},
