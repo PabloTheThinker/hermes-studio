@@ -763,10 +763,57 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
         c.bad("fade_too_long", ip, "fade_in + fade_out must not exceed the item's duration")
 
 
+def source_offset(item: dict, into: int) -> int:
+    """Source ticks from the clip's src in, for a point ``into`` ticks after the clip starts on
+    the timeline: the inverse of the length rule. Constant speed multiplies; a speed ramp
+    inverts the integral of 1/speed piece by piece (between keys the speed is linear, so the
+    inverse is an exponential); before the first key and after the last the end speed holds.
+    Clamped to the source window. The preview, the frame cache and the page all ask this, so
+    a paused frame is the frame the render shows."""
+    import math
+
+    span = item["src"][1] - item["src"][0]
+    into = max(0, into)
+    keys = (item.get("props") or {}).get("speed_keys")
+    if _ramp_dur_ticks(keys, span):
+        pts = sorted((k["at"] / TICK_RATE, k["speed"][0] / k["speed"][1]) for k in keys)
+        u = into / TICK_RATE  # output seconds
+        t = None
+        out0 = pts[0][0] / pts[0][1]  # output time at the first key (first speed holds before)
+        if u < out0:
+            t = u * pts[0][1]
+        else:
+            acc = out0
+            for (ta, sa), (tb, sb) in zip(pts, pts[1:]):
+                d = tb - ta
+                if d <= 0:
+                    continue
+                k = (sb - sa) / d
+                seg = d / sa if abs(k) < 1e-12 else (math.log(sb) - math.log(sa)) / k
+                if u < acc + seg:
+                    w = u - acc
+                    t = ta + (w * sa if abs(k) < 1e-12 else sa * (math.exp(k * w) - 1.0) / k)
+                    break
+                acc += seg
+            if t is None:
+                t = pts[-1][0] + (u - acc) * pts[-1][1]
+        off = int(round(t * TICK_RATE))
+    else:
+        sp = (item.get("props") or {}).get("speed", [1, 1])
+        off = int(Fraction(into) * Fraction(sp[0], sp[1]))
+    return max(0, min(span - 1, off))
+
+
 def item_duration(item: dict) -> int:
     """Timeline duration in ticks of a valid clip, text or transition item."""
     if item["type"] in ("text", "transition"):
         return item["dur"]
+    # A speed ramp replaces the constant speed: the length is the integral of 1/speed. This is
+    # the ONE length rule -- overlap checks, ripple, anchors, view and render all read it. (It
+    # used to ignore ramps, so a slowing ramp could run a clip over the next one unrefused.)
+    rd = _ramp_dur_ticks((item.get("props") or {}).get("speed_keys"), item["src"][1] - item["src"][0])
+    if rd is not None and rd > 0:
+        return rd
     sp = item.get("props", {}).get("speed", [1, 1])
     return int(Fraction(item["src"][1] - item["src"][0]) * Fraction(sp[1], sp[0]))
 

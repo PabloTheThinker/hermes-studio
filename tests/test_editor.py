@@ -2193,3 +2193,73 @@ def test_a_ramp_whose_first_key_is_late_holds_the_first_speed_before_it():
     s = T.TICK_RATE
     keys = [{"at": 2 * s, "speed": [1, 2]}, {"at": 6 * s, "speed": [1, 2]}]
     assert T._ramp_dur_ticks(keys, 8 * s) == 16 * s
+
+
+
+def _v1(pid):
+    v = E.view(E._log(E._dir(pid)).doc)
+    return {i["id"]: (i["at"], round(i["dur"], 4)) for t in v["tracks"] for i in t["items"]}
+
+
+def test_slowing_a_clip_ripples_the_cut_instead_of_overlapping(home):
+    """Final Cut / Resolve ripple: slowing c1 (8s -> 16s) pushes everything after it out by 8s,
+    on every track, in one undo step. It used to be refused for overlapping c2."""
+    E.create("demo")
+    before = _v1("demo")
+    E.set_speed("demo", "c1", 0.5)
+    after = _v1("demo")
+    assert after["c1"] == (0.0, 16.0)
+    assert after["c2"][0] == before["c2"][0] + 8 and after["c3"][0] == before["c3"][0] + 8
+    E.undo("demo")
+    assert _v1("demo") == before
+
+
+def test_speeding_a_clip_up_closes_the_cut_behind_it(home):
+    E.create("demo")
+    before = _v1("demo")
+    E.set_speed("demo", "c1", 2.0)
+    after = _v1("demo")
+    assert after["c1"] == (0.0, 4.0) and after["c2"][0] == before["c2"][0] - 4
+
+
+def test_a_slowing_ramp_can_no_longer_run_over_the_next_clip(home):
+    """item_duration ignored ramps, so the overlap check thought a ramped c1 was still 8s while
+    it rendered 16s on top of c2. One length rule now; the ramp ripples like a constant speed."""
+    E.create("demo")
+    before = _v1("demo")
+    E.set_speed_keys("demo", "c1", [{"at": 0, "speed": 0.5}, {"at": 8, "speed": 0.5}])
+    after = _v1("demo")
+    assert after["c1"] == (0.0, 16.0)
+    assert after["c2"][0] == before["c2"][0] + 8
+    doc = E._log(E._dir("demo")).doc
+    c1 = next(i for t in doc["tracks"] for i in t["items"] if i["id"] == "c1")
+    assert T.item_duration(c1) == 16 * T.TICK_RATE
+    E.set_speed_keys("demo", "c1", None)
+    assert _v1("demo") == before
+
+
+def test_the_paused_frame_is_the_rendered_frame_on_a_retimed_clip(home):
+    """source_time (the paused preview frame) ignored speed: a 2x clip paused at 3s showed
+    source 3s while the export shows 6s."""
+    import math
+
+    E.create("demo")
+    E.set_speed("demo", "c1", 2.0)
+    doc = E._log(E._dir("demo")).doc
+    assert E.source_time(doc, 3.0)[1] == pytest.approx(6.0)
+    E.set_speed("demo", "c1", 1.0)
+    E.set_speed_keys("demo", "c1", [{"at": 0, "speed": 0.5}, {"at": 8, "speed": 2.0}])
+    doc = E._log(E._dir("demo")).doc
+    k = 1.5 / 8
+    assert E.source_time(doc, 5.0)[1] == pytest.approx(0.5 * (math.exp(k * 5) - 1) / k, abs=1e-3)
+
+
+def test_a_fresh_demo_can_play_before_any_frame_is_asked_for(home):
+    """Playback fetches media/talk.mp4 directly; it used to exist only after a paused-frame
+    request had drawn it, so Play on a freshly reset demo got a 404."""
+    E.create("demo")
+    p = E.project_media("demo", "talk.mp4")
+    assert p.is_file() and p.stat().st_size > 1000
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(p)],
+                               capture_output=True, text=True).stdout)
+    assert dur >= 119.9  # as long as the media entry says

@@ -2,7 +2,8 @@
  *
  * The timeline's sound, mixed live in Web Audio, so what you hear while editing is what the
  * render writes. Every rule mirrors render_timeline.py:
- *   - a clip plays its source span (src_in..src_out) at real time;
+ *   - a clip plays its source span (src_in..src_out) at its speed or ramp (srcAt: the same
+ *     time map as timeline.source_offset);
  *   - its level is clip volume x the role weight (voice 1.0, music 0.35 -- render MIX);
  *   - fade_in / fade_out are linear ramps (ffmpeg afade's default curve);
  *   - each audio track is a strip: gain, mute, solo (any solo -> only soloed tracks play);
@@ -22,6 +23,83 @@
   const LEAD = 0.06; // seconds between start() and the first sample, so scheduling never lands late
 
   function isAudio(tr) { return tr.role === "voice" || tr.role === "music"; }
+
+  // ---- retime: the one time map (timeline.source_offset / item_duration), shared with the page.
+  // `into` is seconds into the clip on the TIMELINE; the answer is source seconds from src_in.
+  // Constant speed multiplies. A ramp is linear in source time between keys, so its timeline
+  // length is the integral of 1/speed (a log) and the inverse is an exponential; outside the
+  // keys the end speed holds.
+  function rampPts(c) { return Array.isArray(c.speed_keys) && c.speed_keys.length >= 2 ? c.speed_keys : null; }
+  // Clip-timeline seconds at each ramp key (where the rate curve has its corners).
+  function keyTimes(c) {
+    const pts = rampPts(c);
+    if (!pts) return [];
+    const out = [pts[0][0] / pts[0][1]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ta, sa] = pts[i], [tb, sb] = pts[i + 1], d = tb - ta;
+      const k = d > 0 ? (sb - sa) / d : 0;
+      out.push(out[i] + (d <= 0 ? 0 : Math.abs(k) < 1e-12 ? d / sa : (Math.log(sb) - Math.log(sa)) / k));
+    }
+    return out;
+  }
+  function srcAt(c, into) {
+    const span = Math.max(0, (c.src_out || 0) - (c.src_in || 0));
+    const u = Math.max(0, into);
+    const pts = rampPts(c);
+    let t;
+    if (!pts) t = u * (c.speed || 1);
+    else {
+      const kt = keyTimes(c);
+      if (u < kt[0]) t = u * pts[0][1];
+      else {
+        t = null;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const [ta, sa] = pts[i], [tb, sb] = pts[i + 1], d = tb - ta;
+          if (d <= 0 || u >= kt[i + 1]) continue;
+          const k = (sb - sa) / d, w = u - kt[i];
+          t = ta + (Math.abs(k) < 1e-12 ? w * sa : (sa * (Math.exp(k * w) - 1)) / k);
+          break;
+        }
+        if (t == null) t = pts[pts.length - 1][0] + (u - kt[kt.length - 1]) * pts[pts.length - 1][1];
+      }
+    }
+    return Math.max(0, Math.min(span, t));
+  }
+  // The forward map: source seconds from src_in -> seconds into the clip on the timeline (the
+  // integral of 1/speed). The film path reads the <video>'s source time and needs this to place
+  // the playhead.
+  function tlAt(c, off) {
+    const t = Math.max(0, off);
+    const pts = rampPts(c);
+    if (!pts) return t / (c.speed || 1);
+    if (t <= pts[0][0]) return t / pts[0][1];
+    let acc = pts[0][0] / pts[0][1];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ta, sa] = pts[i], [tb, sb] = pts[i + 1], d = tb - ta;
+      if (d <= 0) continue;
+      const k = (sb - sa) / d, hi = Math.min(t, tb);
+      if (hi > ta) acc += Math.abs(k) < 1e-12 ? (hi - ta) / sa : (Math.log(sa + k * (hi - ta)) - Math.log(sa)) / k;
+      if (t <= tb) return acc;
+    }
+    return acc + (t - pts[pts.length - 1][0]) / pts[pts.length - 1][1];
+  }
+  // Playback speed at clip-timeline second `into`.
+  function speedAt(c, into) {
+    const pts = rampPts(c);
+    if (!pts) return c.speed || 1;
+    const t = srcAt(c, into);
+    if (t <= pts[0][0]) return pts[0][1];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ta, sa] = pts[i], [tb, sb] = pts[i + 1];
+      if (t <= tb) return tb > ta ? sa + ((sb - sa) * (t - ta)) / (tb - ta) : sb;
+    }
+    return pts[pts.length - 1][1];
+  }
+  // Timeline length of a clip (the view already sends it; this is the fallback).
+  function lenOf(c) {
+    if (c.dur != null) return c.dur;
+    return Math.max(0, (c.src_out || 0) - (c.src_in || 0)) / (c.speed || 1);
+  }
   // The clip's volume envelope at clip-local second u: linear between keys, held outside them
   // (render_timeline._interp_expr, the same rule).
   function envAt(keys, u) {
@@ -156,22 +234,26 @@
       for (const [tr, c] of clips(doc)) {
         const buf = buffers.get(c.file);
         if (!buf || buf === "wait") continue;
-        const span = c.src_out - c.src_in; // render plays the source span at real time
-        if (c.at + span <= play) continue;
+        // Fades, the volume envelope and the schedule are in clip TIMELINE seconds (the render
+        // fades after atempo); only the buffer offset and length are in source seconds.
+        const span = c.src_out - c.src_in;
+        const L = lenOf(c);
+        if (c.at + L <= play) continue;
         const into = Math.max(0, play - c.at);
         const when = t0 + Math.max(0, c.at - play) / rate;
-        const dur = span - into; // source seconds; the wall takes dur / rate
+        const off = srcAt(c, into);
+        const dur = span - off; // source seconds still to play
         const level = (c.volume == null ? 1 : c.volume) * (MIX[tr.role] || 1);
-        const fi = Math.min(c.fade_in || 0, span), fo = Math.min(c.fade_out || 0, span);
-        const env = (u) => level * Math.max(0, Math.min(1, fi > 0 ? u / fi : 1, fo > 0 ? (span - u) / fo : 1));
+        const fi = Math.min(c.fade_in || 0, L), fo = Math.min(c.fade_out || 0, L);
+        const env = (u) => level * Math.max(0, Math.min(1, fi > 0 ? u / fi : 1, fo > 0 ? (L - u) / fo : 1));
         const g = ctx.createGain();
-        const at = (u) => when + (u - into) / rate; // clip-local source time -> context time
+        const at = (u) => when + (u - into) / rate; // clip-local timeline time -> context time
         g.gain.setValueAtTime(env(into), when);
         if (fi > 0 && into < fi) g.gain.linearRampToValueAtTime(env(fi), at(fi));
         if (fo > 0) {
-          const foStart = span - fo;
+          const foStart = L - fo;
           if (into < foStart) g.gain.setValueAtTime(env(foStart), at(foStart));
-          g.gain.linearRampToValueAtTime(0, at(span));
+          g.gain.linearRampToValueAtTime(0, at(L));
         }
         // The volume envelope rides on a second gain after the fades: value at the start point,
         // then a linear ramp to each later key inside the clip; after the last key it holds.
@@ -180,16 +262,28 @@
         if (keys) {
           const env = ctx.createGain();
           env.gain.setValueAtTime(envAt(keys, into), when);
-          for (const k of keys) if (k.at > into && k.at <= span) env.gain.linearRampToValueAtTime(k.gain, at(k.at));
+          for (const k of keys) if (k.at > into && k.at <= L) env.gain.linearRampToValueAtTime(k.gain, at(k.at));
           g.connect(env);
           tail = env;
         }
         const src = ctx.createBufferSource();
         src.buffer = buf;
-        src.playbackRate.value = rate;
+        // Retimed sound: the buffer plays at the clip's speed (pitched, like a tape -- the
+        // render keeps pitch with atempo, the lengths match). A ramp's speed is exponential in
+        // playback time inside each segment (s = s0 * e^(k w)), which is exactly what
+        // exponentialRampToValueAtTime draws, so the preview stays on the render's frames.
+        const s0 = speedAt(c, into);
+        src.playbackRate.value = rate * s0;
+        if (rampPts(c)) {
+          src.playbackRate.setValueAtTime(rate * s0, when);
+          const pts = rampPts(c), kt = keyTimes(c);
+          for (let i = 0; i < kt.length; i++) {
+            if (kt[i] > into && kt[i] < L) src.playbackRate.exponentialRampToValueAtTime(rate * pts[i][1], at(kt[i]));
+          }
+        }
         src.connect(g);
         tail.connect(strip(tr.id).gain);
-        src.start(when, c.src_in + into, dur);
+        src.start(when, c.src_in + off, dur);
         sources.push(src);
       }
       return true;
@@ -233,5 +327,5 @@
       get running() { return running; }, get context() { return ctx; } };
   }
 
-  window.HSMix = { create, MIX, envAt };
+  window.HSMix = { create, MIX, envAt, srcAt, tlAt, speedAt, keyTimes, lenOf };
 })();

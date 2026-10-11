@@ -23,6 +23,7 @@ class Param {
   constructor(v) { this.value = v; this.events = []; }
   setValueAtTime(v, t) { this.events.push(["set", +v.toFixed(4), +t.toFixed(4)]); return this; }
   linearRampToValueAtTime(v, t) { this.events.push(["ramp", +v.toFixed(4), +t.toFixed(4)]); return this; }
+  exponentialRampToValueAtTime(v, t) { this.events.push(["exp", +v.toFixed(4), +t.toFixed(4)]); return this; }
   setTargetAtTime(v, t) { this.events.push(["target", +v.toFixed(4)]); this.value = v; return this; }
 }
 class Node { constructor() { this.out = []; } connect(n) { this.out.push(n); return n; } disconnect() {} }
@@ -57,7 +58,7 @@ const speed = Number(process.argv[5] || 1);
     const clipGain = s.out[0];
     let node = clipGain.out[0], envelope = null;
     if (!(node.out[0] instanceof Analyser)) { envelope = node.gain.events; node = node.out[0]; }
-    return { start: s.started, rate: s.playbackRate.value, env: clipGain.gain.events, envelope, strip: node.gain.events };
+    return { start: s.started, rate: +s.playbackRate.value.toFixed(4), rates: s.playbackRate.events, env: clipGain.gain.events, envelope, strip: node.gain.events };
   });
   const now0 = m.now();
   ctx.currentTime += 1.5;
@@ -171,3 +172,101 @@ def test_the_volume_envelope_is_automated_like_the_render(tmp_path):
     # No envelope: no extra stage.
     out = _run(tmp_path, _doc(voice=[_clip("a1", 0, 0, 4)]), 0)
     assert out["clips"][0]["envelope"] is None
+
+
+# ---- retime: the preview's time map is the render's ------------------------------------------
+
+MAP_HARNESS = r"""
+const fs = require("fs"), vm = require("vm");
+global.window = {};
+vm.runInThisContext(fs.readFileSync(process.argv[2], "utf8"));
+const c = JSON.parse(process.argv[3]);
+const ts = JSON.parse(process.argv[4]);
+console.log(JSON.stringify({ src: ts.map((t) => window.HSMix.srcAt(c, t)), back: ts.map((t) => window.HSMix.tlAt(c, window.HSMix.srcAt(c, t))), sp: ts.map((t) => window.HSMix.speedAt(c, t)), kt: window.HSMix.keyTimes(c) }));
+"""
+
+
+def _map(tmp_path, clip, ts):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    h = tmp_path / "map.js"
+    h.write_text(MAP_HARNESS)
+    r = subprocess.run([node, str(h), str(MIX_JS), json.dumps(clip), json.dumps(ts)], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        None,  # constant speed
+        [(0.0, 0.5), (8.0, 2.0)],
+        [(0.0, 1.0), (2.0, 0.5), (6.0, 2.0)],
+        [(2.0, 0.25), (5.0, 4.0)],  # first key late: the first speed holds before it
+    ],
+)
+def test_the_preview_time_map_is_the_timelines(tmp_path, keys):
+    """HSMix.srcAt (page + mixer) and timeline.source_offset (frame cache + render sizing) give
+    the same source second at every point of the clip, for constant speed and for ramps."""
+    from hermes_studio import timeline as T
+
+    s = T.TICK_RATE
+    item = {"type": "clip", "src": [0, 8 * s], "props": {"speed": [3, 2]}}
+    clip = {"src_in": 0, "src_out": 8, "speed": 1.5}
+    if keys:
+        item["props"]["speed_keys"] = [{"at": int(a * s), "speed": list(__import__("fractions").Fraction(v).limit_denominator(1000).as_integer_ratio())} for a, v in keys]
+        clip["speed_keys"] = [[a, v] for a, v in keys]
+    L = T.item_duration(item) / s
+    clip["dur"] = L
+    ts = [L * i / 40 for i in range(40)]
+    js = _map(tmp_path, clip, ts)
+    py = [T.source_offset(item, int(round(t * s))) / s for t in ts]
+    assert max(abs(a - b) for a, b in zip(js["src"], py)) < 1e-4
+    # tlAt is srcAt's inverse (the film path places the playhead with it).
+    assert max(abs(a - b) for a, b in zip(js["back"], ts)) < 1e-6
+
+
+def test_a_2x_sound_clip_plays_its_source_twice_as_fast(tmp_path):
+    c = _clip("a1", 0, 0, 8)
+    c["speed"], c["dur"] = 2.0, 4.0
+    out = _run(tmp_path, _doc(voice=[c]), 1)  # 1s into the timeline = 2s into the source
+    (x,) = out["clips"]
+    assert x["start"] == [10.06, 2.0, 6.0]
+    assert x["rate"] == 2.0
+
+
+def test_a_ramped_sound_clip_follows_the_ramp_exactly(tmp_path):
+    """0.5x -> 2x over the first 4s of source, then 2x held: the rate starts at 0.5 and rises
+    exponentially to 2 exactly at the key's timeline time (4 ln4 / 1.5 = 3.697s) -- the speed
+    is s0*e^(k w) in playback time, which is what exponentialRamp draws -- then holds."""
+    import math
+
+    c = _clip("a1", 0, 0, 8)
+    t_key = 4 * math.log(4) / 1.5
+    c["speed_keys"], c["dur"] = [[0, 0.5], [4, 2.0]], t_key + 4 / 2.0
+    out = _run(tmp_path, _doc(voice=[c]), 0)
+    (x,) = out["clips"]
+    assert x["start"] == [10.06, 0.0, 8.0]
+    assert x["rates"] == [["set", 0.5, 10.06], ["exp", 2.0, round(10.06 + t_key, 4)]]
+
+
+def test_a_ramped_sound_clip_started_mid_ramp_picks_up_the_right_rate(tmp_path):
+    """Play from 2s on the timeline, inside the ramp: the buffer starts at the source second the
+    render shows there, at that moment's speed."""
+    import math
+
+    from hermes_studio import timeline as T
+
+    c = _clip("a1", 0, 0, 8)
+    t_key = 4 * math.log(4) / 1.5
+    c["speed_keys"], c["dur"] = [[0, 0.5], [4, 2.0]], t_key + 2.0
+    out = _run(tmp_path, _doc(voice=[c]), 2)
+    (x,) = out["clips"]
+    k = 1.5 / 4
+    src = 0.5 * (math.exp(k * 2) - 1) / k  # the inverse of the integral at 2s
+    assert x["start"][1] == pytest.approx(src, abs=1e-3)
+    assert x["rates"][0][1] == pytest.approx(0.5 + k * src, abs=1e-3)  # speed at that source time
+    s = T.TICK_RATE
+    item = {"type": "clip", "src": [0, 8 * s], "props": {"speed_keys": [{"at": 0, "speed": [1, 2]}, {"at": 4 * s, "speed": [2, 1]}]}}
+    assert T.source_offset(item, 2 * s) / s == pytest.approx(src, abs=1e-6)

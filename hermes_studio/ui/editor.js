@@ -2193,7 +2193,11 @@
       previewMix(v);
       const piece = pieceAt(v.dataset.file, v.currentTime);
       if (piece) {
-        play = piece.at + (v.currentTime - (piece.src_in || 0));
+        // The <video> runs the clock here, in SOURCE time: map it back through the clip's speed
+        // or ramp (HSMix.tlAt), and keep the video's rate on the time map as the ramp moves.
+        play = piece.at + window.HSMix.tlAt(piece, v.currentTime - (piece.src_in || 0));
+        const r = Math.max(0.0625, Math.min(16, window.HSMix.speedAt(piece, play - piece.at)));
+        if (Math.abs(v.playbackRate - r) > 1e-3) v.playbackRate = r;
         if (stopAt != null && play >= stopAt) { play = stopAt; stop(); paint(); return; }
         head();
         return;
@@ -2215,12 +2219,15 @@
     previewMix(v);
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
-    const want = (it.src_in || 0) + Math.max(0, play - it.at);
+    const want = (it.src_in || 0) + window.HSMix.srcAt(it, play - it.at);
     if (v.dataset.file !== it.file) {
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
     }
-    const arm = () => { if (Math.abs((v.currentTime || 0) - want) > 0.25) v.currentTime = want; };
+    const arm = () => {
+      if (Math.abs((v.currentTime || 0) - want) > 0.25) v.currentTime = want;
+      v.playbackRate = Math.max(0.0625, Math.min(16, window.HSMix.speedAt(it, play - it.at)));
+    };
     if (v.readyState >= 1) arm();
     else v.addEventListener("loadedmetadata", arm, { once: true });
     const pending = v.play();
@@ -2245,7 +2252,8 @@
     v.muted = true; // the sound comes from the mix (or the shuttle is silent)
     if (img) img.hidden = true;
     const sp = it.speed || 1;
-    const want = () => { const c = mainClip(play) || it; return (c.src_in || 0) + Math.max(0, play - c.at) * (c.speed || 1); };
+    // The one time map (constant speed or a ramp), shared with the mixer and the render.
+    const want = () => { const c = mainClip(play) || it; return (c.src_in || 0) + window.HSMix.srcAt(c, play - c.at); };
     if (v.dataset.file !== it.file) {
       v.dataset.file = it.file;
       v.src = "/api/editor/" + encodeURIComponent(pid) + "/media/" + encodeURIComponent(it.file);
@@ -2260,7 +2268,8 @@
       if (v.readyState >= 1 && now - lastSeek > 80) { lastSeek = now; v.currentTime = want(); }
       return;
     }
-    const r = Math.min(16, sp * rate);
+    const c0 = mainClip(play) || it;
+    const r = Math.min(16, window.HSMix.speedAt(c0, play - c0.at) * rate);
     if (v.readyState >= 1 && Math.abs(v.currentTime - want()) > 0.15 * Math.max(1, rate)) v.currentTime = want();
     if (v.playbackRate !== r) v.playbackRate = r;
     if (v.paused) { const pr = v.play(); if (pr && pr.catch) pr.catch(() => {}); }

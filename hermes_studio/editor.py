@@ -6,6 +6,7 @@ The desk and tests call open / apply / undo / redo. Nothing else writes the time
 
 from __future__ import annotations
 
+import copy
 import contextlib
 import json
 import math
@@ -228,15 +229,10 @@ def view(doc: dict) -> dict:
                 continue
             speed = clip_speed(it) if it["type"] == "clip" else 1.0
             at = it.get("at", 0) / rate
-            sk = (it.get("props") or {}).get("speed_keys")
-            if it["type"] == "clip" and isinstance(sk, list) and len(sk) >= 2:
-                # A speed ramp: the clip's timeline length is the integral of 1/speed over its
-                # source window (timeline._ramp_dur_ticks computes it; the render agrees).
-                dur = T._ramp_dur_ticks(sk, it["src"][1] - it["src"][0]) / rate
-            elif it["type"] == "clip":
-                # A clip occupies (source range) / speed ticks on the timeline; text keeps dur.
-                dur = (it["src"][1] - it["src"][0]) / speed / rate
-            else:
+            # The one length rule (constant speed, or a ramp's integral); text keeps its dur.
+            try:
+                dur = T.item_duration(it) / rate
+            except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError):
                 dur = it.get("dur", 0) / rate
             end = max(end, at + dur)
             label = text_at.get(it.get("at")) or it.get("text") or it["id"]
@@ -655,6 +651,56 @@ def _linked_sound(pid: str, item_id: str) -> list[str]:
     return out
 
 
+def _retime(pid: str, item_id: str, clip_props: dict, sound_props: dict, label: str) -> dict:
+    """Apply a retime (speed, ramp, reverse...) to a clip and its linked sound, and RIPPLE: the
+    length change moves every later item on every track by the same amount, so slowing a clip
+    pushes the cut out instead of being refused for overlapping its neighbour (Final Cut's
+    retime, Resolve's ripple). Anchored items follow their clip. Transitions touching the clip
+    are dropped to a hard cut first (their overlap can't survive a new length). One undo step."""
+    doc = _log(_dir(pid)).doc
+    me = None
+    for tr in doc["tracks"]:
+        for it in tr["items"]:
+            if it["id"] == item_id:
+                me = it
+    if me is None:
+        raise EditorError(f"no item {item_id!r}")
+    if me.get("type") != "clip":
+        raise EditorError("only a clip can be retimed")
+    if "at" not in me:
+        raise EditorError("an anchored clip can't be retimed")
+    old_len = T.item_duration(me)
+    trial = copy.deepcopy(me)
+    trial.setdefault("props", {}).update({k: v for k, v in clip_props.items()})
+    try:
+        new_len = T.item_duration(trial)
+    except (KeyError, TypeError, ValueError, ZeroDivisionError, IndexError) as e:
+        raise EditorError("that retime gives the clip no usable length") from e
+    if new_len <= 0:
+        raise EditorError("that retime gives the clip no length")
+    old_end = me["at"] + old_len
+    linked = set(_linked_sound(pid, item_id))
+
+    ops: list[dict] = []
+    for tr in _transitions_on(pid, item_id):
+        ops.append({"op": "set_transition", "between": list(tr["between"]), "dur": 0})
+    ops.append({"op": "set_props", "id": item_id, "props": clip_props})
+    for sid in linked:
+        ops.append({"op": "set_props", "id": sid, "props": sound_props})
+    delta = new_len - old_len
+    if delta:
+        later = [
+            it["id"]
+            for tr in doc["tracks"]
+            for it in tr["items"]
+            if it["id"] != item_id and it["id"] not in linked and it.get("type") != "transition"
+            and "at" in it and it["at"] >= old_end
+        ]
+        if later:
+            ops.append({"op": "move_items", "ids": later, "by": delta})
+    return apply(pid, ops, label)
+
+
 def set_speed(pid: str, item_id: str, speed: float) -> dict:
     """Set a clip's playback speed. The schema stores it as a reduced [num, den] pair and
     allows 0.1x to 10x; anything outside that is refused before it reaches the op log.
@@ -671,17 +717,8 @@ def set_speed(pid: str, item_id: str, speed: float) -> dict:
     fr = Fraction(s).limit_denominator(1000)
     pair = [fr.numerator, fr.denominator]
 
-    ops: list[dict] = []
-    # Any transition touching this clip is removed (dur 0 == a hard cut) before the retime.
-    for tr in _transitions_on(pid, item_id):
-        a_id, b_id = tr["between"]
-        ops.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
-    ops.append({"op": "set_props", "id": item_id, "props": {"speed": pair}})
-    # The clip's sound plays at the same speed (and any ramp on it is cleared, since the clip is
-    # now a constant rate): one op per linked item, still one undo step.
-    for sid in _linked_sound(pid, item_id):
-        ops.append({"op": "set_props", "id": sid, "props": {"speed": pair, "speed_keys": None}})
-    return apply(pid, ops, f"Speed {s:g}×")
+    # The sound plays at the same speed; a constant speed on the picture clears any ramp on it.
+    return _retime(pid, item_id, {"speed": pair}, {"speed": pair, "speed_keys": None}, f"Speed {s:g}×")
 
 
 def set_look(pid: str, item_id: str, look: str | None) -> dict:
@@ -972,10 +1009,7 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
     if not keys or len(keys) < 2:
         # A ramp needs at least two keys to mean anything; fewer clears it. The constant speed
         # stays whatever it was, so a one-key "ramp" is just that constant.
-        ops = [{"op": "set_props", "id": item_id, "props": {"speed_keys": None}}]
-        for sid in _linked_sound(pid, item_id):
-            ops.append({"op": "set_props", "id": sid, "props": {"speed_keys": None}})
-        return apply(pid, ops, "Speed ramp cleared")
+        return _retime(pid, item_id, {"speed_keys": None}, {"speed_keys": None}, "Speed ramp cleared")
     if len(keys) > 64:
         raise EditorError("at most 64 speed keys")
     out = []
@@ -990,11 +1024,8 @@ def set_speed_keys(pid: str, item_id: str, keys: list[dict] | None) -> dict:
             raise EditorError("speed keys must be in strictly increasing time order")
         prev = ticks
         out.append({"at": ticks, "speed": pair(sp)})
-    ops = [{"op": "set_props", "id": item_id, "props": {"speed_keys": out}}]
     # The clip's sound follows the same ramp, so picture and sound stay in step.
-    for sid in _linked_sound(pid, item_id):
-        ops.append({"op": "set_props", "id": sid, "props": {"speed_keys": out}})
-    return apply(pid, ops, f"Speed ramp ({len(out)} keys)")
+    return _retime(pid, item_id, {"speed_keys": out}, {"speed_keys": out}, f"Speed ramp ({len(out)} keys)")
 
 
 def _transitions_on(pid: str, item_id: str) -> list[dict]:
@@ -1145,9 +1176,10 @@ def source_time(doc: dict, seconds: float) -> tuple[str, float] | None:
         for it in tr["items"]:
             if it.get("type") != "clip" or "at" not in it or "src" not in it:
                 continue
-            start, dur = it["at"], it["src"][1] - it["src"][0]
+            start, dur = it["at"], T.item_duration(it)
             if start <= ticks < start + dur:
-                return it["media"], (it["src"][0] + (ticks - start)) / rate
+                # Speed, ramps (and reverse) map through the one time rule the render uses.
+                return it["media"], (it["src"][0] + T.source_offset(it, ticks - start)) / rate
     return None
 
 
@@ -1166,6 +1198,7 @@ def resolve_media(folder: Path, rel: str) -> Path:
 def _demo_plate(dest: Path) -> None:
     """A short 9:16 plate so the demo has a real picture. Not a stand-in for a user's film."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name("." + dest.stem + ".tmp" + dest.suffix)
     proc = subprocess.run(
         [
             "ffmpeg",
@@ -1173,7 +1206,8 @@ def _demo_plate(dest: Path) -> None:
             "-f",
             "lavfi",
             "-i",
-            "testsrc2=size=360x640:rate=15:duration=70",
+            # As long as the media entry says (120 s), so a slip or slow-down never runs off it.
+            "testsrc2=size=360x640:rate=15:duration=120",
             "-c:v",
             "libx264",
             "-preset",
@@ -1181,14 +1215,16 @@ def _demo_plate(dest: Path) -> None:
             "-pix_fmt",
             "yuv420p",
             "-an",
-            str(dest),
+            str(tmp),
         ],
         capture_output=True,
         text=True,
         timeout=60,
     )
-    if proc.returncode != 0 or not dest.is_file():
+    if proc.returncode != 0 or not tmp.is_file():
+        tmp.unlink(missing_ok=True)
         raise EditorError("could not draw the preview plate")
+    tmp.replace(dest)
 
 
 def frame_jpeg(pid: str, seconds: float) -> bytes:
@@ -1400,6 +1436,12 @@ def project_media(pid: str, name: str) -> Path:
     if Path(name).name != name or Path(name).suffix.lower() not in MEDIA_TYPES:
         raise EditorError("bad media name")
     path = resolve_media(_dir(pid), f"media/{name}")
+    if not path.is_file() and pid == DEMO and name == "talk.mp4":
+        # The demo's plate is drawn on first use. frame_jpeg drew it, but playback asks for the
+        # file directly, so a freshly reset demo handed the <video> a 404 and Play did nothing.
+        with _locked(_dir(pid)):
+            if not path.is_file():
+                _demo_plate(path)
     if not path.is_file():
         raise EditorError("no such picture")
     return path
