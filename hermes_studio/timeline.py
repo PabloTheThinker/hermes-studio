@@ -49,7 +49,7 @@ ATTRIBUTION_KEYS = frozenset({"actor", "author", "created_by", "modified_by", "u
 TOP_KEYS = {"schema_version", "id", "version", "tick_rate", "fps", "size", "media", "tracks", "markers"}
 TOP_OPTIONAL = {"hash"}
 MEDIA_KEYS = {"path", "dur", "fps"}
-MEDIA_OPTIONAL = {"proxy"}
+MEDIA_OPTIONAL = {"proxy", "name", "audio"}  # name: the bin label; audio: the file has sound
 TRACK_KEYS = {"id", "role", "items"}
 # Audio tracks only: the track's mixer strip. mute/solo are booleans, gain a [num, den] ratio
 # 0..4 like a clip's volume. Defaults (false, false, [1, 1]) are dropped by normalize(), so a
@@ -415,6 +415,10 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             c.ratio(m["fps"], _j(p, "fps"), Fraction(0), lo_open=True)
         if m.get("proxy") is not None:
             c.string(m["proxy"], _j(p, "proxy"))
+        if m.get("name") is not None:
+            c.string(m["name"], _j(p, "name"))
+        if m.get("audio") is not None and not isinstance(m["audio"], bool):
+            c.bad("wrong_type", _j(p, "audio"), "audio must be true or false")
 
     tracks = doc["tracks"]
     if not isinstance(tracks, list):

@@ -2466,3 +2466,153 @@ def test_every_piece_of_a_split_keeps_the_sources_shape(home):
     # Frame 200 (second piece, source frame 200, bright): the side bars are black, as in piece one.
     assert y[200, 540, 100] < 20 and y[200, 540, 960] > 150
     assert y[50, 540, 100] < 20
+
+
+# ---- M2: the bin and three-point editing ----------------------------------------------------
+
+def _flat(tmp, name, level, seconds=4.0, tone=None):
+    """A clip whose every frame is one flat grey `level`, so a frame says which file it came from."""
+    path = tmp / name
+    args = ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=0x{level:02x}{level:02x}{level:02x}:s=320x180:r=30:d={seconds}"]
+    if tone:
+        args += ["-f", "lavfi", "-i", f"sine=frequency={tone}:duration={seconds}", "-c:a", "aac", "-shortest"]
+    args += ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(path)]
+    subprocess.run(args, check=True, capture_output=True)
+    return path
+
+
+def _bin_project(home, pid):
+    """A fresh project holding two flat clips in the bin (A grey 60, B grey 200, both with sound)
+    and A laid down once (0..4 s), built only through the public editor calls."""
+    E.create(pid) if pid == "demo" else None
+    folder = E._dir(pid)
+    if not (folder / "base.json").exists():
+        import json as _json
+
+        from hermes_studio import oplog as _O
+
+        d = T.new_timeline(pid)
+        d, _ = T.stamp_hash(d)
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "base.json").write_text(_json.dumps(d))
+        E._save_current(folder, _O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    a = _flat(home, "A.mp4", 60, tone=440)
+    b = _flat(home, "B.mp4", 200, tone=880)
+    E.import_media(pid, a, "Shot A")
+    E.import_media(pid, b, "Shot B")
+    v = E.view(E._log(folder).doc)
+    ids = {m["name"]: m["id"] for m in v["bin"]}
+    E.place(pid, ids["Shot A"], 0, 4, "append")
+    return ids
+
+
+def _grey_at(path, t):
+    import numpy as np
+
+    raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-ss", f"{t:.3f}", "-i", str(path), "-frames:v", "1",
+                          "-vf", "scale=64:36", "-f", "rawvideo", "-pix_fmt", "gray", "-"], capture_output=True, check=True).stdout
+    return float(np.frombuffer(raw, np.uint8).mean())
+
+
+def _len(path):
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                                capture_output=True, text=True).stdout)
+
+
+def test_the_bin_lists_imports_and_an_import_undoes(home):
+    ids = _bin_project(home, "binA")
+    v = E.view(E._log(E._dir("binA")).doc)
+    by = {m["name"]: m for m in v["bin"]}
+    assert by["Shot A"]["dur"] == pytest.approx(4.0, abs=0.05) and by["Shot A"]["audio"] is True
+    assert by["Shot A"]["uses"] == 2 and by["Shot B"]["uses"] == 0  # A's picture + its sound
+    assert (E._dir("binA") / "media" / by["Shot B"]["file"]).is_file()
+    E.undo("binA")  # the append
+    E.undo("binA")  # the import of B
+    assert ids["Shot B"] not in E._log(E._dir("binA")).doc["media"]
+    with pytest.raises(E.EditorError):
+        E.import_media("binA", home / "nope.mp4")
+
+
+def test_append_insert_and_overwrite_render_what_they_say(home):
+    """A is 0..4 s. Insert 1 s of B at 2 s -> A A B A A A (5 s). Overwrite 1 s of B at 1 s on the
+    original -> A B A A (4 s, same length). Append -> A A A A B (5 s). Each is one undo step."""
+    from hermes_studio import render_timeline as R
+
+    ids = _bin_project(home, "binB")
+    pid, b = "binB", ids["Shot B"]
+    E.place(pid, b, 0.5, 1.5, "insert", 2.0)
+    out = R.render_project(pid)["path"]
+    assert _len(out) == pytest.approx(5.0, abs=0.06)
+    assert [round(_grey_at(out, t) / 10) for t in (1.0, 2.5, 3.5)] == [round(60 / 10), round(200 / 10), round(60 / 10)]
+    E.undo(pid)
+    E.place(pid, b, 0.5, 1.5, "overwrite", 1.0)
+    out = R.render_project(pid)["path"]
+    assert _len(out) == pytest.approx(4.0, abs=0.06)
+    assert [round(_grey_at(out, t) / 10) for t in (0.5, 1.5, 2.5)] == [6, 20, 6]
+    E.undo(pid)
+    E.place(pid, b, 0.0, 1.0, "append")
+    out = R.render_project(pid)["path"]
+    assert _len(out) == pytest.approx(5.0, abs=0.06)
+    assert round(_grey_at(out, 4.5) / 10) == 20
+    E.undo(pid)
+    v1 = [i for t in E.view(E._log(E._dir(pid)).doc)["tracks"] if t["id"] == "V1" for i in t["items"]]
+    assert len(v1) == 1
+
+
+def test_an_insert_carries_its_sound_and_moves_every_track(home):
+    """The picture lands on V1 and its sound on A1, linked; A's sound is cut at the insert point
+    and moved with its picture, so A's sound after the insert still lines up with A's picture."""
+    ids = _bin_project(home, "binC")
+    E.place("binC", ids["Shot B"], 0, 1, "insert", 2.0)
+    v = E.view(E._log(E._dir("binC")).doc)
+    rows = {t["id"]: sorted(((i["at"], round(i["dur"], 3), i.get("file")) for i in t["items"]), key=lambda r: r[0]) for t in v["tracks"] if t["id"] in ("V1", "A1")}
+    assert [r[:2] for r in rows["V1"]] == [(0.0, 2.0), (2.0, 1.0), (3.0, 2.0)]
+    assert [r[:2] for r in rows["A1"]] == [(0.0, 2.0), (2.0, 1.0), (3.0, 2.0)]
+    assert rows["V1"][1][2] == rows["A1"][1][2]  # the inserted sound is B's own
+
+
+def test_three_point_edits_are_frame_exact_and_refuse_nonsense(home):
+    ids = _bin_project(home, "binD")
+    E.place("binD", ids["Shot B"], 0.51, 1.49, "overwrite", 1.0)  # snaps to B's 30 fps grid
+    doc = E._log(E._dir("binD")).doc
+    clip = next(i for t in doc["tracks"] for i in t["items"] if i.get("media") == ids["Shot B"] and t["role"] == "main")
+    frame = T.TICK_RATE // 30
+    assert clip["src"][0] % frame == 0 and clip["src"][1] % frame == 0
+    with pytest.raises(E.EditorError):
+        E.place("binD", ids["Shot B"], 1.0, 1.0, "insert", 0)  # empty range
+    with pytest.raises(E.EditorError):
+        E.place("binD", "nope", 0, 1, "append")
+    with pytest.raises(E.EditorError):
+        E.place("binD", ids["Shot B"], 0, 1, "sideways", 0)
+
+
+def test_the_desk_takes_a_video_upload_into_the_bin(desk, home):
+    import http.client
+
+    E.create("demo")
+    clip = _flat(home, "up.mp4", 120)
+    data = clip.read_bytes()
+    c = http.client.HTTPConnection("127.0.0.1", desk, timeout=30)
+    c.request("POST", "/api/editor/demo/upload?name=Upload%20one.mp4", body=data,
+              headers={"Host": f"127.0.0.1:{desk}", "Content-Type": "application/octet-stream", "Content-Length": str(len(data))})
+    r = c.getresponse()
+    res = json.loads(r.read())
+    assert r.status == 200, res
+    names = [m["name"] for m in res["project"]["bin"]]
+    assert "Upload one" in names
+    # Same route from another site's page: refused before a byte is stored.
+    c = http.client.HTTPConnection("127.0.0.1", desk, timeout=30)
+    c.request("POST", "/api/editor/demo/upload?name=x.mp4", body=data,
+              headers={"Host": f"127.0.0.1:{desk}", "Origin": "https://evil.example", "Content-Type": "application/octet-stream",
+                       "Content-Length": str(len(data))})
+    assert c.getresponse().status == 403
+    # Not a video: refused.
+    c = http.client.HTTPConnection("127.0.0.1", desk, timeout=30)
+    c.request("POST", "/api/editor/demo/upload?name=notes.txt", body=b"hello",
+              headers={"Host": f"127.0.0.1:{desk}", "Content-Type": "application/octet-stream", "Content-Length": "5"})
+    assert c.getresponse().status == 415
+    # And octet-stream is still refused on every other write.
+    c = http.client.HTTPConnection("127.0.0.1", desk, timeout=30)
+    c.request("POST", "/api/editor/demo", body=b"{}",
+              headers={"Host": f"127.0.0.1:{desk}", "Content-Type": "application/octet-stream", "Content-Length": "2"})
+    assert c.getresponse().status == 415

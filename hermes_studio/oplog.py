@@ -815,6 +815,36 @@ def op_set_canvas(ctx: _Ctx, a: dict) -> list[dict]:
     return [{"op": "set_canvas", "width": old[0], "height": old[1]}]
 
 
+def op_add_media(ctx: _Ctx, a: dict) -> list[dict]:
+    """Put a file in the project's media table (the bin). The validator checks the entry; the
+    inverse removes it again, so an import is undoable like any edit."""
+    mid = a["id"]
+    if not (isinstance(mid, str) and T.ID_RE.fullmatch(mid)):
+        raise _OpError("bad_id", "a media id is a short name", "id")
+    if mid in ctx.taken(ctx.doc):
+        raise _OpError("duplicate_id", f"id {mid!r} is already used", "id")
+    ctx.not_reused(mid, "id")
+    entry = {"path": a["path"], "dur": a["dur"], "fps": a.get("fps")}
+    for k in ("name", "audio"):
+        if k in a:
+            entry[k] = a[k]
+    ctx.doc["media"][mid] = entry
+    return [{"op": "remove_media", "id": mid}]
+
+
+def op_remove_media(ctx: _Ctx, a: dict) -> list[dict]:
+    """Inverse of add_media. Refused while any clip still uses the file."""
+    mid = a["id"]
+    if mid not in ctx.doc["media"]:
+        raise _OpError("bad_arg", f"no media {mid!r}", "id")
+    for tr in ctx.doc["tracks"]:
+        for it in tr["items"]:
+            if it.get("media") == mid:
+                raise _OpError("bad_arg", f"{mid!r} is still used by {it['id']!r}", "id")
+    old = ctx.doc["media"].pop(mid)
+    return [{"op": "add_media", "id": mid, **copy.deepcopy(old)}]
+
+
 def op_set_track(ctx: _Ctx, a: dict) -> list[dict]:
     """An audio track's mixer strip: ``mute``, ``solo`` (booleans) and ``gain`` ([num, den], 0..4).
     Only the fields given change. A default value (false, false, [1, 1]) removes the field, so a
@@ -924,6 +954,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
     "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
+    "add_media": (op_add_media, frozenset({"id", "path", "dur"}), frozenset({"fps", "name", "audio"})),
     "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain"})),
     "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur", "kind"})),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style"})),
@@ -943,6 +974,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
 }
 INTERNAL_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_fields": (op_set_fields, frozenset({"id"}), frozenset({"set", "unset"})),
+    "remove_media": (op_remove_media, frozenset({"id"}), frozenset()),
     "shift_items": (op_shift_items, frozenset({"ids", "by"}), frozenset()),
     "delete_item": (op_delete_item, frozenset({"id"}), frozenset()),
     "insert_item": (op_insert_item, frozenset({"track", "index", "item"}), frozenset()),

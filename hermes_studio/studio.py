@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import os
 import queue
 import threading
@@ -36,6 +37,7 @@ PORT_DEFAULT = 3870
 # - Clickjacking / sniffing / injection: CSP, frame-ancestors none, nosniff, no referrer.
 # - Oversized bodies: 1 MB cap.
 MAX_BODY = 1024 * 1024
+MAX_UPLOAD = 16 * 1024 ** 3  # one imported video file, streamed to disk
 MAX_IMAGE_BODY = 32 * 1024 * 1024  # design uploads + exported pages (base64 in JSON)
 DESIGN_STATIC = {  # fixed names only; nothing derived from the request path is opened
     "fabric.min.js": ("vendor/fabric.min.js", "text/javascript; charset=utf-8"),
@@ -270,8 +272,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
-    def _guard(self, write: bool) -> bool:
-        """True if the request may go on. Refuses and answers otherwise."""
+    def _guard(self, write: bool, raw_ok: bool = False) -> bool:
+        """True if the request may go on. Refuses and answers otherwise. ``raw_ok`` lets one
+        route (a media upload) take application/octet-stream; the Origin check still holds, and
+        a cross-site form can't send that type without a preflight we never answer."""
         if not host_allowed(self.headers.get("Host")):
             self._refuse(421, "host not allowed")
             return False
@@ -280,7 +284,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self._refuse(403, "cross-origin request refused")
                 return False
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype != "application/json":
+            if ctype != "application/json" and not (raw_ok and ctype == "application/octet-stream"):
                 self._refuse(415, "Content-Type must be application/json")
                 return False
         return True
@@ -478,6 +482,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        up = urlparse(self.path).path
+        if up.startswith("/api/editor/") and up.endswith("/upload") and up.count("/") == 4:
+            if not self._guard(write=True, raw_ok=True):
+                return
+            return self._editor_upload(up)
         if not self._guard(write=True):
             return
         try:
@@ -770,6 +779,49 @@ class StudioHandler(BaseHTTPRequestHandler):
         except editor.EditorError as exc:
             return _json(self, 404, {"ok": False, "error": str(exc)})
 
+    def _editor_upload(self, path: str) -> None:
+        """A video file into the project's bin: the raw body, streamed to disk (never held in
+        memory), then probed and added with an undoable add_media op. ?name= labels it."""
+        from hermes_studio import editor
+
+        pid = path.split("/")[3]
+        q = parse_qs(urlparse(self.path).query)
+        name = (q.get("name") or ["clip.mp4"])[0][:120]
+        ext = Path(name).suffix.lower()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_UPLOAD:
+            return _json(self, 413 if length > MAX_UPLOAD else 400,
+                         {"ok": False, "error": f"send one video file up to {MAX_UPLOAD // (1024 ** 3)} GB"})
+        if ext not in editor.MEDIA_TYPES or not editor.MEDIA_TYPES[ext].startswith("video/"):
+            return _json(self, 415, {"ok": False, "error": "import a video file (mp4, mov, m4v, webm, mkv)"})
+        try:
+            folder = editor._dir(pid)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        if not (folder / "base.json").exists():
+            return _json(self, 404, {"ok": False, "error": "no such project"})
+        tmp = folder / f".upload-{secrets.token_hex(4)}{ext}"
+        try:
+            left = length
+            with open(tmp, "wb") as out:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    left -= len(chunk)
+            if left:
+                return _json(self, 400, {"ok": False, "error": "the upload stopped short"})
+            project = editor.import_media(pid, tmp, Path(name).stem, move=True)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        finally:
+            tmp.unlink(missing_ok=True)
+        return _json(self, 200, {"ok": True, "project": project})
+
     def _editor_post(self, path: str) -> None:
         from hermes_studio import editor
 
@@ -829,6 +881,11 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
             elif op == "speed_keys":
                 project = editor.set_speed_keys(pid, str(body.get("id") or ""), body.get("keys"))
+            elif op == "place":
+                at = body.get("at")
+                project = editor.place(pid, str(body.get("media") or ""), _num(body, "src_in", 0.0),
+                                       _num(body, "src_out", 0.0), str(body.get("mode") or ""),
+                                       None if at is None else _num(body, "at", 0.0))
             elif op == "freeze":
                 project = editor.freeze(pid, str(body.get("id") or ""), _num(body, "at", 0.0), _num(body, "hold", 2.0))
             elif op == "reverse":

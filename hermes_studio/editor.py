@@ -296,6 +296,15 @@ def view(doc: dict) -> dict:
         # timecode (30000/1001 stays exact; a float would drift over an hour).
         "fps": list(doc.get("fps") or [30, 1]),
         "tracks": tracks,
+        # The bin: every file in the media table, in import order, with what the source viewer
+        # needs (file name to stream, length, rate, sound) and how many clips use it.
+        "bin": [
+            {"id": mid, "name": m.get("name") or Path(str(m.get("path") or mid)).stem,
+             "file": Path(str(m.get("path") or "")).name, "dur": round(m["dur"] / rate, 4),
+             "fps": list(m.get("fps") or [30, 1]), "audio": bool(m.get("audio", True)),
+             "uses": sum(1 for tr in doc["tracks"] for it in tr["items"] if it.get("media") == mid)}
+            for mid, m in (doc.get("media") or {}).items() if isinstance(m, dict) and isinstance(m.get("dur"), int)
+        ],
         # Timeline markers, in seconds, in time order. The op log only appends (an undo's inverse
         # must be able to put a marker back where it was), so stored order is insertion order;
         # this is the order clients and the ruler need.
@@ -794,6 +803,205 @@ def freeze(pid: str, item_id: str, at_seconds: float, hold_seconds: float = 2.0)
     ops.append({"op": "insert_clip", "track": tr_of["id"], "id": still, "media": me["media"],
                 "src": [src, src + frame], "at": cut, "fade_in": 0, "fade_out": 0, "props": props})
     return apply(pid, ops, f"Freeze frame {hold_seconds:g}s")
+
+
+def _probe(path: Path) -> dict:
+    """Length, frame rate and whether there is sound, from ffprobe. Refuses what isn't a video."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration:stream=codec_type,avg_frame_rate,r_frame_rate",
+         "-of", "json", str(path)], capture_output=True, text=True, timeout=60)
+    try:
+        info = json.loads(r.stdout or "{}")
+    except ValueError:
+        info = {}
+    streams = info.get("streams") or []
+    video = next((x for x in streams if x.get("codec_type") == "video"), None)
+    if r.returncode != 0 or video is None:
+        raise EditorError("that file has no picture the editor can read")
+    try:
+        dur = float((info.get("format") or {}).get("duration") or 0)
+    except ValueError:
+        dur = 0.0
+    if dur <= 0:
+        raise EditorError("that file has no length")
+    fps = [30, 1]
+    for key in ("avg_frame_rate", "r_frame_rate"):
+        num, _, den = str(video.get(key) or "").partition("/")
+        try:
+            n, d = int(num), int(den or 1)
+        except ValueError:
+            continue
+        if n > 0 and d > 0 and 1 <= n / d <= 240:
+            fps = [n, d]
+            break
+    return {"dur": T.seconds_to_ticks(dur), "fps": fps, "audio": any(x.get("codec_type") == "audio" for x in streams)}
+
+
+def import_media(pid: str, src: Path, name: str | None = None, *, move: bool = False) -> dict:
+    """Bring a video into the project's bin: copy (or move) it under media/, probe it, and add it
+    to the media table with an add_media op -- so the import shows in history and undoes.
+    Nothing is placed on the timeline; that is what insert / overwrite / append are for."""
+    folder = _dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    src = Path(src)
+    if not src.is_file():
+        raise EditorError("no such file")
+    ext = src.suffix.lower()
+    if ext not in MEDIA_TYPES or not MEDIA_TYPES[ext].startswith("video/"):
+        raise EditorError("import a video file (mp4, mov, m4v, webm, mkv)")
+    info = _probe(src)
+    label = " ".join((name or src.stem).split())[:80] or "clip"
+    stem = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in Path(label).stem)[:40].strip("-") or "clip"
+    with _locked(folder):
+        (folder / "media").mkdir(exist_ok=True)
+        dest = folder / "media" / f"{stem}{ext}"
+        n = 2
+        while dest.exists():
+            dest = folder / "media" / f"{stem}-{n}{ext}"
+            n += 1
+        tmp = dest.with_name("." + dest.name + ".part")
+        if move:
+            shutil.move(str(src), tmp)
+        else:
+            shutil.copyfile(src, tmp)
+        tmp.replace(dest)
+    doc = _log(folder).doc
+    n, mid = 1, None
+    taken = set(T._all_ids(doc))
+    while mid is None or mid in taken:
+        mid = f"m{secrets.token_hex(3)}"
+    try:
+        return apply(pid, [{"op": "add_media", "id": mid, "path": f"media/{dest.name}", "dur": info["dur"],
+                            "fps": info["fps"], "name": label, "audio": info["audio"]}], f"Import {label}")
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+
+
+def _main_track(doc: dict) -> dict:
+    tr = next((t for t in doc["tracks"] if t.get("role") == "main"), None)
+    if tr is None:
+        raise EditorError("this cut has no main track")
+    return tr
+
+
+def _track_end(tr: dict) -> int:
+    return max((it["at"] + T.item_duration(it) for it in tr["items"] if "at" in it and it.get("type") != "transition"), default=0)
+
+
+def place(pid: str, media_id: str, src_in: float, src_out: float, mode: str, at: float | None = None) -> dict:
+    """Three-point editing, as in Final Cut and Resolve: a source range [src_in, src_out) of a bin
+    clip goes onto the timeline at ``at`` (the playhead or the timeline In mark).
+
+    - ``insert`` (Final Cut W, Resolve F9): everything at or after ``at`` moves out by the clip's
+      length, on every track; items under ``at`` are cut there. Nothing is covered.
+    - ``overwrite`` (Final Cut D, Resolve F10): the clip replaces what is under it on the main
+      track and the sound track; the cut's length only grows if it runs past the end.
+    - ``append`` (Final Cut E, Resolve F12): onto the end of the main track; ``at`` is ignored.
+
+    The picture goes on the main track and, if the file has sound, its sound on the first voice
+    track, linked (same source range and start, so retimes carry across). One undo step."""
+    if mode not in ("insert", "overwrite", "append"):
+        raise EditorError("mode is insert, overwrite or append")
+    doc = _log(_dir(pid)).doc
+    m = doc["media"].get(media_id)
+    if not isinstance(m, dict):
+        raise EditorError(f"no media {media_id!r} in the bin")
+    fps = m.get("fps") or [30, 1]
+    frame = Fraction(T.TICK_RATE * fps[1], fps[0])
+
+    def snap(sec: float) -> int:
+        return int(round(Fraction(T.seconds_to_ticks(float(sec))) / frame) * frame)
+
+    i0, o1 = max(0, snap(src_in)), min(m["dur"], snap(src_out))
+    if o1 - i0 < int(frame):
+        raise EditorError("mark a source range at least one frame long")
+    length = o1 - i0
+    main = _main_track(doc)
+    sound = next((t for t in doc["tracks"] if t.get("role") == "voice"), None) if m.get("audio") else None
+    if mode == "append":
+        cut = _track_end(main)
+    else:
+        if at is None:
+            raise EditorError("place needs a timeline point")
+        cut = max(0, T.seconds_to_ticks(float(at)))
+        end = _track_end(main)
+        if cut > end:
+            cut = end  # past the end, an edit lands at the end (no gap made silently)
+
+    tag = secrets.token_hex(3)
+    ops: list[dict] = []
+    gone_transitions: set[str] = set()
+
+    def cut_at(t: int, tracks: list[dict], suffix: str) -> dict[str, tuple[str, str]]:
+        """Split every item strictly straddling t on these tracks. Returns {old: (left, right)}."""
+        out = {}
+        for tr in tracks:
+            for it in tr["items"]:
+                if it.get("type") == "transition" or "at" not in it:
+                    continue
+                s0, s1 = it["at"], it["at"] + T.item_duration(it)
+                if s0 < t < s1:
+                    a, b = f"{it['id']}{suffix}{tag}l", f"{it['id']}{suffix}{tag}r"
+                    ops.append({"op": "split_clip", "id": it["id"], "at": t, "ids": [a, b]})
+                    out[it["id"]] = (a, b)
+        return out
+
+    def drop_seams(t: int, tracks: list[dict]) -> None:
+        # A dissolve whose seam is at t can't survive something coming between its two clips.
+        ids = {it["id"]: it for tr in tracks for it in tr["items"]}
+        for tr in tracks:
+            for x in tr["items"]:
+                if x.get("type") == "transition" and x["id"] not in gone_transitions:
+                    a_id, b_id = x["between"]
+                    if a_id in ids and "at" in ids[b_id] and ids[b_id]["at"] == t:
+                        ops.append({"op": "set_transition", "between": [a_id, b_id], "dur": 0})
+                        gone_transitions.add(x["id"])
+
+    if mode == "insert":
+        drop_seams(cut, doc["tracks"])
+        pieces = cut_at(cut, doc["tracks"], "i")
+        later = [it["id"] for tr in doc["tracks"] for it in tr["items"]
+                 if it.get("type") != "transition" and "at" in it and it["at"] >= cut]
+        later += [b for _, b in pieces.values()]
+        if later:
+            ops.append({"op": "move_items", "ids": sorted(set(later)), "by": length})
+    elif mode == "overwrite":
+        lanes = [main] + ([sound] if sound else [])
+        drop_seams(cut, lanes)
+        drop_seams(cut + length, lanes)
+        left = cut_at(cut, lanes, "o")
+        # Items now covered: the right-hand pieces of the first cut, plus anything starting in
+        # the range. A piece that also runs past the end of the range is cut there too.
+        covered = []
+        for tr in lanes:
+            for it in tr["items"]:
+                if it.get("type") == "transition" or "at" not in it:
+                    continue
+                s0, s1 = it["at"], it["at"] + T.item_duration(it)
+                rid = left[it["id"]][1] if it["id"] in left else it["id"]
+                if it["id"] in left:
+                    s0 = cut
+                if s1 <= cut or s0 >= cut + length:
+                    continue
+                if s1 > cut + length:
+                    keep = f"{it['id']}e{tag}"
+                    ops.append({"op": "split_clip", "id": rid, "at": cut + length, "ids": [f"{it['id']}c{tag}", keep]})
+                    covered.append(f"{it['id']}c{tag}")
+                else:
+                    covered.append(rid)
+        if covered:
+            ops.append({"op": "delete_items", "ids": covered})
+    vid = f"v{tag}"
+    ops.append({"op": "insert_clip", "track": main["id"], "id": vid, "media": media_id, "src": [i0, o1],
+                "at": cut, "fade_in": 0, "fade_out": 0})
+    if sound is not None:
+        ops.append({"op": "insert_clip", "track": sound["id"], "id": f"s{tag}", "media": media_id, "src": [i0, o1],
+                    "at": cut, "fade_in": 0, "fade_out": 0})
+    label = m.get("name") or media_id
+    word = {"insert": "Insert", "overwrite": "Overwrite", "append": "Append"}[mode]
+    return apply(pid, ops, f"{word} {label}")
 
 
 def set_look(pid: str, item_id: str, look: str | None) -> dict:
