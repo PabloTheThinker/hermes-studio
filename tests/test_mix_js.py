@@ -44,6 +44,9 @@ class AC {
   resume() {}
   decodeAudioData() { return Promise.resolve(fakeBuf(1, 3000, 100)); }  // 30 s at 100 Hz, sample i = i
   createBuffer(ch, n, sr) { return fakeBuf(ch, n, sr, true); }
+  createChannelSplitter() { return new Node(); }
+  createChannelMerger() { return new Node(); }
+  createStereoPanner() { return new Gain(); }
 }
 global.window = { AudioContext: AC };
 global.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
@@ -59,15 +62,31 @@ const speed = Number(process.argv[5] || 1);
   m.start(doc, play, speed);
   const ctx = AC.last;
   const clips = ctx.sources.map((s) => {
-    // source -> fade gain -> [envelope gain] -> track strip (whose output is the meter)
-    const clipGain = s.out[0];
-    let node = clipGain.out[0], envelope = null;
-    if (!(node.out[0] instanceof Analyser)) { envelope = node.gain.events; node = node.out[0]; }
-    return { first: s.buffer && s.buffer.getChannelData ? s.buffer.getChannelData(0)[0] : null, start: s.started, rate: +s.playbackRate.value.toFixed(4), rates: s.playbackRate.events, env: clipGain.gain.events, envelope, strip: node.gain.events };
+    // The clip's own gains, in order: the fade envelope, then optional ducking, then an
+    // optional volume envelope. The strip fader and the pan gains belong to the track and are
+    // reported separately from m.strips().
+    // Each stage is tagged __role at build time, so read them by name rather than by position.
+    const byRole = {};
+    let n = s;
+    while (n && n.out.length) {
+      n = n.out[0];
+      if (n.gain && n.gain.events) { if (n.__role) byRole[n.__role] = n.gain.events; } else break;
+    }
+    return {
+      first: s.buffer && s.buffer.getChannelData ? s.buffer.getChannelData(0)[0] : null,
+      start: s.started, rate: +s.playbackRate.value.toFixed(4), rates: s.playbackRate.events,
+      env: byRole.clip, duck: byRole.duck || null, envelope: byRole.envelope || null,
+      own: Object.keys(byRole),
+    };
   });
   const now0 = m.now();
   ctx.currentTime += 1.5;
-  console.log(JSON.stringify({ ready, MIX: window.HSMix.MIX, clips, now0, now15: +m.now().toFixed(4) }));
+  const strips = m.strips();
+  // The strip fader for each audio track, so a test can read "what the track's fader did"
+  // without walking the graph (the two pan gains now sit after it, on the way to the meter).
+  const fader = Object.fromEntries(strips.map(([id, st]) => [id, st.fader]));
+  const panStrips = Object.fromEntries(strips.map(([id, st]) => [id, { panL: st.panL, panR: st.panR, duck: st.duck }]));
+  console.log(JSON.stringify({ ready, MIX: window.HSMix.MIX, fader, panStrips, clips, pan: window.HSMix.panGains ? [window.HSMix.panGains(-1), window.HSMix.panGains(0), window.HSMix.panGains(1), window.HSMix.panGains(0.5)] : null, clips, now0, now15: +m.now().toFixed(4) }));
 })();
 """
 
@@ -143,7 +162,8 @@ def test_a_clip_that_already_ended_is_not_scheduled(tmp_path):
 )
 def test_track_strips_follow_mute_solo_and_gain(tmp_path, a1, a2, want):
     out = _run(tmp_path, _doc(a1=a1, a2=a2, voice=[_clip("a1", 0, 0, 4)], music=[_clip("m1", 0, 0, 4)]), 0)
-    strips = [c["strip"][-1][1] for c in out["clips"]]
+    # Read the faders from the strips map (voice A1, music A2), in clip order.
+    strips = [out["fader"]["A1"][-1][1], out["fader"]["A2"][-1][1]]
     assert tuple(strips) == want
 
 
@@ -303,3 +323,32 @@ def test_srctime_reads_a_reversed_clip_from_its_out_point(tmp_path):
     py = [(item["src"][0] + T.source_offset(item, int(t * s))) / s for t in ts]
     assert js == pytest.approx(py, abs=2e-3)
     assert js[0] == pytest.approx(9.0, abs=2e-3) and js[2] == pytest.approx(7.0, abs=2e-3)
+
+
+# ---- M4: pan and ducking, the same law in both players --------------------------------------
+
+def test_pan_matches_the_render_and_ducking_rides_the_timeline_clock(tmp_path):
+    """panGains and the render's pan filter are one law, or a clip panned left in the preview
+    comes out of the export panned right; the ducking points are the render's own duck_env."""
+    got = _run(tmp_path, _doc(a2={"pan": [-1, 1], "duck": 9, "duck_env": [[0.7, 1.0], [1.0, 0.354813], [4.0, 0.354813], [4.3, 1.0]]},
+                             music=[_clip("m1", 0.0, 0.0, 6.0)]), 0.0)
+    pan = {tuple(round(x, 6) for x in p): i for i, p in enumerate([[-1.0, 0.0], [0.0, 1.0], [1.0, 0.0], [0.5, 1.0]])}
+    hard_left, centre, hard_right, half_right = (got["pan"][i] for i in (0, 1, 2, 3))
+    # cos(pi/2) is 6.1e-17, not 0 -- within a hair of silent is silent.
+    assert hard_left[0] == 1.0 and hard_left[1] < 1e-9, hard_left
+    assert hard_right[1] == 1.0 and hard_right[0] < 1e-9, hard_right
+    assert centre == [1.0, 1.0]  # unity at the middle: parking the knob changes nothing
+    assert half_right[0] < half_right[1] and half_right[0] > 0  # cos curve, neither side dead
+    # The render's filter writes the same two numbers for the same track balance.
+    for p, want in ((-1.0, hard_left), (1.0, hard_right), (0.5, half_right)):
+        expr = R._pan_filter(p)
+        assert f"FL={want[0]:.6f}*c0" in expr and f"FR={want[1]:.6f}*c1" in expr, (p, expr)
+    # The music clip's ducking gain: 1 before the voice, the dip through it, 1 after.
+    duck = got["clips"][0]["duck"]
+    assert duck and duck[0][:2] == ["set", 1.0], duck[:1]
+    vals = [e for e in duck if e[0] in ("set", "ramp")]
+    dipped = [e for e in vals if abs(e[1] - 0.354813) < 1e-3]
+    assert dipped and vals[-1][1] == 1.0, (vals[:3], vals[-1])
+    # And a track with no duck_env gets no ducking node at all.
+    plain = _run(tmp_path, _doc(music=[_clip("m1", 0.0, 0.0, 6.0)]), 0.0)
+    assert plain["clips"][0]["duck"] is None

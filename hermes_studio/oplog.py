@@ -857,9 +857,9 @@ def op_set_track(ctx: _Ctx, a: dict) -> list[dict]:
     Only the fields given change. A default value (false, false, [1, 1]) removes the field, so a
     track set back to unity stores and hashes exactly as one that was never touched. The value
     itself is checked by the validator after the op, under its own rule ids."""
-    given = [k for k in ("mute", "solo", "gain") if k in a]
+    given = [k for k in ("mute", "solo", "gain", "pan", "duck") if k in a]
     if not given:
-        raise _OpError("missing_arg", "set_track needs 'mute', 'solo' and/or 'gain'")
+        raise _OpError("missing_arg", "set_track needs 'mute', 'solo', 'gain', 'pan' and/or 'duck'")
     _, tr = _track(ctx.doc, a["id"], "id")
     if tr["role"] not in ("voice", "music"):
         raise _OpError("track_audio_only", f"{tr['id']} is a {tr['role']} track; only voice and music tracks have a mixer", "id")
@@ -962,7 +962,7 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
     "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),
     "add_media": (op_add_media, frozenset({"id", "path", "dur"}), frozenset({"fps", "name", "audio"})),
-    "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain"})),
+    "set_track": (op_set_track, frozenset({"id"}), frozenset({"mute", "solo", "gain", "pan", "duck"})),
     "set_transition": (op_set_transition, frozenset({"between"}), frozenset({"id", "dur", "kind"})),
     "edit_text": (op_edit_text, frozenset({"id"}), frozenset({"text", "style", "title"})),
     "add_text": (

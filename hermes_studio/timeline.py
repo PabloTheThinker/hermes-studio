@@ -54,8 +54,12 @@ TRACK_KEYS = {"id", "role", "items"}
 # Audio tracks only: the track's mixer strip. mute/solo are booleans, gain a [num, den] ratio
 # 0..4 like a clip's volume. Defaults (false, false, [1, 1]) are dropped by normalize(), so a
 # track that never touched its mixer hashes exactly as it did before these fields existed.
-TRACK_OPTIONAL = {"mute", "solo", "gain"}
-TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1]}
+TRACK_OPTIONAL = {"mute", "solo", "gain", "pan", "duck"}
+# pan: stereo balance [num, den] in -1..1 (Web Audio's StereoPanner rule, both players).
+# duck: on a music track, dB the music dips wherever a voice clip sounds (0..DUCK_MAX_DB).
+TRACK_DEFAULTS: dict[str, Any] = {"mute": False, "solo": False, "gain": [1, 1], "pan": [0, 1], "duck": 0}
+DUCK_MAX_DB = 30
+DUCK_RAMP_S = 0.3  # the dip fades in this long before a voice clip and out this long after
 CLIP_KEYS = {"id", "type", "media", "src", "fade_in", "fade_out"}
 TEXT_KEYS = {"id", "type", "dur", "text", "style", "fade_in", "fade_out"}
 # title: a designed title (titles.py) -- drawn to an image instead of burned in as a caption.
@@ -113,6 +117,7 @@ RULES = (
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
     "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
+    "bad_hold", "bad_title", "duck_music_only",
 )
 
 
@@ -168,7 +173,10 @@ _HINTS = {
     "overlap": "Clips on main and voice tracks may only overlap through an xfade transition.",
     "anchor_not_allowed": "Only text items and clips on music tracks can be anchored.",
     "track_order": "List tracks as text, main, voice, music (text highest number first, audio lowest first).",
-    "track_audio_only": "mute, solo and gain belong to voice and music tracks; text and the main track have none.",
+    "track_audio_only": "mute, solo, gain, pan and duck belong to voice and music tracks; text and the main track have none.",
+    "duck_music_only": "Only a music track ducks (under the voice): duck is whole dB, 0..30.",
+    "bad_hold": "A freeze frame can't also ramp or reverse.",
+    "bad_title": "A title's layers must be exactly what titles.make() builds from its own fields.",
 }
 
 
@@ -453,6 +461,13 @@ def _collect(doc: Any, *, check_hash: bool) -> list[Problem]:
             elif k in ("mute", "solo"):
                 if not isinstance(tr[k], bool):
                     c.bad("wrong_type", _j(tp, k), f"'{k}' must be true or false")
+            elif k == "pan":
+                c.ratio(tr[k], _j(tp, k), Fraction(-1), Fraction(1))
+            elif k == "duck":
+                if role != "music":
+                    c.bad("duck_music_only", _j(tp, k), "only a music track ducks (under the voice)")
+                elif not isinstance(tr[k], int) or isinstance(tr[k], bool) or not 0 <= tr[k] <= DUCK_MAX_DB:
+                    c.bad("out_of_range", _j(tp, k), f"duck is whole dB, 0..{DUCK_MAX_DB}")
             else:
                 c.ratio(tr[k], _j(tp, k), Fraction(0), VOLUME_MAX)
         if not isinstance(tr["items"], list):
@@ -1240,3 +1255,49 @@ def write_otio(doc: dict, path: str) -> str:
 
     otio.adapters.write_to_file(to_otio(doc), str(path))
     return str(path)
+
+
+def duck_envelope(doc: dict, track: dict) -> list[tuple[float, float]] | None:
+    """The music track's ducking as gain points [(timeline seconds, gain)], linear between them
+    and 1 outside, or None when it doesn't duck. The one rule both players use (the render as a
+    volume expression, the page as gain automation), like Premiere's auto-duck keyframes:
+
+    the music dips by ``duck`` dB over every stretch where a clip on an audible voice track
+    sounds, reaching the dip DUCK_RAMP_S before the voice starts and rising over DUCK_RAMP_S
+    after it ends. Stretches closer than two ramps merge, so the music never bobs up between
+    two lines. A file known to have no sound (media ``audio`` false) doesn't duck anything.
+    """
+    db = track.get("duck") or 0
+    if track.get("role") != "music" or not db:
+        return None
+    rate = doc.get("tick_rate") or TICK_RATE
+    tracks = [t for t in doc["tracks"] if t.get("role") in ("voice", "music")]
+    solo = any(t.get("solo") for t in tracks)
+    media = doc.get("media") or {}
+    spans = []
+    for t in tracks:
+        if t.get("role") != "voice" or t.get("mute") or (solo and not t.get("solo")):
+            continue
+        if _rational(t.get("gain", [1, 1])) == 0:
+            continue
+        for it in t["items"]:
+            if it.get("type") != "clip" or "at" not in it:
+                continue
+            if (media.get(it.get("media") or "") or {}).get("audio") is False:
+                continue
+            a = it["at"] / rate
+            spans.append([a, a + item_duration(it) / rate])
+    if not spans:
+        return None
+    spans.sort()
+    merged = [spans[0]]
+    for a, b in spans[1:]:
+        if a - DUCK_RAMP_S <= merged[-1][1] + DUCK_RAMP_S:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    g = round(10 ** (-db / 20), 6)
+    pts: list[tuple[float, float]] = []
+    for a, b in merged:
+        pts += [(round(a - DUCK_RAMP_S, 6), 1.0), (round(a, 6), g), (round(b, 6), g), (round(b + DUCK_RAMP_S, 6), 1.0)]
+    return pts

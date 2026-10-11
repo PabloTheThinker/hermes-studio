@@ -6,7 +6,9 @@
  *     time map as timeline.source_offset);
  *   - its level is clip volume x the role weight (voice 1.0, music 0.35 -- render MIX);
  *   - fade_in / fade_out are linear ramps (ffmpeg afade's default curve);
- *   - each audio track is a strip: gain, mute, solo (any solo -> only soloed tracks play);
+ *   - each audio track is a strip: gain, pan (the NLE balance law), ducking under the voice
+ *     (the same point list the render reads, duck_env, from the view), mute, solo
+ *     (any solo -> only soloed tracks play);
  *   - a limiter on the master catches stacked peaks (render: alimiter=limit=0.95).
  * The one thing it does not copy is loudnorm (a whole-file broadcast leveler), so the preview's
  * overall loudness can sit below the render's; the balance between tracks is the same.
@@ -23,6 +25,32 @@
   const LEAD = 0.06; // seconds between start() and the first sample, so scheduling never lands late
 
   function isAudio(tr) { return tr.role === "voice" || tr.role === "music"; }
+
+  // The track balance, as the two channel gains the render's pan filter writes. Equal-power at
+  // the edges, unity at the centre (Resolve's Pan / FCP's Balance): cos/sin of (p+1)pi/4 would
+  // be 0.707 on both sides at centre, which is 3 dB down for nothing, so a stereo track gets
+  // unity there and each side only starts to fall as it leaves the middle.
+  function panGains(p) {
+    const x = Math.max(-1, Math.min(1, p || 0));
+    const gl = x <= 0 ? 1 : Math.cos((x * Math.PI) / 2);
+    const gr = x >= 0 ? 1 : Math.cos((-x * Math.PI) / 2);
+    return [gl, gr];
+  }
+
+  // The ducking gain at timeline second t: linear between the published points, 1 outside.
+  // The same list the render turns into a volume expression, so preview and export dip together.
+  function duckAt(env, t) {
+    if (!env || !env.length) return 1;
+    if (t <= env[0][0]) return env[0][1];
+    for (let i = 1; i < env.length; i++) {
+      if (t <= env[i][0]) {
+        const [t0, g0] = env[i - 1], [t1, g1] = env[i];
+        if (t1 <= t0) return g1;
+        return g0 + ((g1 - g0) * (t - t0)) / (t1 - t0);
+      }
+    }
+    return env[env.length - 1][1];
+  }
 
   // ---- retime: the one time map (timeline.source_offset / item_duration), shared with the page.
   // `into` is seconds into the clip on the TIMELINE; the answer is source seconds from src_in.
@@ -126,7 +154,7 @@
   function create() {
     let ctx = null, master = null;
     const buffers = new Map(); // file -> AudioBuffer | "wait" | null (failed / too long)
-    const strips = new Map(); // track id -> { gain, meter, data }
+    const strips = new Map(); // track id -> { gain, duckGain, split, gl, gr, pan, meter, data }
     let sources = [];
     let running = false, t0 = 0, p0 = 0, scope = "", rate = 1;
     let lastClock = -1, lastMove = 0; // the audio clock's last reading, and when it last moved
@@ -197,26 +225,45 @@
       return true;
     }
 
+    // A strip: clip chains feed the fader, then the ducking dip, then the balance, then a
+    // post-fader meter -- Resolve's order, and the render's (clip level, duck, pan). Pan needs
+    // the channels apart: split, gain each side, merge. Both gains are set per schedule in
+    // start(), because the balance and the dip are constant for the whole play but the strip is
+    // rebuilt per play anyway.
     function strip(id) {
       let s = strips.get(id);
       if (!s) {
         const gain = ctx.createGain();
+        const duckGain = ctx.createGain();
+        const split = ctx.createChannelSplitter(2);
+        const gl = ctx.createGain(), gr = ctx.createGain();
+        const merge = ctx.createChannelMerger(2);
         const meter = ctx.createAnalyser();
         meter.fftSize = 1024;
-        gain.connect(meter).connect(master); // post-fader meter, like Resolve's track meters
-        s = { gain, meter, data: new Float32Array(meter.fftSize) };
+        gain.connect(duckGain).connect(split);
+        split.connect(gl, 0).connect(gr, 1);
+        gl.connect(merge, 0, 0);
+        gr.connect(merge, 0, 1);
+        merge.connect(meter).connect(master); // post-fader meter, like Resolve's track meters
+        s = { gain, duckGain, split, gl, gr, meter, data: new Float32Array(meter.fftSize) };
         strips.set(id, s);
       }
       return s;
     }
 
-    // Mute / solo / gain move live, with a 10 ms glide so a click never pops.
+    // Mute / solo / gain move live, with a 10 ms glide so a click never pops. Pan and the
+    // ducking depth are set here too: both are constant while a mix runs, and the dip itself is
+    // scheduled per clip in start() against the timeline clock.
     function mixer(doc) {
       if (!ctx) return;
       for (const tr of doc.tracks) {
         if (!isAudio(tr)) continue;
+        const s = strip(tr.id);
         const g = audible(doc, tr) ? (tr.gain == null ? 1 : tr.gain) : 0;
-        strip(tr.id).gain.gain.setTargetAtTime(g, ctx.currentTime, 0.01);
+        s.gain.gain.setTargetAtTime(g, ctx.currentTime, 0.01);
+        const [gl, gr] = panGains(tr.pan);
+        s.gl.gain.setTargetAtTime(gl, ctx.currentTime, 0.01);
+        s.gr.gain.setTargetAtTime(gr, ctx.currentTime, 0.01);
       }
     }
 
@@ -275,9 +322,13 @@
         const off = srcAt(c, into);
         const dur = span - off; // source seconds still to play
         const level = (c.volume == null ? 1 : c.volume) * (MIX[tr.role] || 1);
+        // A music clip carries its own ducking depth into its envelope's base level, so the dip
+        // is applied once and the clip's volume still scales around it (the render multiplies
+        // clip volume by the duck factor on the same stream).
         const fi = Math.min(c.fade_in || 0, L), fo = Math.min(c.fade_out || 0, L);
         const env = (u) => level * Math.max(0, Math.min(1, fi > 0 ? u / fi : 1, fo > 0 ? (L - u) / fo : 1));
         const g = ctx.createGain();
+        g.__role = "clip"; // for tests and debugging: which stage of the chain this is
         const at = (u) => when + (u - into) / rate; // clip-local timeline time -> context time
         g.gain.setValueAtTime(env(into), when);
         if (fi > 0 && into < fi) g.gain.linearRampToValueAtTime(env(fi), at(fi));
@@ -289,9 +340,29 @@
         // The volume envelope rides on a second gain after the fades: value at the start point,
         // then a linear ramp to each later key inside the clip; after the last key it holds.
         let tail = g;
+        // Ducking: the music dips under the voice by the track's depth, on the TIMELINE clock.
+        // The render writes the same points as one volume expression (render_timeline._duck_expr
+        // reads the same duck_env), so the dip is the same shape and the same depth in both.
+        const duckEnv = tr.duck_env;
+        if (duckEnv && duckEnv.length) {
+          const dg = ctx.createGain();
+          dg.__role = "duck";
+          const at0 = Math.max(0, c.at);
+          const segs = [[at0, duckAt(duckEnv, at0)]];
+          for (const [ta, ga] of duckEnv) if (ta > at0 && ta < c.at + L) segs.push([ta, ga]);
+          segs.push([c.at + L, duckAt(duckEnv, c.at + L)]);
+          dg.gain.setValueAtTime(segs[0][1], when);
+          for (let i = 1; i < segs.length; i++) {
+            const [ta, ga] = segs[i];
+            if (ta > segs[i - 1][0]) dg.gain.linearRampToValueAtTime(ga, when + (ta - c.at) / rate);
+          }
+          g.connect(dg);
+          tail = dg;
+        }
         const keys = Array.isArray(c.gain_keys) && c.gain_keys.length ? c.gain_keys : null;
         if (keys) {
           const env = ctx.createGain();
+          env.__role = "envelope";
           env.gain.setValueAtTime(envAt(keys, into), when);
           for (const k of keys) if (k.at > into && k.at <= L) env.gain.linearRampToValueAtTime(k.gain, at(k.at));
           g.connect(env);
@@ -355,8 +426,9 @@
     }
 
     return { unlock, load, ready, start, stop, now, waiting, mixer, levels, state,
+      strips() { return [...strips].map(([id, s]) => [id, { fader: s.gain.gain.events, duck: s.duckGain.gain.events, panL: s.gl.gain.events, panR: s.gr.gain.events }]); },
       get running() { return running; }, get context() { return ctx; } };
   }
 
-  window.HSMix = { create, MIX, envAt, srcAt, srcTime, tlAt, speedAt, keyTimes, lenOf };
+  window.HSMix = { create, MIX, panGains, duckAt, envAt, srcAt, srcTime, tlAt, speedAt, keyTimes, lenOf };
 })();

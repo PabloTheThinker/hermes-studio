@@ -2884,3 +2884,143 @@ def test_title_edits_name_what_changed_in_the_history(home):
     E.edit_title(pid, iid, text="New name")
     got = [e["summary"] for e in E.history(pid)][-3:]
     assert got == ["Move title: Name", "Title size + font: Name", "Title words: New name"], got
+
+
+# ---- M4: audio mixer (pan, ducking) ---------------------------------------------------------
+
+def _tone(home, name, freq=440, dur=6.0, ch=2):
+    """A black video with a steady tone on the sound, for level measurements. A .mp4 because the
+    bin imports video files; FLAC so the measurement is not the codec's. At -20 dBFS the mix
+    stays clear of the limiter, so what is measured is the mixer and nothing else."""
+    p = home / name
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c=black:s=160x120:r=25:d={dur}",
+                    "-f", "lavfi", "-i", f"sine=frequency={freq}:sample_rate=48000:duration={dur}",
+                    "-ac", str(ch), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                    "-c:a", "flac", "-shortest", str(p)], check=True)
+    return p
+
+
+def _mix_cut(home, pid):
+    """Voice on A1 (1 kHz, 1-4 s) and music on A2 (200 Hz, 0-6 s). Each is placed straight onto
+    its own audio track: place() always edits main+voice, which is right for a cut of picture
+    and wrong for a music bed."""
+    import json as _json
+
+    from hermes_studio import oplog as _O
+
+    voice, music = _tone(home, "v.mp4", 1000, 4.0), _tone(home, "m.mp4", 200, 6.0)
+    folder = E._dir(pid)
+    folder.mkdir(parents=True, exist_ok=True)
+    d = T.new_timeline(pid)
+    d, _ = T.stamp_hash(d)
+    (folder / "base.json").write_text(_json.dumps(d))
+    E._save_current(folder, _O.Oplog(d, path=folder / "oplog.jsonl").doc)
+    # A silent black plate for the picture (the bin imports video files only).
+    plate = home / "plate.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=0x282828:s=320x180:r=25:d=6",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(plate)], check=True)
+    E.import_media(pid, voice, "Voice")
+    E.import_media(pid, music, "Music")
+    E.import_media(pid, plate, "Plate")
+    bin_ = E.view(E._log(folder).doc)["bin"]
+    ids = {m["name"]: m["id"] for m in bin_}
+    assert {"Voice", "Music", "Plate"} <= set(ids), ids
+    s = T.TICK_RATE
+    a1 = next(t["id"] for t in E._log(folder).doc["tracks"] if t["role"] == "voice")
+    a2 = next(t["id"] for t in E._log(folder).doc["tracks"] if t["role"] == "music")
+    E.apply(pid, [
+        {"op": "insert_clip", "track": a1, "id": "vc1", "media": ids["Voice"], "src": [0, 4 * s], "at": 1 * s},
+        {"op": "insert_clip", "track": a2, "id": "mu1", "media": ids["Music"], "src": [0, 6 * s], "at": 0},
+        {"op": "insert_clip", "track": "V1", "id": "pic", "media": ids["Plate"], "src": [0, 6 * s], "at": 0},
+    ], "voice and music")
+    return a1, a2
+
+
+def _band(path, t0, t1, freq, sr=48000, width=12):
+    """The level (dBFS) of a narrow band around `freq` between two times. Narrow on purpose: the
+    voice tone is 1 kHz and the music 200 Hz, so a wide window would read the voice and call a
+    ducked bed 'louder'."""
+    import numpy as np
+
+    pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-f", "f32le", "-ac", "2", "-ar", str(sr), "-"],
+                         capture_output=True, check=True).stdout
+    a = np.frombuffer(pcm, np.float32).reshape(-1, 2).mean(axis=1)
+    seg = a[int(t0 * sr): int(t1 * sr)]
+    win = np.hanning(len(seg))
+    sp = np.abs(np.fft.rfft(seg * win))
+    fr = np.fft.rfftfreq(len(seg), 1 / sr)
+    pick = sp[(fr > freq - width) & (fr < freq + width)]
+    # Normalise by the window's coherent gain: a raw FFT peak grows with the window's length
+    # (a 1.5 s window reads 10 dB hotter than a 0.45 s one for the very same tone), so
+    # comparing two differently sized windows measured the window, not the music.
+    return 20 * float(np.log10(max(pick.max(), 1e-9) * 2 / win.sum()))
+
+
+def test_music_ducks_under_the_voice_by_the_number_set(home):
+    """The plan's done-when: music measurably drops under voice. A 9 dB duck dips the 200 Hz
+    music band by 9 dB over the voice, and it is back to full a ramp after the voice ends."""
+    from hermes_studio import render_timeline as R
+
+    pid = "mxA"
+    _mix_cut(home, pid)
+    _a1, a2 = [t["id"] for t in E._log(E._dir(pid)).doc["tracks"] if t["role"] in ("voice", "music")]
+    assert E.set_track(pid, a2, duck=9)
+    out = R.render_project(pid)["path"]
+    # Windows clear of the 0.3 s ramps (the dip runs 1.0-4.0 s, the voice 1-4 s) and of the
+    # mp3's fade-in on the first frames.
+    before = _band(out, 0.2, 0.6, 200)    # music alone, before the voice
+    under = _band(out, 2.0, 3.5, 200)     # voice sounding
+    after = _band(out, 5.6, 5.9, 200)     # music alone again
+    assert 8.5 <= before - under <= 9.5, (before, under)
+    assert after > before - 1.5, (before, after)
+    # The page reads the very same point list the render used.
+    row = next(t for t in E.view(E._log(E._dir(pid)).doc)["tracks"] if t["id"] == a2)
+    assert row["duck"] == 9
+    g = round(10 ** (-9 / 20), 6)  # the view rounds the points it publishes
+    assert row["duck_env"] == [[0.7, 1.0], [1.0, g], [5.0, g], [5.3, 1.0]]
+    # Ducking off: the music sits level throughout. Compared inside its OWN render, because
+    # clearing the duck also hands the cut back to loudnorm, which levels it (that is the
+    # existing rule: any authored mixer decision stands loudnorm aside).
+    E.set_track(pid, a2, duck=0)
+    off = R.render_project(pid)["path"]
+    assert abs(_band(off, 0.2, 0.6, 200) - _band(off, 2.0, 3.5, 200)) < 1.5
+    assert next(t for t in E.view(E._log(E._dir(pid)).doc)["tracks"] if t["id"] == a2)["duck_env"] is None
+
+
+def test_pan_is_unity_at_centre_and_full_at_an_edge(home):
+    """The track balance: parked in the middle changes nothing, hard left leaves the right
+    channel silent. Measured on the music alone (the voice is centred and would mask it)."""
+    from hermes_studio import render_timeline as R
+
+    pid = "mxB"
+    _a1, a2 = _mix_cut(home, pid)
+
+    def sides(path, t0=5.6, t1=5.9):
+        import numpy as np
+
+        pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(path), "-f", "f32le", "-ac", "2", "-ar", "48000", "-"],
+                             capture_output=True, check=True).stdout
+        a = np.frombuffer(pcm, np.float32).reshape(-1, 2)
+        return float(np.sqrt((a[int(t0 * 48000): int(t1 * 48000), 0] ** 2).mean())), float(np.sqrt((a[int(t0 * 48000): int(t1 * 48000), 1] ** 2).mean()))
+
+    mid = sides(R.render_project(pid)["path"])
+    assert abs(mid[0] - mid[1]) < 1e-6 and mid[0] > 0.001, mid  # unity: both sides equal
+    E.set_track(pid, a2, pan=-1.0)
+    left = sides(R.render_project(pid)["path"])
+    assert left[0] > 0.001 and left[1] < 1e-5, left  # hard left: right channel silent
+    E.set_track(pid, a2, pan=1.0)
+    right = sides(R.render_project(pid)["path"])
+    assert right[1] > 0.001 and right[0] < 1e-5, right  # hard right: left channel silent
+    E.set_track(pid, a2, pan=0.0)
+    doc = E._log(E._dir(pid)).doc
+    tr = next(t for t in doc["tracks"] if t["id"] == a2)
+    assert "pan" not in tr  # back to the default: the field is removed, not stored as 0
+    assert next(t for t in E.view(doc)["tracks"] if t["id"] == a2)["pan"] == 0.0
+    E.set_track(pid, a2, pan=0.5)
+    half = sides(R.render_project(pid)["path"])
+    # Halfway right: the right side is the loud one, and neither is silent.
+    assert half[1] > half[0] > 0.0002, half
+    with pytest.raises(E.EditorError):
+        E.set_track(pid, a2, pan=2.0)
+    with pytest.raises(E.EditorError):
+        E.set_track(pid, a2, duck=-1)

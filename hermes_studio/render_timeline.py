@@ -24,6 +24,7 @@ from hermes_studio import timeline as T
 import math
 import shutil
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -213,6 +214,20 @@ def _level(raw: Any) -> float:
     except (TypeError, ValueError, ZeroDivisionError):
         pass
     return 1.0
+
+
+def _balance(raw: Any) -> float:
+    """A track balance stored as a [num, den] pair, as a float in -1..1; 0 (centre) when missing.
+    ``_level`` is for volumes and gains, which are never negative -- it reads a stored -1 as
+    unity, which would pan a hard-left track hard RIGHT. Pan is signed, so it gets its own reader."""
+    try:
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            num, den = float(raw[0]), float(raw[1])
+            if den != 0:
+                return max(-1.0, min(1.0, num / den))
+    except (TypeError, ValueError):
+        pass
+    return 0.0
 
 
 def _volume(it: dict) -> float:
@@ -549,6 +564,8 @@ def _build_plan(doc: dict, folder: Path) -> dict:
                     "fade_in": it.get("fade_in") or 0,
                     "fade_out": it.get("fade_out") or 0,
                     "volume": _volume(it) * gain,
+                    "pan": _balance(tr.get("pan")),  # -1..1 track balance (unity at centre)
+                    "duck": T.duck_envelope(doc, tr),
                     "gain_keys": _gain_keys(it, rate),
                     # A retimed sound item plays at its own speed: without this the picture
                     # moves and the sound does not, and the two drift apart.
@@ -662,6 +679,38 @@ def _build_ass(plan: dict, cache: Path) -> Path | None:
 
 
 # --------------------------------------------------------------------------- graph
+
+
+def _pan_filter(pan: float) -> str:
+    """A track's balance, as ffmpeg pan -- the law every NLE uses for a stereo track (Resolve's
+    Pan, FCP's Balance): unity at the centre, so parking the knob in the middle changes nothing,
+    then a cos curve to full on one side and silence on the other at the edge. Each output takes
+    its own input channel, never a blend, and ``n=0`` stops ffmpeg renormalising (which would
+    make the edges quiet rather than silent). The page mirrors these two numbers (mix.js), so a
+    clip panned hard left is equally hard left in the preview and in the export."""
+    p = max(-1.0, min(1.0, float(pan)))
+    gl = 1.0 if p <= 0 else math.cos(p * math.pi / 2)
+    gr = 1.0 if p >= 0 else math.cos(-p * math.pi / 2)
+    return f"pan=stereo|FL={gl:.6f}*c0|FR={gr:.6f}*c1"
+
+
+@lru_cache(maxsize=256)
+def _audio_channels(path: str) -> int:
+    """How many audio channels a file has, probed once. A mono file (a voiceover, a phone
+    recording) has no right channel to balance, so it is upmixed to stereo before the pan."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=channels",
+                        "-of", "csv=p=0", str(path)], capture_output=True, text=True, timeout=60)
+    try:
+        return max(1, int((r.stdout.strip().split(",") or ["1"])[0]))
+    except ValueError:
+        return 1
+
+
+def _duck_expr(pts: list[tuple[float, float]]) -> str:
+    """The ducking envelope as one volume expression over TIMELINE seconds. The stream is
+    padded and delayed to the cut's start before this, so its clock is the timeline's; the same
+    point list the page reads from the view, so preview and render dip together."""
+    return f"volume=eval=frame:volume='{_interp_expr([{'at': a, 'gain': g} for a, g in pts], 'gain', 't')}'"
 
 
 def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
@@ -936,6 +985,17 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         # the expression every audio frame (1024 samples, ~21 ms), fine for a level ramp.
         if row.get("gain_keys"):
             vol_filter += f",volume=eval=frame:volume='{_interp_expr(row['gain_keys'], 'gain', 't')}'"
+        # Ducking rides under the clip's own level, on the TIMELINE clock: the stream is padded
+        # and delayed to the cut's start before this runs, so its t is timeline seconds.
+        if row.get("duck"):
+            vol_filter += "," + _duck_expr(row["duck"])
+        # Balance last, so a dip never also swings the sound sideways. A mono file is upmixed
+        # first: it has no right channel to hold back.
+        pan = float(row.get("pan") or 0.0)
+        if abs(pan) > 1e-6:
+            if _audio_channels(str(row.get("path") or "")) < 2:
+                vol_filter += ",aformat=channel_layouts=stereo"
+            vol_filter += "," + _pan_filter(pan)
         lab = f"au{n}"
         k = cut_a.get(idx, 0)
         cut_a[idx] = k + 1
@@ -985,7 +1045,12 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
         # erase any level the user set by hand. So only auto-level when every clip is at its
         # default volume -- otherwise the authored mix is respected, with a limiter to keep
         # peaks safe.
-        hand_set = any(abs(float(r.get("volume") or 1.0) - 1.0) > 1e-6 or r.get("gain_keys") for r in plan["audio"])
+        # An authored mix is anything the mixer decided, not just a clip's volume: a track
+        # gain, a balance or a ducking dip all count. loudnorm re-levels the whole cut to
+        # -14 LUFS, which would pull a ducked bed straight back up under the voice and undo the
+        # mixer's work -- so it stands aside for all of them.
+        hand_set = any(abs(float(r.get("volume") or 1.0) - 1.0) > 1e-6 or r.get("gain_keys") or r.get("duck")
+                       or abs(float(r.get("pan") or 0.0)) > 1e-6 for r in plan["audio"])
         tail = "alimiter=limit=0.95,aresample=48000" if hand_set else "alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000"
         fc.append(
             "".join(f"[{lab}]" for lab, _role, _vol in a_ready)

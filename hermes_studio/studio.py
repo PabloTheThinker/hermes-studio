@@ -966,6 +966,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                     mute=body["mute"] if isinstance(body.get("mute"), bool) else None,
                     solo=body["solo"] if isinstance(body.get("solo"), bool) else None,
                     gain=float(g) if isinstance(g, (int, float)) and not isinstance(g, bool) else None,
+                    pan=float(body["pan"]) if isinstance(body.get("pan"), (int, float)) and not isinstance(body.get("pan"), bool) else None,
+                    duck=int(body["duck"]) if isinstance(body.get("duck"), (int, float)) and not isinstance(body.get("duck"), bool) else None,
                 )
             elif op == "import":
                 project = editor.import_run(pid)

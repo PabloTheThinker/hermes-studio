@@ -177,6 +177,11 @@
       .tl-mix .tl-m.on{background:#e5484d;border-color:#e5484d;color:#fff}
       .tl-mix .tl-s.on{background:var(--amber);border-color:var(--amber);color:var(--amber-ink)}
       .tl-mix .tl-g{min-width:40px;cursor:ns-resize;font-weight:500}
+      .tl-mix .tl-p{min-width:26px;cursor:ew-resize}
+      .tl-mix .tl-p.L{color:#7cc7ff}
+      .tl-mix .tl-p.R{color:#ffb37c}
+      .tl-mix .tl-d{min-width:38px}
+      .tl-mix .tl-d.on{color:var(--amber);border-color:var(--amber)}
       .tl-trk.quiet .tl-lane{opacity:.4}
       .tl-vu{position:absolute;right:2px;top:5px;bottom:5px;width:3px;border-radius:2px;background:rgba(242,239,232,.08);overflow:hidden}
       .tl-vu b{position:absolute;inset:0;background:linear-gradient(to top,#3fb950 0%,#3fb950 80%,#d29922 80%,#d29922 95%,#e5484d 95%);clip-path:inset(100% 0 0 0)}
@@ -1425,6 +1430,7 @@
     if (!mk) return "";
     return `<div class="tl-row" style="background:rgba(76,201,240,.07);border-radius:4px;padding:6px"><span class="tl-mkstrip"><input data-mkname type="text" maxlength="200" value="${esc(mk.label)}" placeholder="Marker name" style="width:120px" title="Marker name"> <button type="button" data-act="mk-apply" title="Rename">Save</button> <button type="button" data-act="mk-del" title="Delete marker">Del</button> <span class="tl-mksw${(mk.color || "blue") === "blue" ? " on" : ""}" data-act="mk-color" data-color="blue" title="Blue (default)" style="background:var(--mk-cyan)"></span>${["cyan", "green", "yellow", "orange", "red", "pink", "purple"].map((c) => `<span class="tl-mksw${mk.color === c ? " on" : ""}" data-act="mk-color" data-color="${c}" title="${c}" style="background:var(--mk-${c})"></span>`).join("")}</span><b style="margin-left:auto">${esc(tc(mk.at))}</b></div>`;
   }
+  function fmtPan(p) { return !p ? "C" : (p < 0 ? "L" : "R") + Math.round(Math.abs(p) * 100); }
   function fmtDb(g) {
     const db = toDb(g == null ? 1 : g);
     if (!Number.isFinite(db)) return "−∞";
@@ -1761,7 +1767,7 @@
               <div class="tl-play" style="left:${LAB + play * pps}px"></div>
               <div class="tl-mlayer">${mk.map((m, i) => `<span class="tl-mk${m.at >= play - 1e-9 && m.at <= play + 1e-9 ? " at" : ""}" style="left:${(m.at * pps).toFixed(1)}px${m.color && m.color !== "blue" ? ";--mc:var(--mk-" + esc(m.color) + ")" : ""}" data-mk="${esc(m.id)}" title="${esc((m.label || "Marker") + " · " + tc(m.at) + " · click to go, double-click to rename")}"><b>${i + 1}</b><em data-mkcolor="${esc(m.color || "blue")}"></em></span>`).join("")}</div>
               ${rg ? `<div class="tl-rngv" style="left:${LAB + rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></div>` : ""}
-              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button></span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
+              ${d.tracks.map((tr) => `<div class="tl-trk${isAudio(tr) && !audible(tr) ? " quiet" : ""}" data-trk="${esc(tr.id)}"${trkH[tr.id] ? ` style="--row:${trkH[tr.id]}px` : ""}><span class="tl-lab"><span class="tl-name">${esc(tr.id)} ${esc(tr.role)}</span>${isAudio(tr) ? `<span class="tl-mix"><button type="button" class="tl-m${tr.mute ? " on" : ""}" data-mute="${esc(tr.id)}" title="Mute ${esc(tr.id)}">M</button><button type="button" class="tl-s${tr.solo ? " on" : ""}" data-solo="${esc(tr.id)}" title="Solo ${esc(tr.id)}: only soloed tracks play">S</button><button type="button" class="tl-g" data-gain="${esc(tr.id)}" title="${esc(tr.id)} gain · drag up or down, scroll, double-click for 0 dB">${esc(fmtDb(tr.gain))}</button><button type="button" class="tl-p${tr.pan ? (tr.pan < 0 ? " L" : " R") : ""}" data-pan="${esc(tr.id)}" title="${esc(tr.id)} balance · drag left or right, double-click for centre">${esc(fmtPan(tr.pan))}</button>${tr.role === "music" ? `<button type="button" class="tl-d${tr.duck ? " on" : ""}" data-duck="${esc(tr.id)}" title="${esc(tr.id)} ducks under the voice · scroll or drag to set dB, double-click for off">${tr.duck ? esc(tr.duck + " dB") : "Duck"}</button>` : ""}</span><i class="tl-vu" data-vu="${esc(tr.id)}" title="${esc(tr.id)} level (after the fader)"><b></b></i>` : ""}<i class="tl-rz" data-rz="${esc(tr.id)}" title="Drag to resize ${esc(tr.id)} · double-click to reset"></i></span><div class="tl-lane" data-lane>
                 ${tr.items.map((c) => `<div class="tl-clip ${c.type}${c.media && (tr.role === "voice" || tr.role === "music") ? " aud" : ""}${c.id === sel ? " on" : ""}${selSet.has(c.id) ? " sel" : ""}" data-id="${esc(c.id)}" data-at="${c.at}" data-dur="${c.dur}" style="left:${c.at * pps}px;width:${Math.max(c.dur * pps, 2)}px" title="${esc(c.label)}${c.type === "clip" ? " · Alt-drag to slip · Alt+Shift-drag to slide" : ""}">${wave(tr, c)}${band(tr, c)}${c.dur * pps > 42 ? esc(c.label) : ""}${retimeBadge(c)}${(c.keyframes || []).map((k, ki) => `<i class="tl-kf${c.id === sel && ki === selKf ? " on" : ""}" data-kfidx="${ki}" style="left:${k.at * pps}px" title="Keyframe ${ki + 1} at ${k.at.toFixed(1)}s · scale ${k.scale.toFixed(2)}× · click to select"></i>`).join("")}<i class="tl-h a" data-edge="start" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i><i class="tl-h b" data-edge="end" data-id="${esc(c.id)}" title="Drag to trim · Alt-drag to roll the cut"></i></div>`).join("")}
                 ${tr.items.filter((c) => c.type === "transition").map((c) => `<button type="button" class="tl-xf${xfDrag && xfDrag.id === c.id ? " dragging" : ""}" data-xf="${esc(c.id)}" data-between="${esc((c.between || []).join(","))}" data-dur="${c.dur}" data-kind="${esc(c.kind || "fade")}" style="left:${c.at * pps}px" title="${esc(xfLabel(c.kind || "fade"))} ${esc(c.dur.toFixed(1))}s · click to change the kind · drag an end to resize · Alt-click to remove"><i>◐</i><b>${esc(xfLabel(c.kind || "fade"))}</b><span>${esc(c.dur.toFixed(1))}s</span><i class="tl-xfe a" data-xfedge="a"></i><i class="tl-xfe b" data-xfedge="b"></i></button>`).join("")}
               </div></div>`).join("")}
@@ -2032,6 +2038,41 @@
       try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
       return;
     }
+    const pEl = e.target.closest("[data-pan]");
+    if (pEl) {
+      // Balance: drag left or right, double-click for centre. -1..1, the render's law
+      // (unity at the middle, full on one side at the edge).
+      const tid = pEl.dataset.pan;
+      const tr = doc.tracks.find((t) => t.id === tid);
+      if (!tr) return;
+      const now = performance.now();
+      if (lastRz.id === "p:" + tid && now - lastRz.t < 400) {
+        lastRz = { id: "", t: 0 };
+        commit({ op: "track", track: tid, pan: 0 });
+        return;
+      }
+      lastRz = { id: "p:" + tid, t: now };
+      drag = { kind: "pan", id: tid, el: pEl, p0: tr.pan || 0, x0: e.clientX };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+      return;
+    }
+    const dEl = e.target.closest("[data-duck]");
+    if (dEl) {
+      // Ducking depth in dB: drag up or down (or scroll), double-click for off.
+      const tid = dEl.dataset.duck;
+      const tr = doc.tracks.find((t) => t.id === tid);
+      if (!tr) return;
+      const now = performance.now();
+      if (lastRz.id === "d:" + tid && now - lastRz.t < 400) {
+        lastRz = { id: "", t: 0 };
+        commit({ op: "track", track: tid, duck: 0 });
+        return;
+      }
+      lastRz = { id: "d:" + tid, t: now };
+      drag = { kind: "duck", id: tid, el: dEl, d0: tr.duck || 0, y0: e.clientY };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* see kf */ }
+      return;
+    }
     const rzEl = e.target.closest("[data-rz]");
     if (rzEl) {
       // Track height: drag the header's bottom edge, the way Resolve does. Pure view state.
@@ -2256,6 +2297,26 @@
       drag.el.textContent = fmtDb(drag.gNow);
       return;
     }
+    if (drag.kind === "pan") {
+      // 120 px across the full width; snaps to centre within 4%, like a detent.
+      let p = drag.p0 + (e.clientX - drag.x0) / 120;
+      p = Math.max(-1, Math.min(1, p));
+      if (Math.abs(p) < 0.04) p = 0;
+      drag.pNow = Math.round(p * 100) / 100;
+      drag.el.textContent = fmtPan(drag.pNow);
+      drag.el.classList.toggle("L", drag.pNow < 0);
+      drag.el.classList.toggle("R", drag.pNow > 0);
+      return;
+    }
+    if (drag.kind === "duck") {
+      // 4 px per dB, down is deeper (the same feel as the fader), 0..30 dB.
+      let db = drag.d0 - (e.clientY - drag.y0) / 4;
+      db = Math.min(30, Math.max(0, Math.round(db)));
+      drag.dNow = db;
+      drag.el.textContent = db ? db + " dB" : "Duck";
+      drag.el.classList.toggle("on", !!db);
+      return;
+    }
     if (drag.kind === "rz") {
       const h = Math.round(Math.max(TRK_MIN, Math.min(TRK_MAX, drag.h0 + (e.clientY - drag.y0))));
       drag.row.style.setProperty("--row", h + "px");
@@ -2390,6 +2451,16 @@
     }
     if (d && d.kind === "gain") {
       if (d.gNow != null) await commit({ op: "track", track: d.id, gain: d.gNow });
+      return;
+    }
+    if (d && d.kind === "pan") {
+      if (d.pNow != null && d.pNow !== d.p0) await commit({ op: "track", track: d.id, pan: d.pNow });
+      else paint();
+      return;
+    }
+    if (d && d.kind === "duck") {
+      if (d.dNow != null && d.dNow !== d.d0) await commit({ op: "track", track: d.id, duck: d.dNow });
+      else paint();
       return;
     }
     if (d && d.kind === "rz") {

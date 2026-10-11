@@ -258,6 +258,14 @@ BAD = {
     "speed_keys empty": (_set("@c3.props.speed_keys", []), "bad_speed_keys"),
     "mute on the main track": (lambda d: track(d, "V1").__setitem__("mute", True), "track_audio_only"),
     "solo on a text track": (lambda d: track(d, "T1").__setitem__("solo", True), "track_audio_only"),
+    "duck on a voice track": (lambda d: track(d, "A1").__setitem__("duck", 6), "duck_music_only"),
+    "duck not whole dB": (lambda d: track(d, "A2").__setitem__("duck", 6.5), "out_of_range"),
+    "pan past the edges": (lambda d: track(d, "A1").__setitem__("pan", [3, 1]), "out_of_range"),
+    # bad_hold / bad_title existed as rule ids for a while without being registered here or in
+    # docs/timeline.md; the registry test catches exactly that, so they now have a case each.
+    "hold plus ramp": (lambda d: item(d, "c1").setdefault("props", {}).update({"hold": 10, "speed_keys": [{"at": 0, "speed": [1, 1]}]}), "bad_hold"),
+    "title layers off the template": (lambda d: item(d, "t1").update(
+        {"title": {"template": "title", "text": "x", "size": [1920, 1080], "layers": [{"type": "text", "text": "x", "x": 0, "y": 0, "w": 100}]}}), "bad_title"),
     "track mute not a boolean": (lambda d: track(d, "A1").__setitem__("mute", 1), "wrong_type"),
     "track gain above 4": (lambda d: track(d, "A1").__setitem__("gain", [5, 1]), "out_of_range"),
     "track gain not a ratio": (lambda d: track(d, "A1").__setitem__("gain", 0.5), "bad_rational"),
@@ -629,7 +637,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 40  # out_of_range also covers values past 2^53; bad_speed_keys is the one added
+    assert len(T.RULES) == 43  # every rule above has a case in BAD (bad_hold / bad_title / duck_music_only the last added)
 
 
 def _huge_scaled_src(d):

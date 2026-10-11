@@ -294,6 +294,11 @@ def view(doc: dict) -> dict:
             row_t["mute"] = bool(tr.get("mute", False))
             row_t["solo"] = bool(tr.get("solo", False))
             row_t["gain"] = _pair_to_float(tr.get("gain"))
+            row_t["pan"] = _pair_to_float(tr.get("pan", [0, 1]))
+            if tr.get("role") == "music":
+                row_t["duck"] = int(tr.get("duck") or 0)
+                env = T.duck_envelope(doc, tr)
+                row_t["duck_env"] = [[a, g] for a, g in env] if env else None
         tracks.append(row_t)
     return {
         "id": doc["id"],
@@ -1116,7 +1121,7 @@ def set_volume(pid: str, item_id: str, volume: float) -> dict:
 
 
 def set_track(pid: str, track_id: str, *, mute: bool | None = None, solo: bool | None = None,
-              gain: float | None = None) -> dict:
+              gain: float | None = None, pan: float | None = None, duck: int | None = None) -> dict:
     """An audio track's mixer strip. Only what is given changes; one undo step either way."""
     from fractions import Fraction
 
@@ -1135,6 +1140,19 @@ def set_track(pid: str, track_id: str, *, mute: bool | None = None, solo: bool |
         fr = Fraction(g).limit_denominator(1000)
         op["gain"] = [fr.numerator, fr.denominator]
         words.append(f"gain {g:g}×")
+    if pan is not None:
+        p = round(float(pan), 2)
+        if not (-1.0 <= p <= 1.0):
+            raise EditorError("pan is between -1 (left) and 1 (right)")
+        fr = Fraction(p).limit_denominator(100)
+        op["pan"] = [fr.numerator, fr.denominator]
+        words.append("pan centre" if p == 0 else f"pan {abs(round(p * 100))}% {'left' if p < 0 else 'right'}")
+    if duck is not None:
+        d = int(round(float(duck)))
+        if not (0 <= d <= T.DUCK_MAX_DB):
+            raise EditorError(f"ducking is 0 to {T.DUCK_MAX_DB} dB")
+        op["duck"] = d
+        words.append("ducking off" if d == 0 else f"ducks {d} dB under voice")
     if len(op) == 2:
         raise EditorError("nothing to set on the track")
     return apply(pid, [op], f"{track_id} " + ", ".join(words))
