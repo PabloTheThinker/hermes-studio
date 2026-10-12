@@ -163,7 +163,7 @@ ipcMain.handle("ui-token", (event) => (uiToken && fromDesk(event) ? uiToken : nu
 // The Edit page's Browse button: the system's file dialog, one video or audio file, its path.
 const MEDIA_EXT = ["mp4", "mov", "m4v", "mkv", "webm", "avi", "mts", "mp3", "wav", "m4a", "aac", "flac", "ogg", "opus"];
 // The Edit page's "Show in folder" for a finished render: only an .mp4 inside a project's
-// exports folder (~/.hermes/clips/projects/<id>/exports/), after resolving links.
+// exports folder under the project, after resolving links.
 // The page sends the project id and render_status's path (relative to the project).
 ipcMain.handle("show-render", (event, projectId, rel) => {
   if (!fromDesk(event)) return false;
