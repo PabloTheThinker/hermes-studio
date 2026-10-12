@@ -22,7 +22,7 @@
 
 | Item | Spec | Source |
 |---|---|---|
-| Folder | `~/.hermes/clips/projects/<project_id>/`, holding `base.json` (the version-0 doc that `Oplog` replays from), `oplog.jsonl`, `timeline.json`, `snapshots/v<N:06d>.json` (one every 50 versions), `exports/`, `cache/` and `.lock` | PLAN-MERGED §4.1; `Oplog(base, path=…)` oplog.py:800; `load(base, path)` :1223 |
+| Folder | `the projects folder`, holding `base.json` (the version-0 doc that `Oplog` replays from), `oplog.jsonl`, `timeline.json`, `snapshots/v<N:06d>.json` (one every 50 versions), `exports/`, `cache/` and `.lock` | PLAN-MERGED §4.1; `Oplog(base, path=…)` oplog.py:800; `load(base, path)` :1223 |
 | Log line | The locked fields plus optional `step`. `load` rejects any other key | oplog.py:41–56; `_check_line` :787–790 |
 | Line durability | A line is appended, flushed and fsynced before the write takes effect | oplog.py:1099–1105 |
 | Atomic batch | The ops run on a copy, and the copy must pass `validate()`. If anything fails, nothing is applied | docs/oplog.md:65–66 |

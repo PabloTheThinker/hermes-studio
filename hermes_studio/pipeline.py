@@ -271,7 +271,7 @@ def organize_library() -> list[dict]:
 
 
 def import_legacy() -> int:
-    """Fold older clip folders under ~/.hermes/clips into the library."""
+    """Fold older clip folders into the library."""
     base = Path.home() / ".hermes" / "clips"
     n = 0
     if not base.is_dir():

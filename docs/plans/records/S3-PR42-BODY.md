@@ -3,7 +3,7 @@
 Builds `S3-SPEC.md` as approved by Ada (2026-10-01, 7:33 PM ET; all 31 decisions), against Wire's contract (tests 1–103). Branched from `c6de84e`.
 
 ### What's in the slice
-- **Project store** (`hermes_studio/project.py`): `~/.hermes/clips/projects/<id>/` holds `base.json` + `oplog.jsonl` as the source of truth, with `timeline.json` as a cache and `snapshots/` every 50 versions.
+- **Project store** (`hermes_studio/project.py`): `the projects folder` holds `base.json` + `oplog.jsonl` as the source of truth, with `timeline.json` as a cache and `snapshots/` every 50 versions.
   - Commit order: line fsync → cache → snapshot → event (D1, D2).
   - Recovery: a torn tail is truncated on open; a missing final newline is repaired before the next append; a corrupt line gives `failed{seq}`.
   - Read-only closed-app reads (D28).

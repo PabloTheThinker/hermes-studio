@@ -70,7 +70,7 @@ with a persisted layout and a Hide/Show fold.
 - Studio's only existing AI path is the clip **namer** (`namer.py`), which already speaks
   OpenAI-compatible HTTP and Ollama through `net.post_json` (scheme-checked, size-capped). The
   chat backend should reuse that same one-way-out helper, not a new HTTP client.
-- Provider keys live outside the repo (`~/.ilo/secrets/`); Studio has **no** `.env` today.
+- Provider keys live outside the repo (`the secrets folder`); Studio has **no** `.env` today.
 
 ---
 
@@ -82,7 +82,7 @@ with a persisted layout and a Hide/Show fold.
 - **`tl-` class prefix only** on the Edit page. `ed-`/`ed-top` belong to the Design grid.
 - **Media paths stay inside the project.** No absolute paths, no `..` (`resolve_media`).
 - **All outbound HTTP goes through `net.py`** — http(s) only, response capped.
-- **Secrets never in the repo.** Provider keys come from `~/.ilo/secrets/` or the environment;
+- **Secrets never in the repo.** Provider keys come from `the secrets folder` or the environment;
   nothing is committed, nothing is echoed to a transcript.
 - **Main is protected.** Work lands on a branch, via PR, with `test` + `secrets` + `linux` +
   `windows` + CodeQL green. Never commit on local `main`.
@@ -229,7 +229,7 @@ Sir said: if it isn't invented, create it from what the research shows. Concrete
 
 - **R1 — Hermes agent auth.** `/api/sessions`, `/api/providers`, `/api/model` are 401. To chat
   with the local agent I need either (a) a loopback token from the Hermes config stored in
-  `~/.ilo/secrets/`, or (b) permission to use provider keys directly (Anthropic/xAI/OpenAI)
+  `the secrets folder`, or (b) permission to use provider keys directly (Anthropic/xAI/OpenAI)
   from the house keyring. Which does Sir want as the default backend?
 - **R2 — Preview fidelity vs cost.** Play the **rendered** file (always correct, cheap, but a
   re-render per change) or a **live compositor** in the browser (instant, CapCut-like, much more

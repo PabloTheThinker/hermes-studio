@@ -1,6 +1,6 @@
 """Project store, lock, tokens and event bus (S3). docs/oplog.md has the op log itself.
 
-A project lives in ``~/.hermes/clips/projects/<project_id>/``::
+A project lives in the projects folder::
 
     base.json       the version-0 doc the log replays from   } the truth (D1)
     oplog.jsonl     one line per applied batch                }
