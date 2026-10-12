@@ -17,7 +17,7 @@ Repo: https://github.com/PabloTheThinker/hermes-studio
 
 Don't use for: auto-post, Opus cloud MCP (`mcp.opus.pro`). The hand timeline is the Edit page (`#/edit`).
 
-Edit page: class prefix `tl-` only. Never `ed` or `ed-top` — those names are the Design page grid, and reusing them shoves the timeline into that grid. Writes go through `/api/editor` (`editor.py`); the desk must not write `timeline.json` itself. A playhead frame is `GET /api/editor/<id>/frame?t=`. The media path must stay inside the project. The ffmpeg temp file must end in `.jpg`; a `.part` suffix makes image2 refuse the write and the preview stays black. `video.play()` must run in the click itself, not only inside `loadedmetadata`, or the browser refuses sound. A split while playing must keep the same video element; rebuilding it stops the sound.
+Edit page: `#/edit` is `ui/edit.js` on the project engine (`/api/projects/...`, op log is the only writer). A second, earlier hand-timeline store (`editor.py`, `/api/editor`, `ui/editor.js`, from PR #44) is kept for reference but not loaded by the desk. Footguns from it still hold: an ffmpeg frame temp file must end in `.jpg` (a `.part` suffix makes image2 refuse the write); `video.play()` must run in the click itself or the browser refuses sound; a split while playing must keep the same video element.
 
 ## Fastest path (any agent)
 

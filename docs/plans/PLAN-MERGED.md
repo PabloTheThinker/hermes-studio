@@ -48,7 +48,7 @@ Other MCP clients (Claude/Cursor/Grok) ─────┤
 ```
 
 ### 4.1 Engine: the only writer
-- **Project folder** `~/.hermes/clips/projects/<id>/` holds `timeline.json` (written atomically with tmp+replace, as `design.py` already does), `oplog.jsonl`, `snapshots/` (one every 50 versions) and `cache/` (SECTION-BAY-ENGINE.md §2, §4).
+- **Project folder** `the projects folder` holds `timeline.json` (written atomically with tmp+replace, as `design.py` already does), `oplog.jsonl`, `snapshots/` (one every 50 versions) and `cache/` (SECTION-BAY-ENGINE.md §2, §4).
 - **Per-project lock.** `.lock` holds the pid, port and token hash, and is backed by an OS file lock. One engine owns each project. The stdio `hermes-studio mcp` reads `.lock` and **attaches to the running engine**. It never opens the project files for writing itself. A stale lock left by a killed engine is recovered (Bay §2, Wire Gaps, Prove C7).
 - **Engine is the only writer.** The Streamable HTTP endpoint `127.0.0.1:<port>/mcp` serves MCP clients. The recommended route is the official `mcp` Python SDK with pinned protocol versions (Wire Gaps).
 - **When the app is closed (Phase 1),** reads still work but every write tool is refused (see Decisions).

@@ -900,7 +900,8 @@ def item_duration(item: dict) -> int:
     if rd is not None and rd > 0:
         return rd
     sp = item.get("props", {}).get("speed", [1, 1])
-    return int(Fraction(item["src"][1] - item["src"][0]) * Fraction(sp[1], sp[0]))
+    n, d = (item["src"][1] - item["src"][0]) * sp[1], sp[0]  # int(Fraction(n, d)): truncates toward 0
+    return n // d if (n >= 0) == (d > 0) else -(-n // d)
 
 
 def _check_relations(c: _Checker, doc: dict, items: dict[str, dict]) -> None:
@@ -1007,11 +1008,24 @@ def resolve(doc: dict) -> dict[str, tuple[int, int]]:
     return out
 
 
+def clone(o: Any) -> Any:
+    """A deep copy of JSON-shaped data (dicts, lists and immutable scalars), several times faster
+    than ``copy.deepcopy`` on a timeline. Anything else falls back to ``copy.deepcopy``."""
+    t = type(o)
+    if t is dict:
+        return {k: clone(v) for k, v in o.items()}
+    if t is list:
+        return [clone(v) for v in o]
+    if t in (str, int, float, bool) or o is None:
+        return o
+    return copy.deepcopy(o)
+
+
 def normalize(doc: dict) -> dict:
     """A copy of a valid doc in canonical form: clip ``props`` filled with defaults, each track's
     items sorted by (start, id) (anchored items at their resolved start, a transition at the start
     of its overlap) and markers sorted by (at, id). Tracks keep their validated role order."""
-    d = copy.deepcopy(doc)
+    d = clone(doc)
     when = resolve(d)
     for tr in d["tracks"]:
         for k, v in TRACK_DEFAULTS.items():
@@ -1025,8 +1039,24 @@ def normalize(doc: dict) -> dict:
     return d
 
 
+def _normal_view(doc: dict) -> dict:
+    """What :func:`normalize` gives, without copying the doc: new containers where the canonical
+    form differs (clip props filled, items and markers sorted), the doc's own values elsewhere.
+    Only for reading (the hash): it shares data with ``doc``."""
+    when = resolve(doc)
+    tracks = []
+    for tr in doc["tracks"]:
+        items = [{**it, "props": {**DEFAULT_PROPS, **it.get("props", {})}} if it["type"] == "clip" else it for it in tr["items"]]
+        items.sort(key=lambda it: (when[it["id"]][0], it["id"]))
+        # Like normalize: a mixer field left at its default is dropped, so it hashes as untouched.
+        t = {k: v for k, v in tr.items() if not (k in TRACK_DEFAULTS and v == TRACK_DEFAULTS[k])}
+        t["items"] = items
+        tracks.append(t)
+    return {**doc, "tracks": tracks, "markers": sorted(doc["markers"], key=lambda m: (m["at"], m["id"]))}
+
+
 def _canonical_bytes(doc: dict) -> bytes:
-    body = {k: v for k, v in normalize(doc).items() if k not in NOT_HASHED}
+    body = {k: v for k, v in _normal_view(doc).items() if k not in NOT_HASHED}
     # Props added after hs.timeline/1 was frozen only count toward the hash when they are set.
     # Otherwise adding an optional prop (transform, keyframes, ...) re-hashes every saved doc and
     # every op log written before it stops replaying -- which is exactly what happened when
@@ -1061,9 +1091,16 @@ def stamp_hash(doc: dict) -> tuple[dict, str]:
     hash set, that hash)``. This is how a document gets its ``hash`` before it is written."""
     _raise_unless_valid(doc, check_hash=False)
     h = _hash(doc)
-    d = copy.deepcopy(doc)
+    d = clone(doc)
     d["hash"] = h
     return d, h
+
+
+def stamp_hash_valid(doc: dict) -> str:
+    """Set ``doc["hash"]`` in place and return it, for a doc the caller has just validated (in
+    full) and owns: :func:`stamp_hash` without validating again or copying."""
+    doc["hash"] = h = _hash(doc)
+    return h
 
 
 def new_timeline(project_id: str, *, fps: tuple[int, int] = (30, 1), size: tuple[int, int] = (1920, 1080)) -> dict:

@@ -49,7 +49,7 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then printf 'app=true\nsources=true\n' >> "$GITHUB_OUTPUT"; exit 0; fi
           files=$(git diff --name-only "$BASE" "$HEAD")
           echo "$files"
-          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|check-appimage-|electron-builder-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|\.github/workflows/desktop\.yml$)'; then
+          if echo "$files" | grep -qE '^(desktop/|hermes_studio/|scripts/(build-engine-|clean-test-|check-appimage-|electron-builder-|install\.)|electron-builder\.json$|package(-lock)?\.json$|pyproject\.toml$|README\.md$|NOTICE$|LICENSE$|licenses/|packaging/|tests/test_s3_lock\.py$|\.github/workflows/desktop\.yml$)'; then
             echo "app=true" >> "$GITHUB_OUTPUT"
           else
             echo "app=false" >> "$GITHUB_OUTPUT"
@@ -231,6 +231,19 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # S3 D5/D6/D14: the project lock is a Windows byte-range lock here (msvcrt.locking), which is
+      # mandatory, unlike Linux flock. Prove it is exclusive across processes and that .lock stays
+      # readable while held. Every test in the file must run: a skip fails the step.
+      - name: Project lock test (byte-range lock, cross-process)
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$pwd"
+          $out = uv run --no-project --python 3.12 --with "pytest>=8" python -m pytest tests/test_s3_lock.py -v -rs -p no:cacheprovider 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          Write-Output $out
+          if ($code -ne 0) { throw "lock test failed (exit $code)" }
+          if ($out -match "(?i)skipped|no tests ran|deselected") { throw "a lock test did not run" }
+          if ($out -notmatch "\b4 passed\b") { throw "expected exactly 4 lock tests to pass" }
       - name: FFmpeg (pinned, verified)
         shell: pwsh
         run: |

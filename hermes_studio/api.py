@@ -563,3 +563,37 @@ def design_resize(design_id: str, size: str = "", w: int | None = None, h: int |
 
     doc = _design_call(design.resize, design_id, size, w, h)
     return {"ok": True, "id": doc["id"], "design": doc, "from": design_id}
+
+
+# --------------------------------------------------------------------------- editor cache
+
+
+CACHE_KINDS = ("frames", "work", "proxy", "thumbs", "wave", "media", "render")
+_CACHE_CHEAP = ("frames", "work")  # made again on demand, in a second or less
+
+
+def cache(clear: bool = False, everything: bool = False) -> dict:
+    """Sizes of every timeline project's ``cache/`` by kind; with ``clear``, delete the cheap
+    kinds (frames, work files), and with ``everything`` also proxies, thumbnails, waveforms and
+    their status (re-import to rebuild). Whisper words, the log and renders are never touched."""
+    from hermes_studio import project as P
+
+    root = P.projects_root()
+    drop = set(_CACHE_CHEAP) | ({"proxy", "thumbs", "wave", "media"} if everything else set())
+    rows, freed = [], 0
+    for d in sorted(root.iterdir()) if root.is_dir() else []:
+        c = d / "cache"
+        if not (d / "base.json").is_file() or not c.is_dir():
+            continue
+        sizes = {}
+        for kind in CACHE_KINDS:
+            k = c / kind
+            sizes[kind] = sum(f.stat().st_size for f in k.rglob("*") if f.is_file()) if k.is_dir() else 0
+        if clear:
+            for kind in sorted(drop):
+                if (c / kind).is_dir():
+                    shutil.rmtree(c / kind, ignore_errors=True)
+                    freed += sizes[kind]
+        rows.append({"project_id": d.name, "bytes": sizes, "total": sum(sizes.values())})
+    return {"ok": True, "projects": rows, "total": sum(r["total"] for r in rows), "cleared": sorted(drop) if clear else [],
+            "freed": freed}

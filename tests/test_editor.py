@@ -341,7 +341,7 @@ def test_an_imported_cut_has_a_real_history(home, monkeypatch):
     assert split["version"] == 1
     back = E.undo("imp1")
     assert back["version"] == 2
-    assert len(E._log(folder).history_list()) == 2
+    assert len(E._log(folder).history_list()["entries"]) == 2
 
 
 def _two_clips(home, pid="tc"):

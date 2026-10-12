@@ -1539,7 +1539,14 @@ def _latest(log: O.Oplog, *, redo: bool) -> str:
     "redid" the first redo -- undoing it -- and an undo after a redo skipped the redone step
     and undid an older edit.)
     """
-    entries = log.history_list(0)
+    entries: list[dict] = []
+    since = 0
+    while True:  # history_list pages (S3 stack); walk every page
+        page = log.history_list(since_version=since, limit=200)
+        entries += page["entries"]
+        if page["next_since_version"] is None:
+            break
+        since = page["next_since_version"]
     by_id = {e["op_id"]: e for e in entries}
     undone = {oid for e in entries for oid in (e.get("undoes") or [])}
     kind: dict[str, str] = {}
@@ -1933,8 +1940,17 @@ def history(pid: str, since_version: int = 0) -> list[dict]:
     folder = _dir(pid)
     if not (folder / "base.json").exists():
         raise EditorError("no such project")
+    log = _log(folder)
+    records: list[dict] = []
+    since = max(0, int(since_version))
+    while True:  # history_diff pages (S3 stack); walk every page
+        page = log.history_diff(since_version=since, limit=500)
+        records += page["records"]
+        if page["next_since_version"] is None:
+            break
+        since = page["next_since_version"]
     out = []
-    for e in _log(folder).history_diff(max(0, int(since_version))):
+    for e in records:
         actor = e.get("actor") or {}
         kind = str(actor.get("kind") or "human")
         who = str(actor.get("id") or "unknown")
