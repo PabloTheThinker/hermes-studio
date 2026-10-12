@@ -6,11 +6,11 @@ import json
 import unicodedata
 
 import pytest
-from s3_app import App, key
-from test_oplog import S, base
 
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import oplog as O
+from tests.s3_app import App, key
+from tests.test_oplog import S, base
 
 
 @pytest.fixture
@@ -98,9 +98,15 @@ VALID_OPS = [
     {"op": "roll_edit", "by": -S // 2},
     {"op": "add_media", "path": "media/b.mp4", "dur": S, "fps": [30, 1]},  # S4
     {"op": "set_canvas", "width": 1920, "height": 1080},  # canvas size (PR #44)
+    # Ops main gained while this stack was apart (M1-M4, merged 2026-10-11).
+    {"op": "set_marker", "label": "n", "color": "red"},
+    {"op": "move_items", "ids": ["c3"], "by": S},
+    {"op": "delete_items", "ids": ["c1"], "ripple": False},
+    {"op": "set_track", "mute": True},
+    {"op": "set_transition", "between": ["c1", "c2"], "dur": S // 2},
 ]
 assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
-NO_ID_OPS = {"set_canvas"}  # whole-timeline ops: an `id` is an unknown arg, not a bad one
+NO_ID_OPS = {"set_canvas", "move_items", "delete_items"}  # no `id` arg (whole-timeline, or `ids`): an `id` is an unknown arg, not a bad one
 
 WRITE_CASES = [
     ("timeline_apply", {"ops": [], "summary": "s", "base_version": 0}),
@@ -169,6 +175,8 @@ ID_FOR = {
     "edit_marker": "k1",
     "slip_clip": "c2",
     "roll_edit": "c1",
+    "set_marker": "k1",
+    "set_track": "A2",
 }
 O_CODES = {
     "invalid_op",

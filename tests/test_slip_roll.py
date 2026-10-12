@@ -7,11 +7,11 @@ all m1 (600 s); x1 anchored 1 s into c2."""
 from __future__ import annotations
 
 import pytest
-from s3_app import App
-from test_oplog import HUMAN, S, apply, base, item, new_log, roundtrip
 
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_oplog import HUMAN, S, apply, base, item, new_log, roundtrip
 
 
 def spans(d: dict) -> dict:

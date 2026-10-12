@@ -11,14 +11,14 @@ import time
 from pathlib import Path
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
 
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import media as M
 from hermes_studio import media_jobs as MJ
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 

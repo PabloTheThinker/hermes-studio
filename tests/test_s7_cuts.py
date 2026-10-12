@@ -4,12 +4,12 @@ undo restores the hash. Plus pauses, ranges, preview, retry, skips and refusals.
 from __future__ import annotations
 
 import pytest
-from s3_app import App
 
 from hermes_studio import cuts as CU
 from hermes_studio import media as M
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
+from tests.s3_app import App
 
 S = T.TICK_RATE
 FRAME = S // 30

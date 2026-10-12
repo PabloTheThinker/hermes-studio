@@ -4,10 +4,10 @@ engine, /mcp (with ``at_s``) and the Edit page alike."""
 from __future__ import annotations
 
 import pytest
-from s3_app import App
-from test_oplog import HUMAN, S, apply, base, new_log, roundtrip
 
 from hermes_studio import oplog as O
+from tests.s3_app import App
+from tests.test_oplog import HUMAN, S, apply, base, new_log, roundtrip
 
 
 def marker(d: dict, mid: str = "k1") -> dict:

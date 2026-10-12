@@ -6,9 +6,8 @@ from __future__ import annotations
 import threading
 import time
 
-from test_oplog import base
-
 from hermes_studio import project as P
+from tests.test_oplog import base
 
 
 def test_a_slow_open_blocks_only_itself(tmp_path, monkeypatch):

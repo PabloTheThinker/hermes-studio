@@ -12,13 +12,13 @@ import time
 from pathlib import Path
 
 import pytest
-from s3_app import App
-from test_s4_media import make_video, wait_ready
 
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import media as M
 from hermes_studio import render_timeline as R
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_s4_media import make_video, wait_ready
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 S = T.TICK_RATE
@@ -26,7 +26,7 @@ SSIM_MIN = 0.98
 
 
 def empty() -> dict:
-    return T.new_timeline("p1")
+    return T.new_timeline("p1", size=(1080, 1920))  # a phone cut; the default became 16:9 (2026-10-10)
 
 
 @pytest.fixture

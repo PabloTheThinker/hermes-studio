@@ -8,12 +8,12 @@ import os
 import time
 
 import pytest
-from s3_app import App
-from test_oplog import base
 
 from hermes_studio import http_engine
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import project as P
+from tests.s3_app import App
+from tests.test_oplog import base
 
 
 @pytest.fixture

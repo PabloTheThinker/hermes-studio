@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
+
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 
 @pytest.fixture

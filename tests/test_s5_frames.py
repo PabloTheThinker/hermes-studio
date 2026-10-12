@@ -9,14 +9,14 @@ import json
 import shutil
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
-from test_s4_media import make_video, wait_ready
 
 from hermes_studio import frames as F
 from hermes_studio import mcp_timeline as MT
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_oplog import S, base
+from tests.test_s4_media import make_video, wait_ready
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 HUMAN = O.Session(O.Actor("human", "user"))

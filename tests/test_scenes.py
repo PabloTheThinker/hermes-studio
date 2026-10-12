@@ -7,11 +7,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from s3_app import App
-from test_s4_media import make_audio, wait_ready
 
 from hermes_studio import media as M
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_s4_media import make_audio, wait_ready
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 S = T.TICK_RATE

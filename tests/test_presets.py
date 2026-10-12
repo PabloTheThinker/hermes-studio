@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from s3_app import App
 
 from hermes_studio import presets as PR
 from hermes_studio import timeline as T
+from tests.s3_app import App
 
 S = T.TICK_RATE
 

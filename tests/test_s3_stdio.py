@@ -11,12 +11,12 @@ import threading
 import time
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
-from test_s3_mcp import c5_calls, strip_ids
 
 from hermes_studio import studio
 from hermes_studio.jsonrpc import DRAIN_CHUNK, DRAIN_MAX, MAX_BODY
+from tests.s3_app import App
+from tests.test_oplog import S, base
+from tests.test_s3_mcp import c5_calls, strip_ids
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARSE = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}

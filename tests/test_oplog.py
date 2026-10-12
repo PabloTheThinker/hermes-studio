@@ -36,7 +36,7 @@ def hermes(step: int | None = 3) -> O.Session:
 
 
 def base() -> dict:
-    d = T.new_timeline("p1")
+    d = T.new_timeline("p1", size=(1080, 1920))  # a phone cut; the default became 16:9 (2026-10-10)
     d["media"] = {
         "m1": {"path": "media/talk.mp4", "dur": 600 * S, "fps": [30, 1]},
         "m2": {"path": "media/song.mp3", "dur": 300 * S, "fps": None},
@@ -1809,7 +1809,7 @@ def test_rule_counts_stay_17_op_level_and_36_validator():
     text = (Path(__file__).resolve().parent.parent / "docs" / "oplog.md").read_text(encoding="utf-8")
     listed = text.split("Op-level `rule`s (17):")[1].split("plus every timeline rule")[0]
     assert len(listed.split("`")[1::2]) == 17
-    assert len(T.RULES) == 36 and "transition_too_long" not in T.RULES
+    assert len(T.RULES) == 43 and "transition_too_long" not in T.RULES
 
 
 # --------------------------------------------------------------------------- S2b: edit_text

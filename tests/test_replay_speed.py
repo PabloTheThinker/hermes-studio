@@ -8,14 +8,20 @@ import json
 import random
 
 import pytest
-from test_oplog import HUMAN, _random_op, apply, base, new_log
 
 from hermes_studio import oplog as O
 from hermes_studio import timeline as T
+from tests.test_oplog import HUMAN, _random_op, apply, base, new_log
 
 
 def _old_bytes(doc: dict) -> bytes:
+    """The hash body built the slow way: normalize() (a full copy), then main's rule that props
+    added after hs.timeline/1 only count when set (HASHED_V1_PROPS)."""
     body = {k: v for k, v in T.normalize(doc).items() if k not in T.NOT_HASHED}
+    for tr in body["tracks"]:
+        for it in tr["items"]:
+            if it["type"] == "clip":
+                it["props"] = {k: v for k, v in it["props"].items() if k in T.HASHED_V1_PROPS or v is not None}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
 
 

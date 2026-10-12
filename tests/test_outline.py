@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
 
 from hermes_studio import oplog as O
 from hermes_studio.outline import outline
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 
 def test_outline_of_the_fixture():

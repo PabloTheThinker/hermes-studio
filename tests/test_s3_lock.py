@@ -16,9 +16,9 @@ import time
 from pathlib import Path
 
 import pytest
-from test_oplog import base
 
 from hermes_studio import project as P
+from tests.test_oplog import base
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -9,11 +9,11 @@ import stat
 import threading
 
 import pytest
-from test_oplog import HUMAN, S, base, hermes, new_log
 
 from hermes_studio import oplog as O
 from hermes_studio import project as P
 from hermes_studio import timeline as T
+from tests.test_oplog import HUMAN, S, base, hermes, new_log
 
 
 @pytest.fixture

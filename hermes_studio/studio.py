@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import secrets
 import threading
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +37,7 @@ PORT_DEFAULT = 3870
 # - Clickjacking / sniffing / injection: CSP, frame-ancestors none, nosniff, no referrer.
 # - Oversized bodies: 1 MB cap.
 MAX_BODY = 1024 * 1024
+MAX_UPLOAD = 16 * 1024 ** 3  # one imported video file, streamed to disk
 MAX_IMAGE_BODY = 32 * 1024 * 1024  # design uploads + exported pages (base64 in JSON)
 DESIGN_STATIC = {  # fixed names only; nothing derived from the request path is opened
     "fabric.min.js": ("vendor/fabric.min.js", "text/javascript; charset=utf-8"),
@@ -117,6 +119,21 @@ def _worker() -> None:
 def _start_worker() -> None:
     for i in range(MAX_PARALLEL_JOBS):
         threading.Thread(target=_worker, name=f"hermes-studio-jobs-{i}", daemon=True).start()
+
+
+def _num(body: dict, key: str, default: float) -> float:
+    """A number from a JSON body. The default applies only when the field is missing or null:
+    `float(body.get(k) or 1)` turned a deliberate 0 (a silent clip) into full volume."""
+    from hermes_studio import editor
+
+    v = body.get(key)
+    if v is None:
+        return default
+    # Refuse here, as the caller's mistake, rather than let float() raise a ValueError that a
+    # broad catch would confuse with a real fault (a corrupt op log is a ValueError too).
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise editor.EditorError(f"'{key}' must be a number")
+    return float(v)
 
 
 def _json(handler: BaseHTTPRequestHandler, code: int, payload: dict | list) -> None:
@@ -297,8 +314,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
-    def _guard(self, write: bool) -> bool:
-        """True if the request may go on. Refuses and answers otherwise."""
+    def _guard(self, write: bool, raw_ok: bool = False) -> bool:
+        """True if the request may go on. Refuses and answers otherwise. ``raw_ok`` lets one
+        route (a media upload) take application/octet-stream; the Origin check still holds, and
+        a cross-site form can't send that type without a preflight we never answer."""
         if not host_allowed(self.headers.get("Host")):
             self._refuse(421, "host not allowed")
             return False
@@ -307,7 +326,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 self._refuse(403, "cross-origin request refused")
                 return False
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype != "application/json":
+            if ctype != "application/json" and not (raw_ok and ctype == "application/octet-stream"):
                 self._refuse(415, "Content-Type must be application/json")
                 return False
         return True
@@ -377,6 +396,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / path.rsplit("/", 1)[1], "text/javascript; charset=utf-8")
         if path.split("?")[0] == "/editor.js":
             return self._file(UI_DIR / "editor.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/mix.js":
+            return self._file(UI_DIR / "mix.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/scopes.js":
+            return self._file(UI_DIR / "scopes.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/wheels.js":
+            return self._file(UI_DIR / "wheels.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):
@@ -451,6 +476,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             if not job:
                 return _json(self, 404, {"ok": False, "error": "not found"})
             return _json(self, 200, {"ok": True, "job": asdict(job)})
+        if path == "/api/transitions":
+            # What this ffmpeg can do, grouped the way the pro editors group them, so the page
+            # never offers a kind the render would refuse.
+            from hermes_studio import transitions as _XT
+
+            return _json(self, 200, {"ok": True, "groups": _XT.catalog(), "source": "ffmpeg" if _XT.ffmpeg_kinds() else "builtin"})
         if path == "/api/tools":
             from hermes_studio.tools import catalogue
 
@@ -526,6 +557,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        up = urlparse(self.path).path
+        if up.startswith("/api/editor/") and up.endswith("/upload") and up.count("/") == 4:
+            if not self._guard(write=True, raw_ok=True):
+                return
+            return self._editor_upload(up)
         if not self._guard(write=True):
             return
         segs = path_segments(urlparse(self.path).path)
@@ -776,8 +812,20 @@ class StudioHandler(BaseHTTPRequestHandler):
                 media = editor.project_media(parts[2], parts[4])
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
-            kind = "video/mp4" if media.suffix.lower() == ".mp4" else "video/webm"
-            return self._file(media, kind)
+            return self._file(media, editor.MEDIA_TYPES[media.suffix.lower()])
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "title":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                data = editor.title_png(parts[2], (qs.get("id") or [""])[0])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=31536000, immutable")  # the URL carries the content key
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "frame":
             qs = parse_qs(urlparse(self.path).query)
             try:
@@ -785,7 +833,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             except ValueError:
                 return _json(self, 400, {"ok": False, "error": "bad time"})
             try:
-                data = editor.frame_jpeg(parts[2], at)
+                mid = (qs.get("media") or [None])[0]
+                data = editor.media_frame(parts[2], mid, at) if mid else editor.frame_jpeg(parts[2], at)
             except editor.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
             self.send_response(200)
@@ -795,12 +844,89 @@ class StudioHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             return
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "history":
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                since = int((qs.get("since") or ["0"])[0])
+            except ValueError:
+                since = 0
+            try:
+                rows = editor.history(parts[2], since)
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "history": rows})
+        if len(parts) >= 5 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "wave":
+            try:
+                wave = editor.waveform(parts[2], parts[4])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, **wave})
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "transcript":
+            try:
+                words = editor.transcript(parts[2])
+            except editor.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "words": words})
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "render":
+            from hermes_studio import editor as _e
+
+            try:
+                out = _e._dir(parts[2]) / f"{parts[2]}-render.mp4"
+                out = _e.resolve_media(_e._dir(parts[2]), out.name)
+            except _e.EditorError as exc:
+                return _json(self, 404, {"ok": False, "error": str(exc)})
+            if not out.is_file():
+                return _json(self, 404, {"ok": False, "error": "no render yet"})
+            return self._file(out, "video/mp4")
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
             return _json(self, 200, {"ok": True, "projects": editor.list_projects()})
         except editor.EditorError as exc:
             return _json(self, 404, {"ok": False, "error": str(exc)})
+
+    def _editor_upload(self, path: str) -> None:
+        """A video file into the project's bin: the raw body, streamed to disk (never held in
+        memory), then probed and added with an undoable add_media op. ?name= labels it."""
+        from hermes_studio import editor
+
+        pid = path.split("/")[3]
+        q = parse_qs(urlparse(self.path).query)
+        name = (q.get("name") or ["clip.mp4"])[0][:120]
+        ext = Path(name).suffix.lower()
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_UPLOAD:
+            return _json(self, 413 if length > MAX_UPLOAD else 400,
+                         {"ok": False, "error": f"send one video file up to {MAX_UPLOAD // (1024 ** 3)} GB"})
+        if ext not in editor.MEDIA_TYPES or not editor.MEDIA_TYPES[ext].startswith("video/"):
+            return _json(self, 415, {"ok": False, "error": "import a video file (mp4, mov, m4v, webm, mkv)"})
+        try:
+            folder = editor._dir(pid)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        if not (folder / "base.json").exists():
+            return _json(self, 404, {"ok": False, "error": "no such project"})
+        tmp = folder / f".upload-{secrets.token_hex(4)}{ext}"
+        try:
+            left = length
+            with open(tmp, "wb") as out:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    left -= len(chunk)
+            if left:
+                return _json(self, 400, {"ok": False, "error": "the upload stopped short"})
+            project = editor.import_media(pid, tmp, Path(name).stem, move=True)
+        except editor.EditorError as exc:
+            return _json(self, 400, {"ok": False, "error": str(exc)})
+        finally:
+            tmp.unlink(missing_ok=True)
+        return _json(self, 200, {"ok": True, "project": project})
 
     def _editor_post(self, path: str) -> None:
         from hermes_studio import editor
@@ -815,7 +941,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.create(pid)
             elif op == "nudge":
                 project = editor.nudge(
-                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), float(body.get("seconds") or 0.5)
+                    pid, str(body.get("item") or ""), str(body.get("edge") or "end"), _num(body, "seconds", 0.5)
                 )
             elif op == "trim":
                 project = editor.trim(
@@ -829,21 +955,129 @@ class StudioHandler(BaseHTTPRequestHandler):
                     pid,
                     str(body.get("item") or ""),
                     str(body.get("edge") or "end"),
-                    float(body.get("at") or 0),
+                    _num(body, "at", 0.0),
                     ripple=bool(body.get("ripple")),
                 )
             elif op == "move":
-                project = editor.move(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+                project = editor.move(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "lift":
                 project = editor.lift(pid, str(body.get("item") or ""), ripple=bool(body.get("ripple")))
+            elif op == "grade":
+                gid = str(body.get("id") or "")
+                if body.get("reset"):
+                    project = editor.clear_grade(pid, gid)
+                else:
+                    kw = {"curves": body["curves"]} if "curves" in body else {}
+                    project = editor.set_grade(pid, gid, lift=body.get("lift"), gamma=body.get("gamma"),
+                                               gain=body.get("gain"), sat=body.get("sat"),
+                                               temp=body.get("temp"), tint=body.get("tint"), **kw)
+            elif op == "balance":
+                project = editor.balance_to(pid, str(body.get("id") or ""), body.get("rgb"))
+            elif op == "slide":
+                project = editor.slide(pid, str(body.get("item") or ""), _num(body, "by", 0.0))
+            elif op == "roll":
+                project = editor.roll(pid, str(body.get("item") or ""), _num(body, "by", 0.0))
+            elif op == "slip":
+                project = editor.slip(pid, str(body.get("item") or ""), _num(body, "by", 0.0))
+            elif op == "move_items":
+                project = editor.move_items(pid, body.get("ids") or [], _num(body, "by", 0.0))
+            elif op == "delete_items":
+                project = editor.delete_items(pid, body.get("ids") or [], ripple=bool(body.get("ripple")))
+            elif op == "speed":
+                project = editor.set_speed(pid, str(body.get("id") or ""), _num(body, "speed", 1.0))
+            elif op == "speed_keys":
+                project = editor.set_speed_keys(pid, str(body.get("id") or ""), body.get("keys"))
+            elif op == "title_add":
+                project = editor.add_title(pid, str(body.get("template") or "lower-third"), _num(body, "at", 0.0),
+                                           text=str(body.get("text") or ""), sub=str(body.get("sub") or ""),
+                                           dur=_num(body, "dur", 4.0), accent=body.get("accent"),
+                                           anim_in=str(body.get("in") or "fade"), anim_out=str(body.get("out") or "fade"))
+            elif op == "title_edit":
+                project = editor.edit_title(pid, str(body.get("id") or ""), template=body.get("template"), text=body.get("text"),
+                                            sub=body.get("sub"), accent=body.get("accent"), anim_in=body.get("in"),
+                                            anim_out=body.get("out"), x=body.get("x"), y=body.get("y"),
+                                            scale=body.get("scale"), font=body.get("font"), box=body.get("box"))
+            elif op == "place":
+                at = body.get("at")
+                project = editor.place(pid, str(body.get("media") or ""), _num(body, "src_in", 0.0),
+                                       _num(body, "src_out", 0.0), str(body.get("mode") or ""),
+                                       None if at is None else _num(body, "at", 0.0))
+            elif op == "freeze":
+                project = editor.freeze(pid, str(body.get("id") or ""), _num(body, "at", 0.0), _num(body, "hold", 2.0))
+            elif op == "reverse":
+                project = editor.set_reverse(pid, str(body.get("id") or ""), body.get("on") is True)
+            elif op == "look":
+                project = editor.set_look(pid, str(body.get("id") or ""), body.get("look"))
+            elif op == "volume":
+                project = editor.set_volume(pid, str(body.get("id") or ""), _num(body, "volume", 1.0))
+            elif op == "fade":
+                project = editor.set_fade(
+                    pid, str(body.get("id") or ""),
+                    fade_in=_num(body, "fade_in", 0.0), fade_out=_num(body, "fade_out", 0.0),
+                )
+            elif op == "crop":
+                project = editor.set_crop(
+                    pid, str(body.get("id") or ""),
+                    _num(body, "x", 0.0), _num(body, "y", 0.0),
+                    _num(body, "w", 1.0), _num(body, "h", 1.0),
+                )
+            elif op == "transform":
+                project = editor.set_transform(
+                    pid, str(body.get("id") or ""),
+                    x=_num(body, "x", 0.0), y=_num(body, "y", 0.0),
+                    scale=_num(body, "scale", 1.0), rotate=_num(body, "rotate", 0.0),
+                )
+            elif op == "keyframes":
+                project = editor.set_keyframes(pid, str(body.get("id") or ""), body.get("keyframes"))
+            elif op == "transition":
+                project = editor.set_transition(
+                    pid, str(body.get("a") or ""), str(body.get("b") or ""), _num(body, "seconds", 0.0),
+                    (body.get("kind") or None),
+                )
             elif op == "canvas":
                 project = editor.set_canvas(pid, int(body.get("width") or 0), int(body.get("height") or 0))
+            elif op == "marker":
+                project = editor.add_marker(pid, _num(body, "at", -1.0), body.get("label") or "", body.get("color"))
+            elif op == "marker_set":
+                project = editor.set_marker(
+                    pid, str(body.get("id") or ""),
+                    at=_num(body, "at", -1.0) if body.get("at") is not None else None,
+                    label=body.get("label"), color=body.get("color"),
+                )
+            elif op == "marker_del":
+                project = editor.remove_marker(pid, str(body.get("id") or ""))
+            elif op == "gainkeys":
+                keys = body.get("keys")
+                project = editor.set_gain_keys(pid, str(body.get("id") or ""), keys if isinstance(keys, list) else None)
+            elif op == "track":
+                # gain 0 is a real value (silence), so never `or`-default it.
+                g = body.get("gain")
+                project = editor.set_track(
+                    pid,
+                    str(body.get("track") or ""),
+                    mute=body["mute"] if isinstance(body.get("mute"), bool) else None,
+                    solo=body["solo"] if isinstance(body.get("solo"), bool) else None,
+                    gain=float(g) if isinstance(g, (int, float)) and not isinstance(g, bool) else None,
+                    pan=float(body["pan"]) if isinstance(body.get("pan"), (int, float)) and not isinstance(body.get("pan"), bool) else None,
+                    duck=int(body["duck"]) if isinstance(body.get("duck"), (int, float)) and not isinstance(body.get("duck"), bool) else None,
+                )
             elif op == "import":
                 project = editor.import_run(pid)
+            elif op == "render":
+                from hermes_studio import render_timeline as R
+
+                # In/Out from the page's marks: render only that range. Absent = the whole cut.
+                start = _num(body, "in", -1.0) if body.get("in") is not None else None
+                end = _num(body, "out", -1.0) if body.get("out") is not None else None
+                try:
+                    out = R.render_project(pid, start=start, end=end)
+                except R.RenderError as exc:
+                    return _json(self, 400, {"ok": False, "error": str(exc)})
+                return _json(self, 200, {"ok": True, "render": out, "project": editor.open_project(pid)})
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":
-                project = editor.split(pid, str(body.get("item") or ""), float(body.get("at") or 0))
+                project = editor.split(pid, str(body.get("item") or ""), _num(body, "at", 0.0))
             elif op == "undo":
                 project = editor.undo(pid)
             elif op == "redo":

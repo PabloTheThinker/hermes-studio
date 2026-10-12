@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from s3_app import App
+
+from tests.s3_app import App
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

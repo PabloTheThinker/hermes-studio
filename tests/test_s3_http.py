@@ -7,11 +7,11 @@ import re
 import socket
 
 import pytest
-from s3_app import App
-from test_oplog import base
 
 from hermes_studio import studio
 from hermes_studio.jsonrpc import MAX_BODY
+from tests.s3_app import App
+from tests.test_oplog import base
 
 STATUS = re.compile(rb"HTTP/1\.[01] (\d{3})")
 SMUGGLE = b"GET /api/doctor HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"

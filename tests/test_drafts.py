@@ -6,12 +6,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
 
 from hermes_studio import drafts as DR
 from hermes_studio import oplog as O
 from hermes_studio import project as P
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 
 @pytest.fixture

@@ -12,12 +12,12 @@ import threading
 import time
 
 import pytest
-from s3_app import App
-from test_s4_media import make_video, wait_ready
-from test_s6_render import wait_render
 
 from hermes_studio import media as M
 from hermes_studio import timeline as T
+from tests.s3_app import App
+from tests.test_s4_media import make_video, wait_ready
+from tests.test_s6_render import wait_render
 
 pytestmark = pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
 S = T.TICK_RATE
@@ -26,7 +26,7 @@ S = T.TICK_RATE
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    a = App(T.new_timeline("p1"), mode="propose")
+    a = App(T.new_timeline("p1", size=(1080, 1920)), mode="propose")  # a 9:16 short; the default became 16:9 (2026-10-10)
     yield a
     a.close()
 

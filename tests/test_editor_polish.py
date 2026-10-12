@@ -8,12 +8,12 @@ import threading
 import time
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
 
 from hermes_studio import api
 from hermes_studio import media as M
 from hermes_studio.cli import main
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 
 @pytest.fixture

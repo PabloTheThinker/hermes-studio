@@ -8,12 +8,12 @@ import json
 import time
 
 import pytest
-from s3_app import App
-from test_oplog import S, base
 
 from hermes_studio import gate as G
 from hermes_studio import oplog as O
 from hermes_studio import project as P
+from tests.s3_app import App
+from tests.test_oplog import S, base
 
 
 @pytest.fixture
@@ -252,7 +252,7 @@ def test_import_parks_then_builds_after_apply(app, tmp_path):
 
     if not shutil.which("ffmpeg"):
         pytest.skip("needs ffmpeg")
-    from test_s4_media import make_video, wait_ready
+    from tests.test_s4_media import make_video, wait_ready
 
     src = make_video(tmp_path / "v.mp4", seconds=2)
     ok, e = app.mcp("import_media", {"project_id": "p1", "path": str(src), "client_op_id": "imp", "stages": ["wave"]})

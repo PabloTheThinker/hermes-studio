@@ -75,7 +75,8 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `insert_clip` | `track, media, src, at \| anchor, id?, fade_in?=0, fade_out?=0, props?` | `delete_item{id}` |
 | `add_text` | `dur, text, style, at \| anchor, id?, track?=first text track, fade_in?, fade_out?` | `delete_item{id}` |
 | `add_transition` | `between, dur, id?, track?=V1, kind?=xfade` | `delete_item{id}` |
-| `add_marker` / `remove_marker` | `at, label, id?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
+| `add_marker` / `remove_marker` | `at, label, id?, color?` / `id` | `remove_marker` / `insert_marker{index, marker}` |
+| `set_marker` | `id`, plus `at?`, `label?`, `color?` (only the fields given change; `color` null or `"blue"` removes it) | `set_marker` with the old values |
 | `edit_marker` | `id, at?, label?` (at least one) | `edit_marker` with the old values |
 | `slip_clip` | `id, by` (signed source ticks, not 0) | `set_fields` with the old `src`; refused before the media starts (`negative_time` @ `by`) or past its end (`src_out_of_media` @ `by`), the validator's own rules |
 | `roll_edit` | `id, by` (signed timeline ticks, not 0) | `set_fields` on both clips; the next clip on the track must start where `id` ends (or their crossfade starts); both keep at least their crossfades' length; the total length stays |
@@ -89,6 +90,9 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `set_fade` | `id, fade_in?, fade_out?` (clips and text) | `set_fields` with the old values |
 | `set_anchor` | `id, anchor` or `anchor: null, at` | `set_fields` with the old `at`/`anchor` |
 | `edit_text` | `id, text?, style?` (a text item; at least one of `text`/`style`) | `set_fields` with the old values of the fields given |
+| `set_canvas` | `width, height` (integers 1–16384) | `set_canvas` with the old size |
+| `set_transition` | `between:[a, b], dur?=0, id?` (adjacent clips on one track; `dur` 0 removes it: a hard cut) | `set_transition` with the old `dur` (moves clip b back) |
+| `set_track` | `id, mute?, solo?, gain?` (voice and music tracks only; at least one field) | `set_track` with the old values of the fields given |
 
 Internal ops (`set_fields`, `shift_items`, `delete_item`, `insert_item`, `insert_marker`,
 `insert_track`, `join_clips`) only appear in inverses and undo entries; a caller sending one gets
