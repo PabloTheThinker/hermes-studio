@@ -102,18 +102,9 @@ def matte_at(
 def _interp_scalar(kfs: list[dict], key: str, t: float, base: float) -> float:
     if not kfs:
         return base
-    if t <= kfs[0]["at"]:
-        return float(kfs[0][key])
-    if t >= kfs[-1]["at"]:
-        return float(kfs[-1][key])
-    for i in range(1, len(kfs)):
-        a, b = kfs[i - 1], kfs[i]
-        if t < b["at"]:
-            if b["at"] <= a["at"]:
-                return float(a[key])
-            u = (t - a["at"]) / (b["at"] - a["at"])
-            return float(a[key]) + u * (float(b[key]) - float(a[key]))
-    return float(kfs[-1][key])
+    from hermes_studio import easing as _EZ
+
+    return _EZ.interp_scalar(kfs, key, t)
 
 
 def resolve_at(mask: dict, t: float) -> tuple[float, float, float, float]:
@@ -234,20 +225,10 @@ def _ffmpeg_num(x: float) -> str:
 
 
 def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
-    """Piecewise-linear ffmpeg expression (mirrors render_timeline._interp_expr)."""
+    """Piecewise eased ffmpeg expression (easing.py, same as transform keyframes)."""
+    from hermes_studio import easing as _EZ
 
-    def v(x: float) -> str:
-        return f"{x:.6f}"
-
-    expr = v(kfs[-1][key])
-    for i in range(len(kfs) - 1, 0, -1):
-        a, b = kfs[i - 1], kfs[i]
-        if abs(b[key] - a[key]) < 1e-12 or b["at"] <= a["at"]:
-            seg = v(a[key])
-        else:
-            seg = f"{v(a[key])}+({v(b[key])}-{v(a[key])})*({tvar}-{v(a['at'])})/({v(b['at'])}-{v(a['at'])})"
-        expr = f"if(lt({tvar},{v(b['at'])}),{seg},{expr})"
-    return f"if(lt({tvar},{v(kfs[0]['at'])}),{v(kfs[0][key])},{expr})" if len(kfs) > 1 else expr
+    return _EZ.interp_expr(kfs, key, tvar, eased=True)
 
 
 def geq_lum_expr(mask: dict, w: int, h: int, rate: int, tvar: str = "T") -> str:

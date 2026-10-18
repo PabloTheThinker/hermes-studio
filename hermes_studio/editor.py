@@ -107,6 +107,12 @@ def _keyframes_view(v: object, rate: int) -> list[dict] | None:
             if k not in kf:
                 return None
             row[k] = round(_pair_to_float(kf[k]), 4)
+        if "opacity" in kf:
+            row["opacity"] = round(_pair_to_float(kf["opacity"]), 4)
+        else:
+            row["opacity"] = 1.0
+        if isinstance(kf.get("ease"), str) and kf["ease"] != "linear":
+            row["ease"] = kf["ease"]
         out.append(row)
     return out or None
 
@@ -1500,10 +1506,11 @@ def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, sca
 
 
 def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
-    """Set a clip's animated transform. Each keyframe is {at, x, y, scale, rotate} with `at`
-    in seconds from the clip start; values match the transform's ranges. A single-element or
-    empty list clears the animation (back to a static transform). Stored as [num, den] pairs
-    and validated by the schema (increasing time, within range). Passing None clears it."""
+    """Set a clip's animated transform. Each keyframe is {at, x, y, scale, rotate, opacity?,
+    ease?} with `at` in seconds from the clip start; values match the transform's ranges.
+    A single-element or empty list clears the animation (back to a static transform). Stored
+    as [num, den] pairs and validated by the schema (increasing time, within range). Passing
+    None clears it."""
     from fractions import Fraction
 
     def pair(v: float) -> list[int]:
@@ -1520,17 +1527,28 @@ def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
         at = float(kf.get("at", 0.0))
         fx, fy = float(kf.get("x", 0.0)), float(kf.get("y", 0.0))
         fs, fr_ = float(kf.get("scale", 1.0)), float(kf.get("rotate", 0.0))
+        fo = float(kf.get("opacity", 1.0))
+        ease = kf.get("ease")
         if not (-4.0 <= fx <= 4.0 and -4.0 <= fy <= 4.0):
             raise EditorError("position must be within ±4 of the canvas")
         if not (0.01 <= fs <= 100.0):
             raise EditorError("scale must be between 0.01 and 100")
         if not (-3600.0 <= fr_ <= 3600.0):
             raise EditorError("rotate must be within ±3600 degrees")
+        if not (0.0 <= fo <= 1.0):
+            raise EditorError("opacity must be between 0 and 1")
+        if ease is not None and ease not in T.EASE_IDS:
+            raise EditorError("easing must be linear, ease-in, ease-out, or ease-in-out")
         ticks = T.seconds_to_ticks(at)
         if prev is not None and ticks <= prev:
             raise EditorError("keyframes must be in strictly increasing time order")
         prev = ticks
-        out.append({"at": ticks, "x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)})
+        row = {"at": ticks, "x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)}
+        if fo != 1.0:
+            row["opacity"] = pair(fo)
+        if ease and ease != "linear":
+            row["ease"] = ease
+        out.append(row)
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"keyframes": out}}], f"Animate ({len(out)} keys)")
 
 

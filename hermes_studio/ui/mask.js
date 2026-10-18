@@ -39,6 +39,7 @@
 
   function interpScalar(kfs, key, t, base) {
     if (!kfs || !kfs.length) return base;
+    if (window.HSEase) return window.HSEase.interpScalar(kfs, key, t);
     if (t <= kfs[0].at) return kfs[0][key];
     if (t >= kfs[kfs.length - 1].at) return kfs[kfs.length - 1][key];
     for (let i = 1; i < kfs.length; i++) {

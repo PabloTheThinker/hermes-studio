@@ -170,8 +170,8 @@ def _transform(it: dict) -> dict | None:
 
 def _keyframes(it: dict, rate: int) -> list[dict] | None:
     """The clip's keyframes as plain floats, `at` in seconds from the clip's start, sorted.
-    None when there are none. Each is {at, x, y, scale, rotate}; the values match the
-    transform's ranges and are stored as [num, den] pairs."""
+    None when there are none. Each is {at, x, y, scale, rotate, opacity, ease?}; the values
+    match the transform's ranges and are stored as [num, den] pairs."""
 
     def frac(v: Any) -> float | None:
         if isinstance(v, (list, tuple)) and len(v) == 2:
@@ -197,9 +197,16 @@ def _keyframes(it: dict, rate: int) -> list[dict] | None:
         vals = {k: frac(kf.get(k)) for k in ("x", "y", "scale", "rotate")}
         if any(v is None for v in vals.values()):
             return None
+        op = frac(kf.get("opacity"))
+        if op is None:
+            op = 1.0
         if vals["scale"] <= 0:
             return None
-        out.append({"at": at / rate, **vals})
+        row = {"at": at / rate, **vals, "opacity": op}
+        ease = kf.get("ease")
+        if isinstance(ease, str) and ease != "linear":
+            row["ease"] = ease
+        out.append(row)
     out.sort(key=lambda k: k["at"])
     return out or None
 
@@ -778,29 +785,25 @@ def _duck_expr(pts: list[tuple[float, float]]) -> str:
 
 
 def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
-    """A piecewise-linear ffmpeg expression for one value over keyframes (sorted by ``at``).
+    """Piecewise-linear ffmpeg expression (volume, ducking, gain keys)."""
+    from hermes_studio import easing as _EZ
 
-    Before the first key it holds the first value; between two keys it ramps linearly; after
-    the last key it holds the LAST value. Built from the end: start with the last value, then
-    for each segment from the last to the first wrap ``if(lt(t, b.at), <segment>, <rest>)``,
-    and finally guard the time before the first key.
+    return _EZ.interp_expr(kfs, key, tvar, eased=False)
 
-    The old builder got two things wrong, and transform keyframes rendered wrong because of it:
-    after the last key it fell back to the FIRST key's value, and a segment between two equal
-    values replaced everything built so far (so keys 1, 2, 2, 1 lost the ramp from 1 to 2).
-    """
-    def v(x: float) -> str:
-        return f"{x:.6f}"
 
-    expr = v(kfs[-1][key])
-    for i in range(len(kfs) - 1, 0, -1):
-        a, b = kfs[i - 1], kfs[i]
-        if abs(b[key] - a[key]) < 1e-12 or b["at"] <= a["at"]:
-            seg = v(a[key])
-        else:
-            seg = f"{v(a[key])}+({v(b[key])}-{v(a[key])})*({tvar}-{v(a['at'])})/({v(b['at'])}-{v(a['at'])})"
-        expr = f"if(lt({tvar},{v(b['at'])}),{seg},{expr})"
-    return f"if(lt({tvar},{v(kfs[0]['at'])}),{v(kfs[0][key])},{expr})" if len(kfs) > 1 else expr
+def _interp_expr_eased(kfs: list[dict], key: str, tvar: str) -> str:
+    """Piecewise eased ffmpeg expression for transform keyframes."""
+    from hermes_studio import easing as _EZ
+
+    return _EZ.interp_expr(kfs, key, tvar, eased=True)
+
+
+def _opacity_chain(kfs: list[dict], *, tvar: str = "T") -> str:
+    """Multiply luma/chroma by keyed opacity (black behind), on the rebased clip clock."""
+    if not kfs or all(abs(k.get("opacity", 1.0) - 1.0) < 1e-9 for k in kfs):
+        return ""
+    op = _interp_expr_eased(kfs, "opacity", tvar)
+    return f"geq=r='r(X,Y)*({op})':g='g(X,Y)*({op})':b='b(X,Y)*({op})',"
 
 
 def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
@@ -814,9 +817,9 @@ def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
     # The caller feeds an already contain-fitted frame that fills the canvas at zoom 1, so the
     # keyframe scale is zoompan's zoom directly. Keyframe times are frames now (at * fps).
     frame_kfs = [{**k, "at": k["at"] * fps} for k in kfs]
-    z = _interp_expr(frame_kfs, "scale", "on")
-    xx = _interp_expr(frame_kfs, "x", "on")
-    yy = _interp_expr(frame_kfs, "y", "on")
+    z = _interp_expr_eased(frame_kfs, "scale", "on")
+    xx = _interp_expr_eased(frame_kfs, "x", "on")
+    yy = _interp_expr_eased(frame_kfs, "y", "on")
     # zoompan's x/y are the top-left of the crop window in the zoomed image; centre the crop
     # and add the pan offset (a fraction of the input size). iw/ih are the input size.
     xexp = f"iw/2-(iw/zoom/2)+({xx})*iw"
@@ -1018,6 +1021,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 after = _vchain(xf, pad) + ",setpts=PTS-STARTPTS"
                 tail = _vchain(
                     f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}",
+                    _opacity_chain(kfs) if kfs else "",
                     vfade.lstrip(","),
                     "setsar=1",
                     "format=yuv420p",
@@ -1043,7 +1047,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 mid = f"vm{n}"
                 ptag = f"mp{n}"
                 after = _vchain(xf, pad) + f",setpts={pts},fps={fps:.3f}"
-                tail = _vchain(vfade.lstrip(","), "setsar=1", "format=yuv420p")
+                tail = _vchain(_opacity_chain(kfs) if kfs else "", vfade.lstrip(","), "setsar=1", "format=yuv420p")
                 trim = f"trim=start={s_in:.3f}:end={s_in + src_dur:.3f}"
                 if clip_mask:
                     head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid)}"

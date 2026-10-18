@@ -254,6 +254,7 @@ BAD = {
     "keyframes not a list": (_set("@c3.props.keyframes", {}), "bad_keyframes"),
     "keyframes empty": (_set("@c3.props.keyframes", []), "bad_keyframes"),
     "keyframes out of order": (_set("@c3.props.keyframes", [{"at": 8 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}]), "bad_order"),
+    "keyframes bad ease": (_set("@c3.props.keyframes", [{"at": 0, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1], "ease": "bounce"}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [2, 1], "rotate": [0, 1]}]), "bad_ease"),
     "speed_keys not a list": (_set("@c3.props.speed_keys", {}), "bad_speed_keys"),
     "speed_keys empty": (_set("@c3.props.speed_keys", []), "bad_speed_keys"),
     "mute on the main track": (lambda d: track(d, "V1").__setitem__("mute", True), "track_audio_only"),
@@ -641,7 +642,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 45  # every rule above has a case in BAD (bad_mask the last added)
+    assert len(T.RULES) == 46  # every rule above has a case in BAD (bad_ease the last added)
 
 
 def _huge_scaled_src(d):

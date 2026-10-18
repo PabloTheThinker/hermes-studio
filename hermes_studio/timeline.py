@@ -83,6 +83,8 @@ GAIN_KEY_KEYS = {"at", "gain"}
 CROP_KEYS = {"x", "y", "w", "h"}
 TRANSFORM_KEYS = {"x", "y", "scale", "rotate"}
 KEYFRAME_KEYS = {"at", "x", "y", "scale", "rotate"}
+KEYFRAME_OPTIONAL = frozenset({"ease", "opacity"})
+EASE_IDS = frozenset({"linear", "ease-in", "ease-out", "ease-in-out"})
 SPEEDKEY_KEYS = {"at", "speed"}
 # A speed ramp: a sorted, non-empty list of {at, speed}, `at` in ticks from the clip's start and
 # `speed` a reduced [num, den] pair in SPEED_MIN..SPEED_MAX. Between keys the speed ramps
@@ -118,7 +120,7 @@ RULES = (
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
     "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
-    "bad_hold", "bad_title", "duck_music_only", "bad_lut", "bad_mask",
+    "bad_hold", "bad_title", "duck_music_only", "bad_lut", "bad_mask", "bad_ease",
 )
 
 
@@ -180,6 +182,7 @@ _HINTS = {
     "bad_title": "A title's layers must be exactly what titles.make() builds from its own fields.",
     "bad_lut": "A clip LUT is {file: luts/<hash>.cube, intensity?: [num, den] in 0..1}; only 3D .cube files under luts/ count.",
     "bad_mask": "A clip mask is {shape: rect|ellipse, x, y, w, h, feather?, invert?, target?: grade|blur, blur?, keys?}; defaults are dropped.",
+    "bad_ease": "Keyframe easing is linear, ease-in, ease-out, or ease-in-out; linear is dropped on save.",
 }
 
 
@@ -534,10 +537,11 @@ def _track_key(rt: tuple[str, str]) -> tuple[int, int]:
 
 
 def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
-    """A keyframe list is a sorted, non-empty list of {at, x, y, scale, rotate}, where `at` is
-    ticks from the clip's start and the transform values share the transform's ranges. `at` may
-    be negative or beyond the clip: the render clamps a keyframe track to the clip's span, so a
-    move that begins before the clip simply starts already in progress."""
+    """A keyframe list is a sorted, non-empty list of {at, x, y, scale, rotate, opacity?}, where
+    `at` is ticks from the clip's start and the transform values share the transform's ranges.
+    Optional ``ease`` on a key sets the segment that starts there (linear is dropped on save).
+    ``opacity`` may be omitted (treated as 1). `at` may be negative or beyond the clip: the
+    render clamps a keyframe track to the clip's span."""
     if not isinstance(kfs, list) or not kfs:
         c.bad("bad_keyframes", path, "keyframes must be a non-empty list")
         return
@@ -547,13 +551,18 @@ def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
     prev_at = None
     for i, kf in enumerate(kfs):
         kp = _j(path, i)
-        if not c.keys(kf, kp, KEYFRAME_KEYS):
+        if not c.keys(kf, kp, KEYFRAME_KEYS, optional=KEYFRAME_OPTIONAL):
             continue
         ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
         for k in ("x", "y"):
             c.ratio(kf[k], _j(kp, k), -TRANSFORM_POS_MAX, TRANSFORM_POS_MAX)
         c.ratio(kf["scale"], _j(kp, "scale"), SCALE_MIN, SCALE_MAX)
         c.ratio(kf["rotate"], _j(kp, "rotate"), -ROTATE_MAX, ROTATE_MAX)
+        if "opacity" in kf:
+            c.ratio(kf["opacity"], _j(kp, "opacity"), 0, 1)
+        ease = kf.get("ease")
+        if ease is not None and (not isinstance(ease, str) or ease not in EASE_IDS):
+            c.bad("bad_ease", _j(kp, "ease"), "easing must be linear, ease-in, ease-out, or ease-in-out")
         if ok_at and _is_int(kf["at"]):
             if prev_at is not None and kf["at"] <= prev_at:
                 c.bad("bad_order", _j(kp, "at"), "keyframes must be in strictly increasing time order")
@@ -573,8 +582,11 @@ def _check_mask_keys(c: _Checker, keys: Any, path: str) -> None:
     prev_at = None
     for i, kf in enumerate(keys):
         kp = _j(path, i)
-        if not c.keys(kf, kp, _M.MASK_KEY_KEYS):
+        if not c.keys(kf, kp, _M.MASK_KEY_KEYS, optional={"ease"}):
             continue
+        ease = kf.get("ease")
+        if ease is not None and (not isinstance(ease, str) or ease not in EASE_IDS):
+            c.bad("bad_ease", _j(kp, "ease"), "easing must be linear, ease-in, ease-out, or ease-in-out")
         ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
         c.ratio(kf["x"], _j(kp, "x"), _M.POS_MIN, _M.POS_MAX)
         c.ratio(kf["y"], _j(kp, "y"), _M.POS_MIN, _M.POS_MAX)
@@ -1115,6 +1127,18 @@ def normalize(doc: dict) -> dict:
         for it in tr["items"]:
             if it["type"] == "clip":
                 it["props"] = {**DEFAULT_PROPS, **it.get("props", {})}
+                kfs = it["props"].get("keyframes")
+                if isinstance(kfs, list):
+                    cleaned = []
+                    for kf in kfs:
+                        if not isinstance(kf, dict):
+                            cleaned.append(kf)
+                            continue
+                        row = dict(kf)
+                        if row.get("ease") in (None, "linear"):
+                            row.pop("ease", None)
+                        cleaned.append(row)
+                    it["props"]["keyframes"] = cleaned
         tr["items"].sort(key=lambda it: (when[it["id"]][0], it["id"]))
     d["markers"].sort(key=lambda m: (m["at"], m["id"]))
     return d

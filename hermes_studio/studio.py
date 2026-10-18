@@ -407,6 +407,10 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "lut.js", "text/javascript; charset=utf-8", cache=False)
         if path.split("?")[0] == "/mask.js":
             return self._file(UI_DIR / "mask.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/easing.js":
+            return self._file(UI_DIR / "easing.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/keyframes.js":
+            return self._file(UI_DIR / "keyframes.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):

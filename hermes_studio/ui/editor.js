@@ -899,7 +899,12 @@
     let alpha = 1, dx = 0, dy = 0;
     if (T.in !== "none" && fi > 0) alpha *= pin;
     if (T.out !== "none" && fo > 0) alpha *= pout;
-    const slide = (kind, p) => { const k = Math.pow(1 - p, 3) * TITLE_SLIDE; if (kind === "slide-up") dy += k; if (kind === "slide-left") dx += k; };
+    const slide = (kind, p) => {
+      const e = window.HSEase ? window.HSEase.easeProgress(p, "ease-out") : 1 - Math.pow(1 - p, 3);
+      const k = (1 - e) * TITLE_SLIDE;
+      if (kind === "slide-up") dy += k;
+      if (kind === "slide-left") dx += k;
+    };
     if (fi > 0) slide(T.in, pin);
     if (fo > 0) slide(T.out, pout);
     return { alpha, dx, dy }; // offsets as fractions of the canvas
@@ -1031,11 +1036,13 @@
   // and Final Cut's video animation editor give you; the timeline diamonds stay as the compact
   // view and the two are the same data (one "keyframes" op, one undo step).
   let kfTab = "scale", kfCurveDrag = null;
+  const KF_EASE = [["linear", "Linear"], ["ease-in", "Ease in"], ["ease-out", "Ease out"], ["ease-in-out", "Ease in-out"]];
   const KF_PROPS = {
     scale: { label: "Scale", lo: 0.1, hi: 3, fmt: (v) => v.toFixed(2) + "×" },
     x: { label: "Pos X", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
     y: { label: "Pos Y", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
     rotate: { label: "Rotate", lo: -360, hi: 360, fmt: (v) => v.toFixed(0) + "°" },
+    opacity: { label: "Opacity", lo: 0, hi: 1, fmt: (v) => v.toFixed(2) },
   };
   function kfClipDur() { const it = find(sel); return (it && it.dur) || 1; }
   // The graph's margins in CSS pixels. The drawing multiplies by the device pixel ratio for the
@@ -1065,15 +1072,15 @@
       ctx.fillText(P.fmt(v).replace(/[×°]$/, ""), 2 * k, y + 3 * k);
     }
     ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, H - M.b); ctx.stroke();
-    // The line: linear between keys (the render is piecewise-linear too), flat before/after.
-    ctx.strokeStyle = "var(--amber)"; ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
+    // The line follows the same eased segments as the render (HSEase).
+    ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
     ctx.beginPath();
     if (kfs.length) {
-      const first = kfs[0];
-      ctx.moveTo(X(0), Y(first[kfTab]));
-      for (let i = 0; i < kfs.length; i++) { const p = kfs[i]; ctx.lineTo(X(p.at), Y(p[kfTab])); }
-      const last = kfs[kfs.length - 1];
-      ctx.lineTo(X(dur), Y(last[kfTab]));
+      const pts = window.HSEase
+        ? window.HSEase.sampleCurve(kfs, kfTab, 0, dur, 72)
+        : [[0, kfs[0][kfTab]], ...kfs.map((p) => [p.at, p[kfTab]]), [dur, kfs[kfs.length - 1][kfTab]]];
+      ctx.moveTo(X(pts[0][0]), Y(pts[0][1]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(X(pts[i][0]), Y(pts[i][1]));
     }
     ctx.stroke();
     ctx.fillStyle = "rgba(242,239,232,.35)";
@@ -1136,7 +1143,7 @@
         // Carry the values the curve already has at that time (the last key at or before t,
         // else the first key), so only the property you clicked on changes.
         const before = [...kfs].reverse().find((p) => p.at <= t);
-        const base = before || kfs[0] || { x: 0, y: 0, scale: 1, rotate: 0 };
+        const base = before || kfs[0] || { x: 0, y: 0, scale: 1, rotate: 0, opacity: 1 };
         const key = { ...base, at: t, [kfTab]: v };
         kfs.push(key);
         kfs.sort((a, b) => a.at - b.at);
@@ -1788,7 +1795,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; const ke = k.ease || "linear"; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <input data-kfop type="number" min="0" max="1" step="0.05" value="${k.opacity != null ? k.opacity : 1}" style="width:48px" title="Opacity"> <select data-kfease title="Easing for the segment after this key">${KF_EASE.map(([v, l]) => `<option value="${v}" ${ke === v ? "selected" : ""}>${l}</option>`).join("")}</select> <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
             <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
             ${pid === "demo" ? `<div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>` : ""}
           </aside>
@@ -1942,9 +1949,28 @@
     if (big) big.textContent = fmt(play);
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
     showGrade();
+    showClipMotion();
     showFrame();
     showTitles();
     updateScope(false);
+  }
+
+  function showClipMotion() {
+    const it = mainClip(play);
+    const v = root && root.querySelector(".tl-vid");
+    const pic = root && root.querySelector(".tl-pic");
+    const els = [v, pic].filter(Boolean);
+    if (!it || !it.keyframes || !window.HSKf) {
+      els.forEach((el) => { el.style.transform = ""; el.style.opacity = ""; });
+      return;
+    }
+    const st = window.HSKf.at(it.keyframes, Math.max(0, play - it.at));
+    const tr = `translate(${(st.x * 100).toFixed(4)}%, ${(st.y * 100).toFixed(4)}%) scale(${st.scale}) rotate(${st.rotate}deg)`;
+    els.forEach((el) => {
+      el.style.transformOrigin = "center center";
+      el.style.transform = tr;
+      el.style.opacity = String(st.opacity);
+    });
   }
 
   // ---- the clip's grade, live in the preview ------------------------------------------
@@ -3269,8 +3295,8 @@
       await commit({
         op: "keyframes", id: s2.id,
         keyframes: [
-          { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate },
-          { at: s2.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate },
+          { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate, opacity: 1, ease: "ease-in-out" },
+          { at: s2.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate, opacity: 1 },
         ],
       });
       return;
@@ -3285,7 +3311,8 @@
         // Insert a key at the playhead, carrying the current static transform's scale so the
         // move doesn't jump. Re-sorted by time below.
         const base = s2.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
-        kfs.push({ at: Math.max(0, Math.min(s2.dur, play)), x: base.x, y: base.y, scale: base.scale, rotate: base.rotate });
+        const cur = window.HSKf && s2.keyframes.length >= 2 ? window.HSKf.at(s2.keyframes, Math.max(0, play - s2.at)) : base;
+        kfs.push({ at: Math.max(0, Math.min(s2.dur, play - s2.at)), x: cur.x, y: cur.y, scale: cur.scale, rotate: cur.rotate, opacity: cur.opacity != null ? cur.opacity : 1 });
       } else if (name === "del-kf") {
         if (selKf < 0 || selKf >= kfs.length) return;
         kfs.splice(selKf, 1);
@@ -3296,8 +3323,15 @@
         if (selKf < 0 || selKf >= kfs.length) return;
         const atEl = root.querySelector("[data-kfat]");
         const scEl = root.querySelector("[data-kfscale]");
+        const opEl = root.querySelector("[data-kfop]");
+        const esEl = root.querySelector("[data-kfease]");
         kfs[selKf].at = parseFloat((atEl || {}).value) || 0;
         kfs[selKf].scale = parseFloat((scEl || {}).value) || 1;
+        const op = parseFloat((opEl || {}).value);
+        kfs[selKf].opacity = Number.isFinite(op) ? op : 1;
+        const ease = esEl && esEl.value ? esEl.value : "linear";
+        if (ease === "linear") delete kfs[selKf].ease;
+        else kfs[selKf].ease = ease;
       }
       kfs.sort((a, b) => a.at - b.at);
       await commit({ op: "keyframes", id: s2.id, keyframes: kfs.length >= 2 ? kfs : null });
