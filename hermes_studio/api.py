@@ -583,11 +583,19 @@ def editor_render(
     from hermes_studio import editor_renders as ER
     from hermes_studio.editor import EditorError
     from hermes_studio.export_presets import ExportPresetError, list_presets
-    from hermes_studio.render_timeline import RenderError, render_project
+    from hermes_studio.render_timeline import RenderError, render_project, validate_editor_export
 
     path = Path(out).expanduser() if out else None
     if detach:
         try:
+            validate_editor_export(
+                project_id,
+                start=start,
+                end=end,
+                preset=preset,
+                fps=fps,
+                quality=quality,
+            )
             st = ER.start(
                 project_id,
                 preset=preset,
@@ -599,6 +607,8 @@ def editor_render(
             )
         except ExportPresetError as exc:
             raise HermesStudioError(str(exc), code="bad_input") from exc
+        except (RenderError, EditorError) as exc:
+            raise HermesStudioError(str(exc), code="failed") from exc
         return {"ok": True, **st, "presets": list_presets()}
     try:
         res = render_project(

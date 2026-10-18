@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from hermes_studio import render_timeline as R
 from hermes_studio.export_presets import ExportPresetError
@@ -17,13 +17,17 @@ def _set(pid: str, patch: dict) -> dict:
     with _LOCK:
         st = {**_JOBS.get(pid, {}), **patch, "project_id": pid}
         _JOBS[pid] = st
-        return dict(st)
+        return _public(st)
+
+
+def _public(st: dict) -> dict:
+    return {k: v for k, v in st.items() if not str(k).startswith("_")}
 
 
 def status(pid: str) -> dict:
     with _LOCK:
         st = _JOBS.get(pid)
-        return dict(st) if st else {"project_id": pid, "state": "idle"}
+        return _public(st) if st else {"project_id": pid, "state": "idle"}
 
 
 def cancel(pid: str) -> dict:
@@ -34,7 +38,7 @@ def cancel(pid: str) -> dict:
         box = st.get("_cancel_box")
         if isinstance(box, dict):
             box["cancel"] = True
-        return {**dict(st), "cancelling": True}
+        return {**_public(dict(st)), "cancelling": True}
 
 
 def start(
@@ -85,6 +89,9 @@ def start(
             return
         _set(pid, {"state": "ready", "progress": 1.0, "error": None, "result": res})
 
+    rng = None
+    if start_s is not None or end_s is not None:
+        rng = [start_s, end_s]
     _set(
         pid,
         {
@@ -93,6 +100,7 @@ def start(
             "preset": preset,
             "quality": quality,
             "fps": fps,
+            "range": rng,
             "error": None,
             "result": None,
             "started": time.time(),

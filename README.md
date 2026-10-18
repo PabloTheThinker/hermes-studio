@@ -71,7 +71,7 @@ Background removal uses U²-Net small (Apache-2.0, 4.5 MB, bundled; runs offline
 
 ## Edit (a timeline you and your agent share)
 
-Pick **Edit** in the desk to cut a video on a real timeline: import files (proxies, filmstrip thumbnails, waveforms, shot changes and local Whisper words are made in the background), drag, trim, split, slip and roll clips with snapping, add text and markers, find words in the transcript and cut them, remove fillers or long pauses in one step, apply presets (fades, crossfades, title and end cards, music ducking, close the gaps), and render an MP4 with or without captions. The preview plays every track and shows the captions the render will burn. Every change is one entry in the history with Undo; press **?** for the keys (J/K/L, arrows, S, M, Ctrl+C/V/D, multi-select).
+Pick **Edit** in the desk to cut a video on a real timeline: import files (proxies, filmstrip thumbnails, waveforms, shot changes and local Whisper words are made in the background), drag, trim, split, slip and roll clips with snapping, add text and markers, find words in the transcript and cut them, remove fillers or long pauses in one step, apply presets (fades, crossfades, title and end cards, music ducking, close the gaps), and export at **1080p**, **4K**, **vertical**, or **ProRes** (draft/standard/high quality, optional fps override) with a progress bar and cancel. The preview plays every track and shows the captions the render will burn. Every change is one entry in the history with Undo; press **?** for the keys (J/K/L, arrows, S, M, Ctrl+C/V/D, multi-select).
 
 Your AI app edits the same timeline over MCP. In **Propose** mode (the default) each agent edit waits in the sidebar until you Apply or Skip it, and **Preview** shows what it would change first; **Ask** lets agents only look, **Auto** lets them edit directly. Before/after frames show what each edit did, and a **draft** lets an agent try a whole idea on a copy you keep or discard. Agents read the edit in plain words (`timeline_outline`) and can try edits without making them (`timeline_check`). In a browser, paste the Edit page code that `hermes-studio studio` prints; the desktop app connects by itself.
 
@@ -97,6 +97,7 @@ hermes-studio list                              # your runs, newest first
 hermes-studio show <id>                         # clips, scores, files
 hermes-studio open <id>                         # open the folder
 hermes-studio studio                            # the desk in your browser
+hermes-studio render <project> --preset 1080p --json   # export an Edit timeline (also 4k, vertical, prores)
 ```
 
 `hermes-studio --help` and `hermes-studio <command> --help` list everything. Clips are saved to your library (`clips/library` inside your Hermes folder; `hermes-studio doctor` shows where); `-o DIR` also copies them to DIR. Typos get a "did you mean".

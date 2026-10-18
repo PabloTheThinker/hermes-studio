@@ -1104,7 +1104,8 @@ def _encode(
     seconds: float | None = None,
     export: Any | None = None,
 ) -> list[str]:
-    from hermes_studio.export_presets import ResolvedExport, resolve as resolve_export
+    from hermes_studio.export_presets import ResolvedExport
+    from hermes_studio.export_presets import resolve as resolve_export
 
     exp: ResolvedExport = export if export is not None else resolve_export(None)
     preset = exp.preset
@@ -1269,6 +1270,34 @@ def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, f
     return s, min(e, total)
 
 
+def validate_editor_export(
+    pid: str,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    preset: str | None = None,
+    fps: float | None = None,
+    quality: str | None = "standard",
+) -> Any:
+    """Check project, preset and In/Out range before queueing a desk export."""
+    from hermes_studio import editor as E
+    from hermes_studio.export_presets import ExportPresetError
+    from hermes_studio.export_presets import resolve as resolve_export
+
+    try:
+        export = resolve_export(preset, quality=quality, fps=fps)
+    except ExportPresetError as exc:
+        raise RenderError(str(exc)) from exc
+    folder = E._dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    doc = E._log(folder).doc
+    size = (export.preset.width, export.preset.height) if export.preset else None
+    plan = _build_plan(doc, folder, size=size, fps=export.fps)
+    _range(plan, start, end)
+    return export
+
+
 def render_project(
     pid: str,
     out_path: Path | None = None,
@@ -1294,17 +1323,14 @@ def render_project(
     the temp and never leaves a partial export.
     """
     from hermes_studio import editor as E
-    from hermes_studio.export_presets import ExportPresetError, default_filename, resolve as resolve_export
+    from hermes_studio.export_presets import default_filename
 
-    try:
-        export = resolve_export(preset, quality=quality, fps=fps)
-    except ExportPresetError as exc:
-        raise RenderError(str(exc)) from exc
+    export = validate_editor_export(
+        pid, start=start, end=end, preset=preset, fps=fps, quality=quality
+    )
     cancel_fn = cancel or (lambda: False)
 
     folder = E._dir(pid)
-    if not (folder / "base.json").exists():
-        raise EditorError("no such project")
     doc = E._log(folder).doc
     size = (export.preset.width, export.preset.height) if export.preset else None
     plan = _build_plan(doc, folder, size=size, fps=export.fps)

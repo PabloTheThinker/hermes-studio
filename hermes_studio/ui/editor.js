@@ -1714,7 +1714,7 @@
             <input type="number" data-export-fps min="1" max="120" step="0.01" placeholder="fps" value="${esc(exportFps)}" aria-label="Export fps override" title="Leave blank to use the timeline frame rate">
           </span>
           ${renderJob && (renderJob.state === "queued" || renderJob.state === "running") ? `<span class="tl-renderbar" title="Export progress"><i style="width:${Math.round((renderJob.progress || 0) * 100)}%"></i></span><button type="button" data-act="render-cancel">Cancel</button>` : ""}
-          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}${renderJob && renderJob.result && renderJob.result.probe ? `<span class="tl-probe" title="ffprobe on the export"> ${esc(renderJob.result.probe.width)}×${esc(renderJob.result.probe.height)} ${esc(renderJob.result.probe.fps)}fps ${esc(renderJob.result.probe.video_codec)}/${esc(renderJob.result.probe.audio_codec)}</span>` : ""}</span>
+          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}${renderJob && renderJob.result && renderJob.result.probe ? `<span class="tl-probe" title="ffprobe on the export"> ${esc(probeSummary(renderJob.result.probe))}</span>` : ""}</span>
           <button type="button" data-act="bin" class="${binOpen ? "on" : ""}" title="Show or hide the bin">Bin</button>
           <button type="button" data-act="title" title="Add a lower-third title at the playhead (Alt+T)">Title</button>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
@@ -3131,12 +3131,21 @@
     if (renderPoll) { clearInterval(renderPoll); renderPoll = null; }
   }
 
+  function probeSummary(pr) {
+    if (!pr || !pr.width) return "";
+    const ch = pr.audio_channels != null ? `${pr.audio_channels}ch` : "";
+    const rate = pr.audio_rate != null ? `${pr.audio_rate}Hz` : "";
+    const mb = pr.bytes != null ? `${(pr.bytes / 1e6).toFixed(2)} MB` : "";
+    return `${pr.width}×${pr.height} ${pr.fps}fps ${pr.duration}s ${pr.video_codec}/${pr.audio_codec}${ch ? " " + ch : ""}${rate ? " " + rate : ""}${mb ? " " + mb : ""}`;
+  }
+
   function finishRenderJob(r) {
     const out = r.result || r;
     const what = out.range ? `the range ${tc(out.range[0])}–${tc(out.range[1])}` : out.name || "file";
     const pr = out.probe || {};
     const loud = out.loudness && out.loudness.lufs != null ? ` · ${out.loudness.lufs.toFixed(1)} LUFS` : "";
-    msg = `Rendered ${what} — ${pr.width || out.size?.[0]}×${pr.height || out.size?.[1]} ${out.duration || pr.duration || ""}s${loud}`;
+    const line = probeSummary(pr);
+    msg = `Rendered ${what}${line ? " — " + line : ` — ${pr.width || out.size?.[0]}×${pr.height || out.size?.[1]} ${out.duration || pr.duration || ""}s`}${loud}`;
     renderOut = { name: out.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
   }
 

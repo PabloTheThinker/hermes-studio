@@ -1177,9 +1177,13 @@ def test_render_refuses_a_range_outside_the_cut(home):
 
 
 def test_desk_render_takes_the_in_and_out_marks(desk):
+    from tests.support import wait_editor_render
+
     pid = _mixer_cut("drng")
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "render", "in": 1, "out": 2.5})
-    assert st == 200 and res["render"]["range"] == [1.0, 2.5]
+    assert st == 200 and res["render"]["state"] in ("queued", "running")
+    done = wait_editor_render(desk, pid)
+    assert done["state"] == "ready" and done["result"]["range"] == [1.0, 2.5]
     st, res = _post(desk, f"/api/editor/{pid}", {"op": "render", "in": 3, "out": 1})
     assert st == 400 and "range" in res["error"]
 

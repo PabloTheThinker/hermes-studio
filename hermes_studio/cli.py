@@ -46,6 +46,7 @@ examples:
   hermes-studio doctor                               check FFmpeg, speech, links
   hermes-studio app                                  open the desktop app
   hermes-studio studio                               open the desk in your browser
+  hermes-studio render demo --preset 1080p           export an Edit timeline (4k, vertical, prores too)
   hermes-studio mcp install claude                   add the tools to Claude Code
   hermes-studio update                               get the latest release
 
