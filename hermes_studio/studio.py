@@ -405,6 +405,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "wheels.js", "text/javascript; charset=utf-8", cache=False)
         if path.split("?")[0] == "/lut.js":
             return self._file(UI_DIR / "lut.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/mask.js":
+            return self._file(UI_DIR / "mask.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):
@@ -1065,6 +1067,23 @@ class StudioHandler(BaseHTTPRequestHandler):
                 else:
                     project = editor.set_lut(pid, gid, str(body.get("file") or ""),
                                              _num(body, "intensity", 1.0))
+            elif op == "mask":
+                gid = str(body.get("id") or "")
+                if body.get("clear"):
+                    project = editor.clear_mask(pid, gid)
+                else:
+                    keys = body.get("keys")
+                    project = editor.set_mask(
+                        pid, gid,
+                        shape=str(body.get("shape") or "rect"),
+                        x=_num(body, "x", 0.0), y=_num(body, "y", 0.0),
+                        w=_num(body, "w", 0.5), h=_num(body, "h", 1.0),
+                        feather=_num(body, "feather", 0.0),
+                        invert=body.get("invert") is True,
+                        target=str(body.get("target") or "grade"),
+                        blur=_num(body, "blur", 12.0),
+                        keys=keys if isinstance(keys, list) else None,
+                    )
             elif op == "volume":
                 project = editor.set_volume(pid, str(body.get("id") or ""), _num(body, "volume", 1.0))
             elif op == "fade":

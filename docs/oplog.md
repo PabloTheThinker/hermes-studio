@@ -89,6 +89,8 @@ before_frame, after_frame` (both `null` until Slice 5) `, warnings`.
 | `set_props` | `id, props` (merged into the clip's props) | `set_fields` with the old `props` |
 | `set_lut` | `id, file` (`luts/<hash>.cube`), `intensity?` (`[num, den]` 0..1; 1 is not stored) | `set_fields` with the old `props` (or `clear_lut`) |
 | `clear_lut` | `id` | `set_fields` with the old `props` |
+| `set_mask` | `id, x, y, w, h` (`[num, den]` centre fractions), `shape?`, `feather?`, `invert?`, `target?`, `blur?`, `keys?` | `set_fields` with the old `props` |
+| `clear_mask` | `id` | `set_fields` with the old `props` |
 | `set_fade` | `id, fade_in?, fade_out?` (clips and text) | `set_fields` with the old values |
 | `set_anchor` | `id, anchor` or `anchor: null, at` | `set_fields` with the old `at`/`anchor` |
 | `edit_text` | `id, text?, style?` (a text item; at least one of `text`/`style`) | `set_fields` with the old values of the fields given |

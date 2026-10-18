@@ -300,6 +300,24 @@ def view(doc: dict) -> dict:
                         "name": _LU.display_name(folder, lut["file"]),
                         "intensity": _pair_to_float(lut.get("intensity", [1, 1])),
                     }
+                mk = props.get("mask")
+                if isinstance(mk, dict):
+                    from hermes_studio import mask as _MK
+
+                    mv = _MK.view(mk)
+                    gk = mk.get("keys")
+                    if isinstance(gk, list) and gk:
+                        mv["keys"] = [
+                            {
+                                "at": round(k["at"] / rate, 4),
+                                "x": _pair_to_float(k["x"]),
+                                "y": _pair_to_float(k["y"]),
+                                "w": _pair_to_float(k["w"]),
+                                "h": _pair_to_float(k["h"]),
+                            }
+                            for k in gk
+                        ]
+                    row["mask"] = mv
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
@@ -1376,6 +1394,83 @@ def clear_lut(pid: str, item_id: str) -> dict:
     if it["type"] != "clip":
         raise EditorError("only a clip can carry a LUT")
     return apply(pid, [{"op": "clear_lut", "id": item_id}], f"LUT {item_id} cleared")
+
+
+def set_mask(
+    pid: str,
+    item_id: str,
+    *,
+    shape: str = "rect",
+    x: float = 0.0,
+    y: float = 0.0,
+    w: float = 0.5,
+    h: float = 1.0,
+    feather: float = 0.0,
+    invert: bool = False,
+    target: str = "grade",
+    blur: float = 12.0,
+    keys: list[dict] | None = None,
+) -> dict:
+    """Feathered mask on a clip (isolates grade or blur). One undo step."""
+    from fractions import Fraction
+
+    from hermes_studio import mask as _M
+
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a mask")
+    if shape not in _M.SHAPES:
+        raise EditorError("shape must be rect or ellipse")
+    if target not in _M.TARGETS:
+        raise EditorError("target must be grade or blur")
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    op: dict = {
+        "op": "set_mask",
+        "id": item_id,
+        "x": pair(x),
+        "y": pair(y),
+        "w": pair(w),
+        "h": pair(h),
+    }
+    if shape != _M.DEFAULT_SHAPE:
+        op["shape"] = shape
+    if feather > 1e-9:
+        op["feather"] = pair(feather)
+    if invert:
+        op["invert"] = True
+    if target != _M.DEFAULT_TARGET:
+        op["target"] = target
+    if target == "blur" and abs(blur - _M.DEFAULT_BLUR) > 1e-9:
+        op["blur"] = pair(blur)
+    if keys:
+        out_keys = []
+        prev = None
+        for kf in keys:
+            at = T.seconds_to_ticks(float(kf.get("at", 0.0)))
+            if prev is not None and at <= prev:
+                raise EditorError("mask keys must be in strictly increasing time order")
+            prev = at
+            out_keys.append({
+                "at": at,
+                "x": pair(float(kf.get("x", x))),
+                "y": pair(float(kf.get("y", y))),
+                "w": pair(float(kf.get("w", w))),
+                "h": pair(float(kf.get("h", h))),
+            })
+        op["keys"] = out_keys
+    return apply(pid, [op], f"Mask {item_id}")
+
+
+def clear_mask(pid: str, item_id: str) -> dict:
+    """Remove a clip's mask. One undo step."""
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a mask")
+    return apply(pid, [{"op": "clear_mask", "id": item_id}], f"Mask {item_id} cleared")
 
 
 def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:

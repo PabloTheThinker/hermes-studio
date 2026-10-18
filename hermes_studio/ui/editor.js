@@ -84,6 +84,12 @@
       .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
       .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
       .tl-lutc{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1;pointer-events:none;display:none}
+      .tl-maskbox{position:absolute;border:1px solid #ffc83d;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:3}
+      .tl-maskbox.ellipse{border-radius:50%}
+      .tl-maskh{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;background:#ffc83d;border:1px solid #050505;border-radius:2px;pointer-events:auto;cursor:pointer;z-index:4}
+      .tl-maskh.move{cursor:move;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%}
+      .tl-maskrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 4px;font-size:11px}
+      .tl-maskrow label{display:flex;gap:4px;align-items:center}
       .tl-lutrow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 8px;align-items:center;margin-top:10px;font-size:12px}
       .tl-lutrow .tl-lutname{color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tl-lutbtn input{cursor:pointer}
@@ -389,7 +395,18 @@
       <div class="tl-lutrow"><span>LUT</span><label class="tl-lutbtn"><input type="file" accept=".cube" data-lutfile hidden>Import</label>
         <span class="tl-lutname" data-lutname>${it.lut ? esc(it.lut.name) : "None"}</span>
         ${it.lut ? `<button type="button" data-lutclear title="Remove the LUT">Clear</button>` : ""}
-        <label class="tl-wsat">Mix <input type="range" data-lutmix min="0" max="1" step="0.01" value="${(it.lut ? it.lut.intensity : 1).toFixed(2)}" ${it.lut ? "" : "disabled"} aria-label="LUT mix"><b data-lutmv>${(it.lut ? it.lut.intensity : 1).toFixed(2)}</b></label></div></div>`;
+        <label class="tl-wsat">Mix <input type="range" data-lutmix min="0" max="1" step="0.01" value="${(it.lut ? it.lut.intensity : 1).toFixed(2)}" ${it.lut ? "" : "disabled"} aria-label="LUT mix"><b data-lutmv>${(it.lut ? it.lut.intensity : 1).toFixed(2)}</b></label></div>
+      <div class="tl-masksec"><h4>Mask</h4>
+        <div class="tl-maskrow">
+          <label>Shape <select data-mskshape><option value="rect" ${!it.mask || it.mask.shape === "rect" ? "selected" : ""}>Rectangle</option><option value="ellipse" ${it.mask && it.mask.shape === "ellipse" ? "selected" : ""}>Ellipse</option></select></label>
+          <label>Target <select data-msktgt><option value="grade" ${!it.mask || it.mask.target === "grade" ? "selected" : ""}>Grade</option><option value="blur" ${it.mask && it.mask.target === "blur" ? "selected" : ""}>Blur</option></select></label>
+          <label><input type="checkbox" data-mskinv ${it.mask && it.mask.invert ? "checked" : ""}> Invert</label>
+          ${it.mask ? `<button type="button" data-mskclear>Clear</button>` : `<button type="button" data-mskadd>Add</button>`}
+        </div>
+        ${it.mask ? `<div class="tl-maskrow"><label>Feather <input type="range" data-mskfeather min="0" max="0.5" step="0.005" value="${(it.mask.feather || 0).toFixed(3)}"><b data-mskfv>${(it.mask.feather || 0).toFixed(3)}</b></label>
+          ${it.mask.target === "blur" ? `<label>Blur <input type="number" data-mskblur min="1" max="200" step="1" value="${Math.round(it.mask.blur || 12)}" style="width:52px"> px</label>` : ""}
+          <button type="button" data-mskkey title="Keyframe mask at the playhead">◆ at playhead</button></div>` : `<p style="color:var(--dim);font-size:11px;margin:4px 0">Isolate the grade or a blur to part of the frame. Drag the box in the viewer.</p>`}
+      </div></div>`;
   }
   // ---- transitions: kind picker and drag-to-resize on the badge -----------------------
   // The badge on the timeline names the transition it is (Cross Fade, Wipe Right, ...). Click
@@ -1740,6 +1757,7 @@
             <img class="tl-pic" alt="" />
             <canvas class="tl-lutc" aria-hidden="true"></canvas>
             <span class="tl-titles" aria-hidden="true"></span>
+            <span class="tl-maskov" aria-hidden="true"></span>
             <span class="tl-shade"></span>
             <span class="k">${esc(cw)} × ${esc(ch)}</span>
             <span class="big">${esc(fmt(play))}</span>
@@ -1868,6 +1886,8 @@
     wireWheels();
     wireCurves();
     wireLut();
+    wireMask();
+    showMaskOverlay();
     wireBalance();
     wireTransitions();
     loadXcat();
@@ -1970,6 +1990,7 @@
     // goes transparent and the frame's identical #050505 shows through, as in the render.
     els.forEach((n) => { n.style.filter = "url(#hs-grade)"; n.style.background = "transparent"; });
     drawLutPreview();
+    showMaskOverlay();
   }
 
   const lutPacks = {};
@@ -1982,11 +2003,84 @@
     lutPacks[file] = window.HSLut.pack(j.lut);
     return lutPacks[file];
   }
+  let maskLive = null; // { ...mask fields } while dragging
+  function maskForClip(it) {
+    if (!it) return null;
+    if (maskLive && maskLive.id === it.id) return maskLive;
+    return it.mask || null;
+  }
+  function clipLocalT(it) {
+    if (!it || !doc) return 0;
+    return Math.max(0, play - it.at);
+  }
+  function showMaskOverlay() {
+    const ov = root && root.querySelector(".tl-maskov");
+    const fr = root && root.querySelector(".tl-frame");
+    if (!ov || !fr) return;
+    const it = mainClip(play);
+    const m = maskForClip(it);
+    if (!m || playing) { ov.innerHTML = ""; return; }
+    const p = window.HSMask ? window.HSMask.resolveAt(m, clipLocalT(it)) : m;
+    const cx = 0.5 + (p.x || 0);
+    const cy = 0.5 + (p.y || 0);
+    const w = p.w != null ? p.w : 0.5;
+    const h = p.h != null ? p.h : 1;
+    const left = (cx - w / 2) * 100;
+    const top = (cy - h / 2) * 100;
+    ov.innerHTML = `<span class="tl-maskbox ${m.shape === "ellipse" ? "ellipse" : ""}" style="left:${left.toFixed(3)}%;top:${top.toFixed(3)}%;width:${(w * 100).toFixed(3)}%;height:${(h * 100).toFixed(3)}%">
+      <i class="tl-maskh move" data-mskdrag="move" style="left:50%;top:50%"></i>
+      <i class="tl-maskh" data-mskdrag="se" style="left:100%;top:100%"></i></span>`;
+  }
+  async function drawMaskedPicture() {
+    const it = mainClip(play);
+    const cvs = root && root.querySelector(".tl-lutc");
+    const pic = root && root.querySelector(".tl-pic");
+    const vid = root && root.querySelector(".tl-vid");
+    const m = maskForClip(it);
+    if (!cvs || !it || !m || !window.HSMask) {
+      if (cvs && !it?.lut) cvs.style.display = "none";
+      if (!m) { if (pic) pic.style.visibility = ""; if (vid) vid.style.visibility = ""; }
+      return false;
+    }
+    const src = playing && vid && !vid.hidden && vid.readyState >= 2 ? vid : pic;
+    if (!src || !(src.videoWidth || src.naturalWidth)) return false;
+    const w = src.videoWidth || src.naturalWidth;
+    const h = src.videoHeight || src.naturalHeight;
+    cvs.width = w; cvs.height = h;
+    const ctx = cvs.getContext("2d", { willReadFrequently: true });
+    const gf = root.querySelector("#hs-grade") ? "url(#hs-grade)" : "none";
+    ctx.filter = "none";
+    ctx.drawImage(src, 0, 0, w, h);
+    const plain = ctx.getImageData(0, 0, w, h);
+    ctx.filter = gf;
+    ctx.drawImage(src, 0, 0, w, h);
+    if (it.lut && window.HSLut && it.lut.file) {
+      try {
+        const pack = await lutPack(it.lut.file);
+        const graded = ctx.getImageData(0, 0, w, h);
+        window.HSLut.applyImageData(pack, it.lut.intensity, graded.data, w, h);
+        ctx.putImageData(graded, 0, 0);
+      } catch (e) { /* */ }
+    }
+    const graded = ctx.getImageData(0, 0, w, h);
+    const out = new Uint8ClampedArray(plain.data);
+    window.HSMask.applyMaskedGrade(out, w, h, m, clipLocalT(it), graded.data);
+    ctx.filter = "none";
+    ctx.putImageData(new ImageData(out, w, h), 0, 0);
+    cvs.style.display = "block";
+    if (pic) pic.style.visibility = "hidden";
+    if (vid) vid.style.visibility = "hidden";
+    return true;
+  }
   async function drawLutPreview() {
     const it = mainClip(play);
     const cvs = root && root.querySelector(".tl-lutc");
     const pic = root && root.querySelector(".tl-pic");
     const vid = root && root.querySelector(".tl-vid");
+    if (maskForClip(it) && window.HSMask) {
+      const ok = await drawMaskedPicture();
+      if (ok) return;
+    }
     if (!cvs || !it || !it.lut || !window.HSLut) {
       if (cvs) cvs.style.display = "none";
       if (pic) pic.style.visibility = "";
@@ -2012,6 +2106,91 @@
       if (pic) pic.style.visibility = "hidden";
       if (vid) vid.style.visibility = "hidden";
     } catch (e) { /* frame not ready yet */ }
+  }
+
+  function wireMask() {
+    if (!root || !wheel) return;
+    const add = root.querySelector("[data-mskadd]");
+    if (add) add.onclick = () => commit({ op: "mask", id: wheel.id, w: 0.5, h: 1, feather: 0.08 });
+    const clr = root.querySelector("[data-mskclear]");
+    if (clr) clr.onclick = () => commit({ op: "mask", id: wheel.id, clear: true });
+    const sendMask = (extra) => {
+      const it = doc && find(wheel.id);
+      const m = it && it.mask;
+      if (!m) return;
+      commit({ op: "mask", id: wheel.id, shape: m.shape || "rect", x: m.x || 0, y: m.y || 0, w: m.w, h: m.h,
+        feather: m.feather || 0, invert: !!m.invert, target: m.target || "grade", blur: m.blur || 12, keys: m.keys, ...extra });
+    };
+    const sh = root.querySelector("[data-mskshape]");
+    if (sh) sh.onchange = () => sendMask({ shape: sh.value });
+    const tg = root.querySelector("[data-msktgt]");
+    if (tg) tg.onchange = () => sendMask({ target: tg.value });
+    const inv = root.querySelector("[data-mskinv]");
+    if (inv) inv.onchange = () => sendMask({ invert: inv.checked });
+    const ft = root.querySelector("[data-mskfeather]");
+    const fv = root.querySelector("[data-mskfv]");
+    if (ft) {
+      ft.oninput = () => { if (fv) fv.textContent = parseFloat(ft.value).toFixed(3); drawLutPreview(); showMaskOverlay(); };
+      ft.onchange = () => sendMask({ feather: parseFloat(ft.value) });
+    }
+    const bl = root.querySelector("[data-mskblur]");
+    if (bl) bl.onchange = () => sendMask({ blur: parseFloat(bl.value) });
+    const mk = root.querySelector("[data-mskkey]");
+    if (mk) mk.onclick = () => {
+      const it = find(wheel.id);
+      if (!it || !it.mask) return;
+      const t = clipLocalT(it);
+      const keys = (it.mask.keys || []).map((k) => ({ ...k }));
+      const row = { at: t, x: it.mask.x || 0, y: it.mask.y || 0, w: it.mask.w, h: it.mask.h };
+      const ix = keys.findIndex((k) => Math.abs(k.at - t) < 0.02);
+      if (ix >= 0) keys[ix] = row; else keys.push(row);
+      keys.sort((a, b) => a.at - b.at);
+      sendMask({ keys });
+    };
+    const fr = root.querySelector(".tl-frame");
+    if (!fr || fr.dataset.mskwired) return;
+    fr.dataset.mskwired = "1";
+    let mdrag = null;
+    fr.addEventListener("pointerdown", (e) => {
+      const h = e.target.closest("[data-mskdrag]");
+      if (!h || playing) return;
+      const it = mainClip(play);
+      if (!it || !it.mask) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fr.setPointerCapture(e.pointerId);
+      const m = it.mask;
+      mdrag = { id: it.id, mode: h.dataset.mskdrag, x0: e.clientX, y0: e.clientY,
+        bx: m.x || 0, by: m.y || 0, bw: m.w, bh: m.h, moved: false };
+      maskLive = { id: it.id, ...m };
+    });
+    fr.addEventListener("pointermove", (e) => {
+      if (!mdrag || !maskLive) return;
+      const r = fr.getBoundingClientRect();
+      const dx = (e.clientX - mdrag.x0) / r.width;
+      const dy = (e.clientY - mdrag.y0) / r.height;
+      if (mdrag.mode === "move") {
+        maskLive.x = Math.max(-0.5, Math.min(0.5, mdrag.bx + dx));
+        maskLive.y = Math.max(-0.5, Math.min(0.5, mdrag.by + dy));
+      } else {
+        maskLive.w = Math.max(0.05, Math.min(1, mdrag.bw + dx * 2));
+        maskLive.h = Math.max(0.05, Math.min(1, mdrag.bh + dy * 2));
+      }
+      if (Math.abs(dx) + Math.abs(dy) > 0.002) mdrag.moved = true;
+      showMaskOverlay();
+      drawLutPreview();
+    });
+    const mend = async () => {
+      if (!mdrag || !mdrag.moved) { mdrag = null; maskLive = null; return; }
+      const m = maskLive;
+      mdrag = null;
+      maskLive = null;
+      await commit({ op: "mask", id: m.id, shape: m.shape || "rect", x: m.x || 0, y: m.y || 0, w: m.w, h: m.h,
+        feather: m.feather || 0, invert: !!m.invert, target: m.target || "grade", blur: m.blur || 12, keys: m.keys });
+      showMaskOverlay();
+    };
+    fr.addEventListener("pointerup", mend);
+    fr.addEventListener("pointercancel", () => { mdrag = null; maskLive = null; showMaskOverlay(); });
   }
 
   function wireLut() {

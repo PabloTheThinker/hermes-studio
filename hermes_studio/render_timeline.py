@@ -224,6 +224,40 @@ def _vchain(*parts: str) -> str:
     return ",".join(p.strip(",") for p in parts if p and p.strip(","))
 
 
+def _mask_corr_chain(mask: dict, gchain: str, lut_pre: str) -> str:
+    from hermes_studio import mask as _MK
+
+    if str(mask.get("target") or _MK.DEFAULT_TARGET) == "blur":
+        bpx = _MK.frac(mask.get("blur")) or _MK.DEFAULT_BLUR
+        return f"boxblur=luma_radius={bpx:.3f}:luma_power=1:chroma_radius=0"
+    return _vchain(gchain, lut_pre)
+
+
+def _masked_mid_graph(
+    plain_tag: str,
+    mask: dict,
+    dw: int,
+    dh: int,
+    rate: int,
+    gchain: str,
+    lut_pre: str,
+    n: int,
+    mid: str,
+) -> str:
+    """``plain_tag`` is scaled picture; writes corrected branch + matte + merge into ``mid``."""
+    from hermes_studio import mask as _MK
+
+    corr = _mask_corr_chain(mask, gchain, lut_pre)
+    matte = _MK.ffmpeg_matte_filter(mask, dw, dh, rate)
+    ctag, mtag = f"mc{n}", f"mm{n}"
+    return (
+        f"[{plain_tag}]split[{plain_tag}a][{plain_tag}b];"
+        f"[{plain_tag}b]{corr}[{ctag}];"
+        f"[{plain_tag}a]{matte}[{mtag}];"
+        f"[{plain_tag}a][{ctag}][{mtag}]maskedmerge[{mid}]"
+    )
+
+
 def _clip_lut(raw: Any, folder: Path) -> dict | None:
     """Resolved LUT path and intensity for a clip, or None."""
     from hermes_studio import lut as _LU
@@ -525,8 +559,10 @@ def _build_plan(
         grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
         hold = props_.get("hold") if isinstance(props_.get("hold"), int) and props_.get("hold") > 0 else None
         lut = _clip_lut(props_.get("lut"), folder)
-        clip_extra = {"crop": crop, "look": look, "grade": grade, "lut": lut, "fade_in": fi, "fade_out": fo, "transform": transform,
-                      "keyframes": keyframes, "speed_keys": None if hold else speed_keys, "tl_dur": tl_dur, "hold": hold}
+        mask = props_.get("mask") if isinstance(props_.get("mask"), dict) else None
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "lut": lut, "mask": mask, "fade_in": fi, "fade_out": fo,
+                      "transform": transform, "keyframes": keyframes, "speed_keys": None if hold else speed_keys,
+                      "tl_dur": tl_dur, "hold": hold}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -970,38 +1006,58 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
             pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
+            clip_mask = inp.get("mask")
+            base_scale = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic")
             if inp.get("hold"):
                 # A freeze frame: pick exactly the one source frame (a half-frame window either
                 # side of its time, so rounding can't take two or none), clone it out to the
                 # hold, then cut to the hold's length.
                 fr = 1.0 / (fps if fps > 0 else 30.0)
                 mid = f"vm{n}"
-                core = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic", gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
+                ptag = f"mp{n}"
+                after = _vchain(xf, pad) + ",setpts=PTS-STARTPTS"
                 tail = _vchain(
                     f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}",
                     vfade.lstrip(","),
                     "setsar=1",
                     "format=yuv420p",
                 )
-                if lut_graph:
+                trim = f"trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f}"
+                if clip_mask:
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid)}"
+                    lg = ""
+                    if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
+                        lg = f";{_LU.ffmpeg_graph(lut_info['path'], lut_info['intensity'], mid)}"
+                    fc.append(f"{head};[{mid}]{after}{lg};[{mid}]{tail}[v{n}]")
+                elif lut_graph:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
                     lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
-                    fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{core}[{mid}];"
-                              f"[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    fc.append(f"[{src}]{trim},{core}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
                 else:
-                    fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{core},{tail}[v{n}]")
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
+                    fc.append(f"[{src}]{trim},{core},{tail}[v{n}]")
             else:
                 # setsar=1 on every piece: scaling a 9:16 phone shot to whole pixels leaves it SAR
                 # 1215:1216, a 16:9 shot stays 1:1, and concat refuses to join the two -- any cut
                 # mixing vertical and horizontal footage failed to render. The canvas is square.
                 mid = f"vm{n}"
-                core = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic", gchain, lut_pre, xf, pad) + f",setpts={pts},fps={fps:.3f}"
+                ptag = f"mp{n}"
+                after = _vchain(xf, pad) + f",setpts={pts},fps={fps:.3f}"
                 tail = _vchain(vfade.lstrip(","), "setsar=1", "format=yuv420p")
-                if lut_graph:
+                trim = f"trim=start={s_in:.3f}:end={s_in + src_dur:.3f}"
+                if clip_mask:
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid)}"
+                    lg = ""
+                    if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
+                        lg = f";{_LU.ffmpeg_graph(lut_info['path'], lut_info['intensity'], mid)}"
+                    fc.append(f"{head};[{mid}]{after}{lg};[{mid}]{tail}[v{n}]")
+                elif lut_graph:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + f",{after}"
                     lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
-                    fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{core}[{mid}];"
-                              f"[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    fc.append(f"[{src}]{trim},{core}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
                 else:
-                    fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{core},{tail}[v{n}]")
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + f",{after}"
+                    fc.append(f"[{src}]{trim},{core},{tail}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")

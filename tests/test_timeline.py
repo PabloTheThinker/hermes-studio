@@ -271,6 +271,8 @@ BAD = {
     "track gain not a ratio": (lambda d: track(d, "A1").__setitem__("gain", 0.5), "bad_rational"),
     "lut file outside luts": (lambda d: item(d, "c1").setdefault("props", {}).update(
         {"lut": {"file": "media/evil.cube"}}), "bad_lut"),
+    "mask shape invalid": (lambda d: item(d, "c1").setdefault("props", {}).update(
+        {"mask": {"shape": "diamond", "x": [0, 1], "y": [0, 1], "w": [1, 2], "h": [1, 1]}}), "bad_mask"),
 }
 
 
@@ -639,7 +641,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 44  # every rule above has a case in BAD (bad_lut the last added)
+    assert len(T.RULES) == 45  # every rule above has a case in BAD (bad_mask the last added)
 
 
 def _huge_scaled_src(d):

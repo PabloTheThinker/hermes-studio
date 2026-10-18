@@ -930,6 +930,41 @@ def op_clear_lut(ctx: _Ctx, a: dict) -> list[dict]:
     return _set(ctx, it["id"], {"props": {**it.get("props", {}), "lut": None}})
 
 
+def _mask_value(a: dict) -> dict:
+    from hermes_studio import mask as _M
+
+    keys = a.get("keys")
+    mk_keys = None
+    if isinstance(keys, list) and keys:
+        mk_keys = copy.deepcopy(keys)
+    return _M.store(
+        shape=str(a.get("shape") or _M.DEFAULT_SHAPE),
+        x=_M.frac(a.get("x", [0, 1])) or 0.0,
+        y=_M.frac(a.get("y", [0, 1])) or 0.0,
+        w=_M.frac(a.get("w", [1, 2])) or 0.5,
+        h=_M.frac(a.get("h", [1, 1])) or 1.0,
+        feather=_M.frac(a.get("feather", [0, 1])) or 0.0,
+        invert=a.get("invert") is True,
+        target=str(a.get("target") or _M.DEFAULT_TARGET),
+        blur=_M.frac(a.get("blur", _M.to_pair(_M.DEFAULT_BLUR))) or _M.DEFAULT_BLUR,
+        keys=mk_keys,
+    )
+
+
+def op_set_mask(ctx: _Ctx, a: dict) -> list[dict]:
+    _, _, it = _find(ctx.doc, a["id"])
+    if it["type"] != "clip":
+        raise _OpError("bad_arg", "set_mask takes a clip id", "id", item_id=it["id"])
+    return _set(ctx, it["id"], {"props": {**it.get("props", {}), "mask": _mask_value(a)}})
+
+
+def op_clear_mask(ctx: _Ctx, a: dict) -> list[dict]:
+    _, _, it = _find(ctx.doc, a["id"])
+    if it["type"] != "clip":
+        raise _OpError("bad_arg", "clear_mask takes a clip id", "id", item_id=it["id"])
+    return _set(ctx, it["id"], {"props": {**it.get("props", {}), "mask": None}})
+
+
 def op_set_fade(ctx: _Ctx, a: dict) -> list[dict]:
     _, _, it = _find(ctx.doc, a["id"])
     sets = {k: _need_ticks(a, k) for k in ("fade_in", "fade_out") if k in a}
@@ -1112,6 +1147,12 @@ PUBLIC_OPS: dict[str, tuple[Callable, frozenset, frozenset]] = {
     "set_props": (op_set_props, frozenset({"id", "props"}), frozenset()),
     "set_lut": (op_set_lut, frozenset({"id", "file"}), frozenset({"intensity"})),
     "clear_lut": (op_clear_lut, frozenset({"id"}), frozenset()),
+    "set_mask": (
+        op_set_mask,
+        frozenset({"id", "x", "y", "w", "h"}),
+        frozenset({"shape", "feather", "invert", "target", "blur", "keys"}),
+    ),
+    "clear_mask": (op_clear_mask, frozenset({"id"}), frozenset()),
     "set_fade": (op_set_fade, frozenset({"id"}), frozenset({"fade_in", "fade_out"})),
     "set_anchor": (op_set_anchor, frozenset({"id", "anchor"}), frozenset({"at"})),
     "set_canvas": (op_set_canvas, frozenset({"width", "height"}), frozenset()),

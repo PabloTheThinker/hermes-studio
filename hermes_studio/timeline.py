@@ -74,7 +74,7 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold", "lut"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold", "lut", "mask"}
 LUT_KEYS = {"file", "intensity"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
@@ -90,7 +90,7 @@ SPEEDKEY_KEYS = {"at", "speed"}
 # the clip's constant props.speed for the render (the schema treats a clip as either constant or
 # ramped, never both meaningfully).
 
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None, "lut": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None, "lut": None, "mask": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
 GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
@@ -118,7 +118,7 @@ RULES = (
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
     "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
-    "bad_hold", "bad_title", "duck_music_only", "bad_lut",
+    "bad_hold", "bad_title", "duck_music_only", "bad_lut", "bad_mask",
 )
 
 
@@ -179,6 +179,7 @@ _HINTS = {
     "bad_hold": "A freeze frame can't also ramp or reverse.",
     "bad_title": "A title's layers must be exactly what titles.make() builds from its own fields.",
     "bad_lut": "A clip LUT is {file: luts/<hash>.cube, intensity?: [num, den] in 0..1}; only 3D .cube files under luts/ count.",
+    "bad_mask": "A clip mask is {shape: rect|ellipse, x, y, w, h, feather?, invert?, target?: grade|blur, blur?, keys?}; defaults are dropped.",
 }
 
 
@@ -559,6 +560,32 @@ def _check_keyframes(c: _Checker, kfs: Any, path: str) -> None:
             prev_at = kf["at"]
 
 
+def _check_mask_keys(c: _Checker, keys: Any, path: str) -> None:
+    """Mask position/size keys: sorted {at, x, y, w, h} in ticks from the clip start."""
+    if not isinstance(keys, list) or not keys:
+        c.bad("bad_mask", path, "mask keys must be a non-empty list")
+        return
+    if len(keys) > MAX_KEYFRAMES:
+        c.bad("out_of_range", path, f"at most {MAX_KEYFRAMES} mask keys")
+        return
+    from hermes_studio import mask as _M
+
+    prev_at = None
+    for i, kf in enumerate(keys):
+        kp = _j(path, i)
+        if not c.keys(kf, kp, _M.MASK_KEY_KEYS):
+            continue
+        ok_at = c.ticks(kf["at"], _j(kp, "at"), signed=True)
+        c.ratio(kf["x"], _j(kp, "x"), _M.POS_MIN, _M.POS_MAX)
+        c.ratio(kf["y"], _j(kp, "y"), _M.POS_MIN, _M.POS_MAX)
+        c.ratio(kf["w"], _j(kp, "w"), _M.SIZE_MIN, _M.SIZE_MAX)
+        c.ratio(kf["h"], _j(kp, "h"), _M.SIZE_MIN, _M.SIZE_MAX)
+        if ok_at and _is_int(kf["at"]):
+            if prev_at is not None and kf["at"] <= prev_at:
+                c.bad("bad_order", _j(kp, "at"), "mask keys must be in strictly increasing time order")
+            prev_at = kf["at"]
+
+
 def _check_speed_keys(c: _Checker, keys: Any, path: str) -> None:
     """A speed ramp: a sorted, non-empty list of {at, speed} (same rule ids as keyframes). `at`
     is ticks from the clip's start; the render clamps a ramp to the clip's span, so a ramp that
@@ -813,6 +840,45 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
                     c.bad("bad_lut", _j(lp, "intensity"), "intensity 1 is the default and is not stored")
                 elif "intensity" in lu:
                     c.ratio(lu["intensity"], _j(lp, "intensity"), Fraction(0), Fraction(1))
+            if pr.get("mask") is not None:
+                from hermes_studio import mask as _M
+
+                mp = _j(ip, "props", "mask")
+                mk = pr["mask"]
+                opt = _M.MASK_KEYS - {"x", "y", "w", "h"}
+                if not c.keys(mk, mp, {"x", "y", "w", "h"}, opt):
+                    pass
+                elif "shape" in mk and str(mk["shape"]) not in _M.SHAPES:
+                    c.bad("bad_mask", _j(mp, "shape"), "shape must be rect or ellipse")
+                elif "shape" in mk and mk["shape"] == _M.DEFAULT_SHAPE:
+                    c.bad("bad_mask", _j(mp, "shape"), "rect is the default and is not stored")
+                elif "target" in mk and str(mk["target"]) not in _M.TARGETS:
+                    c.bad("bad_mask", _j(mp, "target"), "target must be grade or blur")
+                elif "target" in mk and mk["target"] == _M.DEFAULT_TARGET:
+                    c.bad("bad_mask", _j(mp, "target"), "grade is the default and is not stored")
+                elif mk.get("invert") is not True and "invert" in mk:
+                    c.bad("bad_mask", _j(mp, "invert"), "invert must be true or null")
+                else:
+                    c.ratio(mk["x"], _j(mp, "x"), _M.POS_MIN, _M.POS_MAX)
+                    c.ratio(mk["y"], _j(mp, "y"), _M.POS_MIN, _M.POS_MAX)
+                    c.ratio(mk["w"], _j(mp, "w"), _M.SIZE_MIN, _M.SIZE_MAX)
+                    c.ratio(mk["h"], _j(mp, "h"), _M.SIZE_MIN, _M.SIZE_MAX)
+                    if "feather" in mk:
+                        if mk["feather"] == [0, 1]:
+                            c.bad("bad_mask", _j(mp, "feather"), "feather 0 is the default and is not stored")
+                        else:
+                            c.ratio(mk["feather"], _j(mp, "feather"), _M.FEATHER_MIN, _M.FEATHER_MAX)
+                    tgt = str(mk.get("target") or _M.DEFAULT_TARGET)
+                    if tgt == "blur":
+                        if "blur" in mk:
+                            if mk["blur"] == _M.to_pair(_M.DEFAULT_BLUR):
+                                c.bad("bad_mask", _j(mp, "blur"), "blur 12 is the default and is not stored")
+                            else:
+                                c.ratio(mk["blur"], _j(mp, "blur"), _M.BLUR_MIN, _M.BLUR_MAX)
+                    elif "blur" in mk:
+                        c.bad("bad_mask", _j(mp, "blur"), "blur belongs on a blur mask only")
+                    if "keys" in mk:
+                        _check_mask_keys(c, mk["keys"], _j(mp, "keys"))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")
