@@ -25,6 +25,11 @@
       .tl button:hover{color:var(--ink);border-color:var(--amber)}
       .tl button.on{color:var(--ink);border-color:var(--amber);background:rgba(255,200,61,.08)}
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
+      .tl-exp{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+      .tl-exp select,.tl-exp input[type=number]{background:var(--bg);border:1px solid var(--line-2);border-radius:6px;color:var(--ink);font:500 11px var(--mono);padding:4px 6px;max-width:72px}
+      .tl-renderbar{flex:1;min-width:80px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+      .tl-renderbar i{display:block;height:100%;background:var(--amber);width:0;transition:width .15s}
+      .tl-probe{font:500 11px var(--mono);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden}
       .tl-frame.haspic{background:#000}
       .tl-frame.haspic .tl-shade,.tl-frame.haspic .k,.tl-frame.haspic .big,.tl-frame.haspic .who{display:none}
@@ -247,6 +252,11 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
+  let exportPreset = (() => { try { return localStorage.getItem("hs-export-preset") || "1080p"; } catch (e) { return "1080p"; } })();
+  let exportQuality = (() => { try { return localStorage.getItem("hs-export-quality") || "standard"; } catch (e) { return "standard"; } })();
+  let exportFps = (() => { try { return localStorage.getItem("hs-export-fps") || ""; } catch (e) { return ""; } })();
+  let renderJob = null; // {state, progress, result, error}
+  let renderPoll = null;
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
   // Multi-clip selection, Resolve / Final Cut style. selSet holds every selected clip id;
   // sel stays the "last one" so the inspector keeps pointing at something concrete. An
@@ -1694,13 +1704,23 @@
           <b>Edit</b>
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
           <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
-          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
+          <span class="tl-exp" title="Export preset and quality (saved in this browser)">
+            <select data-export-preset aria-label="Export preset">
+              ${[["1080p", "1080p"], ["4k", "4K"], ["vertical", "Vertical"], ["prores", "ProRes"]].map(([v, l]) => `<option value="${v}" ${exportPreset === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+            <select data-export-quality aria-label="Export quality">
+              ${[["draft", "Draft"], ["standard", "Std"], ["high", "High"]].map(([v, l]) => `<option value="${v}" ${exportQuality === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+            <input type="number" data-export-fps min="1" max="120" step="0.01" placeholder="fps" value="${esc(exportFps)}" aria-label="Export fps override" title="Leave blank to use the timeline frame rate">
+          </span>
+          ${renderJob && (renderJob.state === "queued" || renderJob.state === "running") ? `<span class="tl-renderbar" title="Export progress"><i style="width:${Math.round((renderJob.progress || 0) * 100)}%"></i></span><button type="button" data-act="render-cancel">Cancel</button>` : ""}
+          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}${renderJob && renderJob.result && renderJob.result.probe ? `<span class="tl-probe" title="ffprobe on the export"> ${esc(renderJob.result.probe.width)}×${esc(renderJob.result.probe.height)} ${esc(renderJob.result.probe.fps)}fps ${esc(renderJob.result.probe.video_codec)}/${esc(renderJob.result.probe.audio_codec)}</span>` : ""}</span>
           <button type="button" data-act="bin" class="${binOpen ? "on" : ""}" title="Show or hide the bin">Bin</button>
           <button type="button" data-act="title" title="Add a lower-third title at the playhead (Alt+T)">Title</button>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
-          <button type="button" class="tl-go" data-act="render" title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
+          <button type="button" class="tl-go" data-act="render" ${renderJob && (renderJob.state === "queued" || renderJob.state === "running") ? "disabled" : ""} title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
         <div class="tl-stage${binOpen ? " withbin" : ""}">
@@ -3024,18 +3044,39 @@
       await commit({ op: "canvas", width: w, height: h });
       return;
     }
+    if (name === "render-cancel") {
+      try {
+        await api({ op: "render_cancel" });
+        msg = "Stopping export…";
+      } catch (e) {
+        msg = e.message;
+      }
+      paint();
+      return;
+    }
     if (name === "render") {
+      const presetEl = root.querySelector("[data-export-preset]");
+      const qualEl = root.querySelector("[data-export-quality]");
+      const fpsEl = root.querySelector("[data-export-fps]");
+      exportPreset = (presetEl && presetEl.value) || exportPreset;
+      exportQuality = (qualEl && qualEl.value) || exportQuality;
+      exportFps = (fpsEl && fpsEl.value.trim()) || "";
+      try {
+        localStorage.setItem("hs-export-preset", exportPreset);
+        localStorage.setItem("hs-export-quality", exportQuality);
+        localStorage.setItem("hs-export-fps", exportFps);
+      } catch (e) { /* ignore */ }
+      const body = { op: "render", preset: exportPreset, quality: exportQuality };
+      if (exportFps) body.fps = Number(exportFps);
+      const rg = rangeOf();
+      if (rg) { body.in = rg[0]; body.out = rg[1]; }
       msg = "Rendering… this takes a moment.";
       paint();
       try {
-        const rg = rangeOf();
-        const res = await api(rg ? { op: "render", in: rg[0], out: rg[1] } : { op: "render" });
+        const res = await api(body);
         doc = res.project;
-        const r = res.render || {};
-        const what = r.range ? `the range ${tc(r.range[0])}–${tc(r.range[1])}` : r.name || "file";
-        msg = `Rendered ${what} — ${r.size ? r.size[0] + "×" + r.size[1] : ""} ${r.duration || ""}s`;
-        // Cache-bust: the file keeps one name, so a browser could hand back the previous render.
-        renderOut = { name: r.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
+        renderJob = res.render || { state: "queued", progress: 0 };
+        startRenderPoll();
       } catch (e) {
         msg = e.message;
       }
@@ -3084,6 +3125,50 @@
   function fit() {
     const box = root ? root.clientWidth : 900;
     pps = Math.max(8, (box - LAB - 48) / Math.max(doc.duration, 1));
+  }
+
+  function stopRenderPoll() {
+    if (renderPoll) { clearInterval(renderPoll); renderPoll = null; }
+  }
+
+  function finishRenderJob(r) {
+    const out = r.result || r;
+    const what = out.range ? `the range ${tc(out.range[0])}–${tc(out.range[1])}` : out.name || "file";
+    const pr = out.probe || {};
+    const loud = out.loudness && out.loudness.lufs != null ? ` · ${out.loudness.lufs.toFixed(1)} LUFS` : "";
+    msg = `Rendered ${what} — ${pr.width || out.size?.[0]}×${pr.height || out.size?.[1]} ${out.duration || pr.duration || ""}s${loud}`;
+    renderOut = { name: out.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
+  }
+
+  async function tickRenderPoll() {
+    try {
+      const res = await api({ op: "render_status" });
+      doc = res.project || doc;
+      renderJob = res.render || renderJob;
+      const st = renderJob.state;
+      if (st === "ready" && renderJob.result) {
+        stopRenderPoll();
+        finishRenderJob(renderJob);
+      } else if (st === "failed") {
+        stopRenderPoll();
+        msg = renderJob.error || "Export failed.";
+      } else if (st === "cancelled") {
+        stopRenderPoll();
+        msg = "Export cancelled.";
+        renderJob = null;
+      }
+      paint();
+    } catch (e) {
+      stopRenderPoll();
+      msg = e.message;
+      paint();
+    }
+  }
+
+  function startRenderPoll() {
+    stopRenderPoll();
+    renderPoll = setInterval(() => { tickRenderPoll(); }, 500);
+    tickRenderPoll();
   }
 
   function onKey(e) {

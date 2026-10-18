@@ -869,15 +869,22 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 200, {"ok": True, "words": words})
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "render":
             from hermes_studio import editor as _e
+            from hermes_studio import editor_renders as ER
 
             try:
-                out = _e._dir(parts[2]) / f"{parts[2]}-render.mp4"
-                out = _e.resolve_media(_e._dir(parts[2]), out.name)
+                folder = _e._dir(parts[2])
+                out = ER.last_export_file(folder)
+                if out is None:
+                    return _json(self, 404, {"ok": False, "error": "no render yet"})
+                out = _e.resolve_media(folder, out.name)
             except _e.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
-            if not out.is_file():
-                return _json(self, 404, {"ok": False, "error": "no render yet"})
-            return self._file(out, "video/mp4")
+            mime = "video/quicktime" if out.suffix.lower() == ".mov" else "video/mp4"
+            return self._file(out, mime)
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "export-presets":
+            from hermes_studio import api
+
+            return _json(self, 200, api.editor_export_presets())
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
@@ -1064,16 +1071,42 @@ class StudioHandler(BaseHTTPRequestHandler):
             elif op == "import":
                 project = editor.import_run(pid)
             elif op == "render":
-                from hermes_studio import render_timeline as R
+                from hermes_studio import api
+                from hermes_studio.api import HermesStudioError
 
-                # In/Out from the page's marks: render only that range. Absent = the whole cut.
                 start = _num(body, "in", -1.0) if body.get("in") is not None else None
                 end = _num(body, "out", -1.0) if body.get("out") is not None else None
+                preset = body.get("preset")
+                quality = body.get("quality") or "standard"
+                fps = body.get("fps")
                 try:
-                    out = R.render_project(pid, start=start, end=end)
-                except R.RenderError as exc:
+                    fps_v = float(fps) if fps is not None else None
+                except (TypeError, ValueError):
+                    return _json(self, 400, {"ok": False, "error": "fps must be a number"})
+                try:
+                    st = api.editor_render(
+                        pid,
+                        preset=str(preset) if preset is not None else None,
+                        fps=fps_v,
+                        quality=str(quality),
+                        start=start,
+                        end=end,
+                        detach=True,
+                    )
+                except HermesStudioError as exc:
                     return _json(self, 400, {"ok": False, "error": str(exc)})
-                return _json(self, 200, {"ok": True, "render": out, "project": editor.open_project(pid)})
+                return _json(self, 200, {"ok": True, "render": st, "project": editor.open_project(pid)})
+            elif op == "render_status":
+                from hermes_studio import api
+
+                st = api.editor_render_status(pid)
+                out = st.get("result")
+                return _json(self, 200, {"ok": True, "render": {**st, "result": out}, "project": editor.open_project(pid)})
+            elif op == "render_cancel":
+                from hermes_studio import api
+
+                st = api.editor_render_cancel(pid)
+                return _json(self, 200, {"ok": True, "render": st, "project": editor.open_project(pid)})
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":

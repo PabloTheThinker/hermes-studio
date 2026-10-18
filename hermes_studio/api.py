@@ -565,6 +565,74 @@ def design_resize(design_id: str, size: str = "", w: int | None = None, h: int |
     return {"ok": True, "id": doc["id"], "design": doc, "from": design_id}
 
 
+# --------------------------------------------------------------------------- editor export
+
+
+def editor_render(
+    project_id: str,
+    out: str | Path | None = None,
+    *,
+    preset: str | None = None,
+    fps: float | None = None,
+    quality: str | None = "standard",
+    start: float | None = None,
+    end: float | None = None,
+    detach: bool = False,
+) -> dict:
+    """Render an Edit-page timeline. Blocking unless ``detach`` (poll :func:`editor_render_status`)."""
+    from hermes_studio import editor_renders as ER
+    from hermes_studio.editor import EditorError
+    from hermes_studio.export_presets import ExportPresetError, list_presets
+    from hermes_studio.render_timeline import RenderError, render_project
+
+    path = Path(out).expanduser() if out else None
+    if detach:
+        try:
+            st = ER.start(
+                project_id,
+                preset=preset,
+                fps=fps,
+                quality=quality,
+                start_s=start,
+                end_s=end,
+                out_path=path,
+            )
+        except ExportPresetError as exc:
+            raise HermesStudioError(str(exc), code="bad_input") from exc
+        return {"ok": True, **st, "presets": list_presets()}
+    try:
+        res = render_project(
+            project_id,
+            path,
+            start=start,
+            end=end,
+            preset=preset,
+            fps=fps,
+            quality=quality,
+        )
+    except (RenderError, EditorError, ExportPresetError) as exc:
+        raise HermesStudioError(str(exc), code="failed") from exc
+    return {"ok": True, **res, "presets": list_presets()}
+
+
+def editor_render_status(project_id: str) -> dict:
+    from hermes_studio import editor_renders as ER
+
+    return {"ok": True, **ER.status(project_id)}
+
+
+def editor_render_cancel(project_id: str) -> dict:
+    from hermes_studio import editor_renders as ER
+
+    return {"ok": True, **ER.cancel(project_id)}
+
+
+def editor_export_presets() -> dict:
+    from hermes_studio.export_presets import QUALITY_TIERS, list_presets
+
+    return {"ok": True, "presets": list_presets(), "quality": list(QUALITY_TIERS)}
+
+
 # --------------------------------------------------------------------------- editor cache
 
 

@@ -18,6 +18,7 @@ Shape of a render:
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -443,9 +444,15 @@ def _contain(sw: int, sh: int, w: int, h: int) -> tuple[int, int, int, int]:
 # --------------------------------------------------------------------------- plan
 
 
-def _build_plan(doc: dict, folder: Path) -> dict:
+def _build_plan(
+    doc: dict,
+    folder: Path,
+    *,
+    size: tuple[int, int] | None = None,
+    fps: float | None = None,
+) -> dict:
     """Turn a timeline doc into a render plan. Pure: ffmpeg is never touched here."""
-    w, h = _canvas(doc)
+    w, h = size if size else _canvas(doc)
     rate = doc["tick_rate"]
     media = doc.get("media") or {}
 
@@ -629,7 +636,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
     return {
         "width": w,
         "height": h,
-        "fps": _fps(doc),
+        "fps": fps if fps is not None else _fps(doc),
         "rate": rate,
         "inputs": inputs,
         "audio": audio,
@@ -1087,7 +1094,20 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     return ";".join(fc), vout
 
 
-def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "outa", seconds: float | None = None) -> list[str]:
+def _encode(
+    plan: dict,
+    graph: str,
+    vout: str,
+    out_path: Path,
+    *,
+    aout: str = "outa",
+    seconds: float | None = None,
+    export: Any | None = None,
+) -> list[str]:
+    from hermes_studio.export_presets import ResolvedExport, resolve as resolve_export
+
+    exp: ResolvedExport = export if export is not None else resolve_export(None)
+    preset = exp.preset
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin"]
     for inp in plan["inputs"]:
         kind = inp["role"]
@@ -1111,25 +1131,130 @@ def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "o
         f"{seconds if seconds is not None else _t2s(plan['end_tick'], plan['rate']):.3f}",
         "-r",
         f"{plan['fps']:.3f}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "160k",
-        "-ar",
-        "48000",
-        "-movflags",
-        "+faststart",
-        str(out_path),
     ]
+    if preset and preset.video_codec == "prores_ks":
+        cmd += [
+            "-c:v",
+            "prores_ks",
+            "-profile:v",
+            str(preset.prores_profile or 3),
+            "-pix_fmt",
+            preset.pix_fmt,
+            "-c:a",
+            preset.audio_codec,
+            "-ar",
+            "48000",
+        ]
+    else:
+        crf = exp.crf if exp.crf is not None else 20
+        xpreset = exp.x264_preset or "medium"
+        cmd += [
+            "-c:v",
+            "libx264",
+            "-preset",
+            xpreset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-ar",
+            "48000",
+        ]
+        if preset is None or preset.movflags:
+            cmd += ["-movflags", "+faststart"]
+    cmd.append(str(out_path))
     return cmd
+
+
+def _run_ffmpeg_progress(
+    cmd: list[str],
+    duration_sec: float,
+    on_progress: Callable[[float], None] | None,
+    cancel: Callable[[], bool],
+) -> None:
+    """Run an ffmpeg command built by ``_encode``, reporting ``-progress`` and honouring cancel."""
+    if on_progress is None and not cancel():
+        _run(cmd)
+        return
+    if cmd[0] != "ffmpeg" or len(cmd) < 2:
+        raise RenderError("bad ffmpeg command")
+    tail = cmd[5:] if len(cmd) > 5 and cmd[4] == "-nostdin" else cmd[2:]
+    pcmd = ["ffmpeg", "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-y", *tail]
+    total_us = max(1, int(duration_sec * 1_000_000))
+    p = subprocess.Popen(pcmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout is not None
+        for line in p.stdout:
+            if cancel():
+                p.kill()
+                break
+            k, _, v = line.strip().partition("=")
+            if k == "out_time_us" and v.isdigit() and on_progress:
+                on_progress(min(1.0, int(v) / total_us))
+        p.wait()
+        err = p.stderr.read() if p.stderr else ""
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+        for s in (p.stdout, p.stderr):
+            if s:
+                s.close()
+    if cancel():
+        raise RenderError("render cancelled")
+    if p.returncode != 0:
+        raise RenderError(err.strip()[-2500:] or f"ffmpeg exit {p.returncode}")
+
+
+def probe_export(path: Path) -> dict:
+    """ffprobe summary for a finished export (size, fps, codecs, duration, file size)."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RenderError(f"ffprobe could not read {path.name}")
+    try:
+        info = json.loads(proc.stdout)
+    except ValueError as exc:
+        raise RenderError(f"ffprobe gave no JSON for {path.name}") from exc
+    streams = [s for s in info.get("streams") or [] if isinstance(s, dict)]
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    fmt = info.get("format") or {}
+    dur = float(fmt.get("duration") or 0)
+    if dur <= 0 and video:
+        dur = float(video.get("duration") or 0)
+    fps = None
+    if video:
+        raw = video.get("avg_frame_rate") or video.get("r_frame_rate") or "0/0"
+        if isinstance(raw, str) and "/" in raw:
+            num, den = raw.split("/", 1)
+            try:
+                n, d = float(num), float(den)
+                fps = round(n / d, 3) if d else None
+            except ValueError:
+                fps = None
+    w = int(video.get("width") or 0) if video else 0
+    h = int(video.get("height") or 0) if video else 0
+    rate = int(audio.get("sample_rate") or 0) if audio else None
+    return {
+        "width": w,
+        "height": h,
+        "fps": fps,
+        "duration": round(dur, 3),
+        "video_codec": video.get("codec_name") if video else None,
+        "audio_codec": audio.get("codec_name") if audio else None,
+        "audio_channels": audio.get("channels") if audio else None,
+        "audio_rate": rate,
+        "bytes": path.stat().st_size,
+    }
 
 
 def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, float] | None:
@@ -1144,20 +1269,45 @@ def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, f
     return s, min(e, total)
 
 
-def render_project(pid: str, out_path: Path | None = None, *, start: float | None = None, end: float | None = None) -> dict:
+def render_project(
+    pid: str,
+    out_path: Path | None = None,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    preset: str | None = None,
+    fps: float | None = None,
+    quality: str | None = "standard",
+    on_progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> dict:
     """Render a project to a file. The file lands in the project folder by default.
 
     ``start``/``end`` (timeline seconds, the page's In and Out marks) render only that range.
     The trim is the very last step -- after captions, the mix, the limiter and loudnorm -- so a
     range is frame-for-frame and level-for-level the same as that stretch of a full render,
     rather than a section levelled on its own.
+
+    ``preset`` chooses export size and codec (``1080p``, ``4k``, ``vertical``, ``prores``). When
+    omitted, the timeline canvas size and the default H.264 settings are used. Writes to a temp
+    file in the same folder and atomically replaces the destination on success; cancel removes
+    the temp and never leaves a partial export.
     """
     from hermes_studio import editor as E
+    from hermes_studio.export_presets import ExportPresetError, default_filename, resolve as resolve_export
+
+    try:
+        export = resolve_export(preset, quality=quality, fps=fps)
+    except ExportPresetError as exc:
+        raise RenderError(str(exc)) from exc
+    cancel_fn = cancel or (lambda: False)
 
     folder = E._dir(pid)
     if not (folder / "base.json").exists():
         raise EditorError("no such project")
-    plan = _build_plan(E._log(folder).doc, folder)
+    doc = E._log(folder).doc
+    size = (export.preset.width, export.preset.height) if export.preset else None
+    plan = _build_plan(doc, folder, size=size, fps=export.fps)
     rng = _range(plan, start, end)
     if shutil.which("ffmpeg") is None:
         raise RenderError("ffmpeg is not installed")
@@ -1171,20 +1321,46 @@ def render_project(pid: str, out_path: Path | None = None, *, start: float | Non
             f";[outa]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[rnga]"
         )
         vout, aout, seconds = "rngv", "rnga", e - s
-    dest = out_path or (folder / f"{pid}-render.mp4")
+    dest = out_path or (folder / default_filename(pid, export))
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(_encode(plan, graph, vout, dest, aout=aout, seconds=seconds))
-    if not dest.is_file() or dest.stat().st_size < 1024:
-        raise RenderError("the render produced no file")
+    dur_sec = seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"])
+    tmp = dest.with_name(f".{dest.stem}.part{dest.suffix}")
+    tmp.unlink(missing_ok=True)
+    replaced = False
+    try:
+        cmd = _encode(plan, graph, vout, tmp, aout=aout, seconds=seconds, export=export)
+        _run_ffmpeg_progress(cmd, dur_sec, on_progress, cancel_fn)
+        if cancel_fn():
+            raise RenderError("render cancelled")
+        if not tmp.is_file() or tmp.stat().st_size < 1024:
+            raise RenderError("the render produced no file")
+        os.replace(tmp, dest)
+        replaced = True
+    finally:
+        if not replaced:
+            tmp.unlink(missing_ok=True)
+    summary = probe_export(dest)
+    meta = {
+        "path": dest.name,
+        "preset": export.preset.id if export.preset else None,
+        "quality": export.quality,
+        "mime": "video/quicktime" if dest.suffix.lower() == ".mov" else "video/mp4",
+    }
+    cache = folder / "cache"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "last-export.json").write_text(json.dumps(meta), encoding="utf-8")
     return {
         "ok": True,
         "path": str(dest),
         "name": dest.name,
         "size": [plan["width"], plan["height"]],
-        "duration": round(seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"]), 3),
+        "duration": round(dur_sec, 3),
         "range": [round(rng[0], 3), round(rng[1], 3)] if rng else None,
         "bytes": dest.stat().st_size,
         "captions": bool(ass),
+        "preset": export.preset.id if export.preset else None,
+        "quality": export.quality,
+        "probe": summary,
         # What the mix came out at, measured on the exported file (M4's readout).
         "loudness": _loudness(dest),
     }
@@ -1233,7 +1409,7 @@ def _loudness(path: Path) -> dict | None:
     return out
 
 
-__all__ = ["RenderError", "render_project", "MIX", "TARGET_LUFS"]
+__all__ = ["RenderError", "render_project", "probe_export", "MIX", "TARGET_LUFS"]
 
 
 # ---------------------------------------------------------------------------
