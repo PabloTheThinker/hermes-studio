@@ -74,7 +74,8 @@ MARKER_OPTIONAL = {"color"}
 MARKER_COLORS = ("blue", "cyan", "green", "yellow", "orange", "red", "pink", "purple")
 MARKER_DEFAULT_COLOR = "blue"
 ANCHOR_KEYS = {"to", "offset"}
-PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold"}
+PROP_KEYS = {"volume", "speed", "crop", "look", "transform", "keyframes", "gain_keys", "grade", "speed_keys", "reverse", "ramp_at", "hold", "lut"}
+LUT_KEYS = {"file", "intensity"}
 # A clip's volume envelope (the rubber band): {at, gain} points, `at` in ticks from the clip's
 # start, `gain` a [num, den] level 0..VOLUME_MAX. Linear between points, held outside them.
 # It multiplies props.volume, so the volume stays the clip's overall trim.
@@ -89,7 +90,7 @@ SPEEDKEY_KEYS = {"at", "speed"}
 # the clip's constant props.speed for the render (the schema treats a clip as either constant or
 # ramped, never both meaningfully).
 
-DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None}
+DEFAULT_PROPS: dict[str, Any] = {"volume": [1, 1], "speed": [1, 1], "crop": None, "look": None, "transform": None, "keyframes": None, "gain_keys": None, "grade": None, "speed_keys": None, "reverse": None, "ramp_at": None, "hold": None, "lut": None}
 # Primary grade (see grade.py): lift/gamma/gain are [r, g, b] lists of [num, den] pairs, sat one pair.
 GRADE_KEYS = {"lift", "gamma", "gain", "sat", "curves", "temp", "tint"}
 # The props hs.timeline/1 shipped with. They are always hashed (defaults filled in); any prop
@@ -117,7 +118,7 @@ RULES = (
     "anchor_target_missing", "anchor_target_not_main", "anchor_before_zero", "overlap",
     "bad_transition", "transition_overlap_mismatch", "bad_split_from", "bad_fps", "hash_mismatch",
     "bad_keyframes", "bad_order", "track_audio_only", "bad_speed_keys",
-    "bad_hold", "bad_title", "duck_music_only",
+    "bad_hold", "bad_title", "duck_music_only", "bad_lut",
 )
 
 
@@ -177,6 +178,7 @@ _HINTS = {
     "duck_music_only": "Only a music track ducks (under the voice): duck is whole dB, 0..30.",
     "bad_hold": "A freeze frame can't also ramp or reverse.",
     "bad_title": "A title's layers must be exactly what titles.make() builds from its own fields.",
+    "bad_lut": "A clip LUT is {file: luts/<hash>.cube, intensity?: [num, den] in 0..1}; only 3D .cube files under luts/ count.",
 }
 
 
@@ -798,6 +800,19 @@ def _check_item(c: _Checker, it: dict, typ: str, role: str, ip: str, media: dict
             # Reverse is stored as True or not at all (None), so a forward clip hashes as before.
             if pr.get("reverse") is not None and pr["reverse"] is not True:
                 c.bad("wrong_type", _j(ip, "props", "reverse"), "reverse must be true or null")
+            if pr.get("lut") is not None:
+                from hermes_studio import lut as _L
+
+                lp = _j(ip, "props", "lut")
+                lu = pr["lut"]
+                if not c.keys(lu, lp, {"file"}, LUT_KEYS - {"file"}):
+                    pass
+                elif not (isinstance(lu.get("file"), str) and _L._FILE_RE.match(lu["file"])):
+                    c.bad("bad_lut", _j(lp, "file"), "file must be luts/<sha256>.cube")
+                elif "intensity" in lu and lu["intensity"] == [1, 1]:
+                    c.bad("bad_lut", _j(lp, "intensity"), "intensity 1 is the default and is not stored")
+                elif "intensity" in lu:
+                    c.ratio(lu["intensity"], _j(lp, "intensity"), Fraction(0), Fraction(1))
         mid, src = it["media"], it["src"]
         if not (isinstance(src, list) and len(src) == 2):
             c.bad("wrong_type", _j(ip, "src"), "src must be [in, out] in ticks")

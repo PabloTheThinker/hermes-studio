@@ -38,6 +38,7 @@ PORT_DEFAULT = 3870
 # - Oversized bodies: 1 MB cap.
 MAX_BODY = 1024 * 1024
 MAX_UPLOAD = 16 * 1024 ** 3  # one imported video file, streamed to disk
+MAX_LUT_UPLOAD = 20 * 1024 * 1024  # .cube 3D LUT
 MAX_IMAGE_BODY = 32 * 1024 * 1024  # design uploads + exported pages (base64 in JSON)
 DESIGN_STATIC = {  # fixed names only; nothing derived from the request path is opened
     "fabric.min.js": ("vendor/fabric.min.js", "text/javascript; charset=utf-8"),
@@ -402,6 +403,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "scopes.js", "text/javascript; charset=utf-8", cache=False)
         if path.split("?")[0] == "/wheels.js":
             return self._file(UI_DIR / "wheels.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/lut.js":
+            return self._file(UI_DIR / "lut.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):
@@ -885,6 +888,17 @@ class StudioHandler(BaseHTTPRequestHandler):
             from hermes_studio import api
 
             return _json(self, 200, api.editor_export_presets())
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "lut":
+            from hermes_studio import lut as _LU
+
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0]
+            try:
+                folder = editor._dir(parts[2])
+                parsed = _LU.load_file(folder, rel)
+            except (editor.EditorError, ValueError) as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "lut": _LU.preview_pack(parsed)})
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
@@ -893,8 +907,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 404, {"ok": False, "error": str(exc)})
 
     def _editor_upload(self, path: str) -> None:
-        """A video file into the project's bin: the raw body, streamed to disk (never held in
-        memory), then probed and added with an undoable add_media op. ?name= labels it."""
+        """A video file into the project's bin, or a .cube LUT into ``luts/``: raw body streamed
+        to disk (never held in memory). ?name= labels it; the stored path never trusts the name."""
         from hermes_studio import editor
 
         pid = path.split("/")[3]
@@ -905,6 +919,35 @@ class StudioHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+        if ext == ".cube":
+            if length <= 0 or length > MAX_LUT_UPLOAD:
+                return _json(self, 413 if length > MAX_LUT_UPLOAD else 400,
+                             {"ok": False, "error": f"send one .cube LUT up to {MAX_LUT_UPLOAD // (1024 * 1024)} MB"})
+            try:
+                folder = editor._dir(pid)
+            except editor.EditorError as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            if not (folder / "base.json").exists():
+                return _json(self, 404, {"ok": False, "error": "no such project"})
+            tmp = folder / f".upload-{secrets.token_hex(4)}.cube"
+            try:
+                left = length
+                with open(tmp, "wb") as out:
+                    while left > 0:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        left -= len(chunk)
+                if left:
+                    return _json(self, 400, {"ok": False, "error": "the upload stopped short"})
+                data = tmp.read_bytes()
+                info = editor.import_lut(pid, data, Path(name).stem)
+            except (editor.EditorError, ValueError) as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            finally:
+                tmp.unlink(missing_ok=True)
+            return _json(self, 200, {"ok": True, "lut": info})
         if length <= 0 or length > MAX_UPLOAD:
             return _json(self, 413 if length > MAX_UPLOAD else 400,
                          {"ok": False, "error": f"send one video file up to {MAX_UPLOAD // (1024 ** 3)} GB"})
@@ -1015,6 +1058,13 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_reverse(pid, str(body.get("id") or ""), body.get("on") is True)
             elif op == "look":
                 project = editor.set_look(pid, str(body.get("id") or ""), body.get("look"))
+            elif op == "lut":
+                gid = str(body.get("id") or "")
+                if body.get("clear"):
+                    project = editor.clear_lut(pid, gid)
+                else:
+                    project = editor.set_lut(pid, gid, str(body.get("file") or ""),
+                                             _num(body, "intensity", 1.0))
             elif op == "volume":
                 project = editor.set_volume(pid, str(body.get("id") or ""), _num(body, "volume", 1.0))
             elif op == "fade":

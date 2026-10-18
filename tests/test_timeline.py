@@ -269,6 +269,8 @@ BAD = {
     "track mute not a boolean": (lambda d: track(d, "A1").__setitem__("mute", 1), "wrong_type"),
     "track gain above 4": (lambda d: track(d, "A1").__setitem__("gain", [5, 1]), "out_of_range"),
     "track gain not a ratio": (lambda d: track(d, "A1").__setitem__("gain", 0.5), "bad_rational"),
+    "lut file outside luts": (lambda d: item(d, "c1").setdefault("props", {}).update(
+        {"lut": {"file": "media/evil.cube"}}), "bad_lut"),
 }
 
 
@@ -637,7 +639,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 43  # every rule above has a case in BAD (bad_hold / bad_title / duck_music_only the last added)
+    assert len(T.RULES) == 44  # every rule above has a case in BAD (bad_lut the last added)
 
 
 def _huge_scaled_src(d):

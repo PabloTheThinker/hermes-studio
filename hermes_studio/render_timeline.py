@@ -219,6 +219,24 @@ def _level(raw: Any) -> float:
     return 1.0
 
 
+def _vchain(*parts: str) -> str:
+    """Join ffmpeg video filters, dropping empty pieces (no ``,,`` holes)."""
+    return ",".join(p.strip(",") for p in parts if p and p.strip(","))
+
+
+def _clip_lut(raw: Any, folder: Path) -> dict | None:
+    """Resolved LUT path and intensity for a clip, or None."""
+    from hermes_studio import lut as _LU
+
+    if not isinstance(raw, dict) or not raw.get("file"):
+        return None
+    try:
+        path = _LU.resolve_path(folder, str(raw["file"]))
+    except ValueError:
+        return None
+    return {"path": path, "intensity": _level(raw.get("intensity", [1, 1]))}
+
+
 def _balance(raw: Any) -> float:
     """A track balance stored as a [num, den] pair, as a float in -1..1; 0 (centre) when missing.
     ``_level`` is for volumes and gains, which are never negative -- it reads a stored -1 as
@@ -506,7 +524,8 @@ def _build_plan(
         # A legacy props.look renders as that look's grade (the eq/colorbalance chains are gone).
         grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
         hold = props_.get("hold") if isinstance(props_.get("hold"), int) and props_.get("hold") > 0 else None
-        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform,
+        lut = _clip_lut(props_.get("lut"), folder)
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "lut": lut, "fade_in": fi, "fade_out": fo, "transform": transform,
                       "keyframes": keyframes, "speed_keys": None if hold else speed_keys, "tl_dur": tl_dur, "hold": hold}
         if idx is None:
             idx = len(inputs)
@@ -890,7 +909,13 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # before transform/pad, so a lift never lifts the letterbox. Same formula the
             # preview shows.
             gchain = _G.ffmpeg_chain(inp.get("grade"), Path(plan.get("cache") or ".") / "luts")
-            grade_filter = f"{gchain}," if gchain else ""
+            from hermes_studio import lut as _LU
+
+            lut_info = inp.get("lut")
+            lut_inline, lut_graph = ("", "")
+            if lut_info:
+                lut_inline, lut_graph = _LU.ffmpeg_chain(lut_info["path"], lut_info["intensity"])
+            lut_pre = lut_inline if not lut_graph else ""
             # Transform acts on the contained frame before it meets the canvas: scale
             # multiplies it, rotate turns it, and x/y pan it by a fraction of the canvas.
             # The frame is padded onto a layer at least canvas-sized (so a zoom-out leaves
@@ -950,16 +975,33 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 # side of its time, so rounding can't take two or none), clone it out to the
                 # hold, then cut to the hold's length.
                 fr = 1.0 / (fps if fps > 0 else 30.0)
-                chain = (f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts=PTS-STARTPTS,"
-                         f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}"
-                         f"{vfade},setsar=1,format=yuv420p")
-                fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{chain}[v{n}]")
+                mid = f"vm{n}"
+                core = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic", gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
+                tail = _vchain(
+                    f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}",
+                    vfade.lstrip(","),
+                    "setsar=1",
+                    "format=yuv420p",
+                )
+                if lut_graph:
+                    lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                    fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{core}[{mid}];"
+                              f"[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                else:
+                    fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{core},{tail}[v{n}]")
             else:
                 # setsar=1 on every piece: scaling a 9:16 phone shot to whole pixels leaves it SAR
                 # 1215:1216, a 16:9 shot stays 1:1, and concat refuses to join the two -- any cut
                 # mixing vertical and horizontal footage failed to render. The canvas is square.
-                chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},setsar=1,format=yuv420p"
-                fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
+                mid = f"vm{n}"
+                core = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic", gchain, lut_pre, xf, pad) + f",setpts={pts},fps={fps:.3f}"
+                tail = _vchain(vfade.lstrip(","), "setsar=1", "format=yuv420p")
+                if lut_graph:
+                    lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                    fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{core}[{mid}];"
+                              f"[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                else:
+                    fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{core},{tail}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")

@@ -83,6 +83,11 @@
       .tl-can2 input{width:5.2rem;margin:0;padding:.35rem .4rem}
       .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
       .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
+      .tl-lutc{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1;pointer-events:none;display:none}
+      .tl-lutrow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 8px;align-items:center;margin-top:10px;font-size:12px}
+      .tl-lutrow .tl-lutname{color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tl-lutbtn input{cursor:pointer}
+      .tl-lutrow .tl-wsat{grid-column:1/-1}
       .tl-pick{padding:8px 4px 24px;max-width:760px}
       .tl-film{display:flex;justify-content:space-between;align-items:baseline;gap:16px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font:600 16px var(--sans)}
       .tl-film span{color:var(--dim);font:500 12px var(--mono)}
@@ -380,7 +385,11 @@
       <label class="tl-wsat">Look <select data-glook style="flex:1" aria-label="Look" title="A starting grade: the wheels show it and can take it further">
         ${it.grade && !it.look ? `<option value="__custom" selected disabled>Custom</option>` : ""}<option value="" ${it.grade ? "" : "selected"}>None</option>${["warm", "cool", "punch", "mono", "film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select></label>
       <div class="tl-curves"><nav>${[["m", "Master"], ["r", "R"], ["g", "G"], ["b", "B"]].map(([k, l]) => `<button type="button" data-ctab="${k}" class="${curveTab === k ? "on" : ""}" title="${k === "m" ? "Master curve: all three channels" : l + " channel curve"}${st.curves[k] ? " (shaped)" : ""}">${l}${st.curves[k] ? "•" : ""}</button>`).join("")}<button type="button" class="flat" data-cflat title="Make this curve a straight line again">Flat</button></nav>
-        <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div></div>`;
+        <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div>
+      <div class="tl-lutrow"><span>LUT</span><label class="tl-lutbtn"><input type="file" accept=".cube" data-lutfile hidden>Import</label>
+        <span class="tl-lutname" data-lutname>${it.lut ? esc(it.lut.name) : "None"}</span>
+        ${it.lut ? `<button type="button" data-lutclear title="Remove the LUT">Clear</button>` : ""}
+        <label class="tl-wsat">Mix <input type="range" data-lutmix min="0" max="1" step="0.01" value="${(it.lut ? it.lut.intensity : 1).toFixed(2)}" ${it.lut ? "" : "disabled"} aria-label="LUT mix"><b data-lutmv>${(it.lut ? it.lut.intensity : 1).toFixed(2)}</b></label></div></div>`;
   }
   // ---- transitions: kind picker and drag-to-resize on the badge -----------------------
   // The badge on the timeline names the transition it is (Cross Fade, Wipe Right, ...). Click
@@ -1663,7 +1672,7 @@
   // The inspector controls a person drives from the keyboard. paint() rebuilds the DOM, so the
   // focused one is noted before and focused again after: otherwise a commit made by the first
   // arrow press on a menu or slider dropped focus and the next presses went nowhere.
-  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
+  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-lutmix", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
   function paint() {
     if (!root || !doc) return;
     const ae = document.activeElement;
@@ -1729,6 +1738,7 @@
             <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
+            <canvas class="tl-lutc" aria-hidden="true"></canvas>
             <span class="tl-titles" aria-hidden="true"></span>
             <span class="tl-shade"></span>
             <span class="k">${esc(cw)} × ${esc(ch)}</span>
@@ -1857,6 +1867,7 @@
     if (pic) pic.addEventListener("load", () => updateScope(true));
     wireWheels();
     wireCurves();
+    wireLut();
     wireBalance();
     wireTransitions();
     loadXcat();
@@ -1958,6 +1969,84 @@
     // The element's own backdrop would be graded too (a lift would grey the letterbox), so it
     // goes transparent and the frame's identical #050505 shows through, as in the render.
     els.forEach((n) => { n.style.filter = "url(#hs-grade)"; n.style.background = "transparent"; });
+    drawLutPreview();
+  }
+
+  const lutPacks = {};
+  let lutT = 0;
+  async function lutPack(file) {
+    if (lutPacks[file]) return lutPacks[file];
+    const r = await fetch("/api/editor/" + encodeURIComponent(pid || "demo") + "/lut?file=" + encodeURIComponent(file));
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "LUT failed");
+    lutPacks[file] = window.HSLut.pack(j.lut);
+    return lutPacks[file];
+  }
+  async function drawLutPreview() {
+    const it = mainClip(play);
+    const cvs = root && root.querySelector(".tl-lutc");
+    const pic = root && root.querySelector(".tl-pic");
+    const vid = root && root.querySelector(".tl-vid");
+    if (!cvs || !it || !it.lut || !window.HSLut) {
+      if (cvs) cvs.style.display = "none";
+      if (pic) pic.style.visibility = "";
+      if (vid) vid.style.visibility = "";
+      return;
+    }
+    const src = playing && vid && !vid.hidden && vid.readyState >= 2 ? vid : pic;
+    if (!src || !(src.videoWidth || src.naturalWidth)) return;
+    try {
+      const pack = await lutPack(it.lut.file);
+      const w = src.videoWidth || src.naturalWidth;
+      const h = src.videoHeight || src.naturalHeight;
+      cvs.width = w; cvs.height = h;
+      const ctx = cvs.getContext("2d", { willReadFrequently: true });
+      const gf = root.querySelector("#hs-grade") ? "url(#hs-grade)" : "none";
+      ctx.filter = gf;
+      ctx.drawImage(src, 0, 0, w, h);
+      ctx.filter = "none";
+      const img = ctx.getImageData(0, 0, w, h);
+      window.HSLut.applyImageData(pack, it.lut.intensity, img.data, w, h);
+      ctx.putImageData(img, 0, 0);
+      cvs.style.display = "block";
+      if (pic) pic.style.visibility = "hidden";
+      if (vid) vid.style.visibility = "hidden";
+    } catch (e) { /* frame not ready yet */ }
+  }
+
+  function wireLut() {
+    if (!root || !wheel) return;
+    const inp = root.querySelector("[data-lutfile]");
+    if (inp) inp.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!f || !wheel) return;
+      const x = new XMLHttpRequest();
+      x.open("POST", "/api/editor/" + encodeURIComponent(pid) + "/upload?name=" + encodeURIComponent(f.name));
+      x.setRequestHeader("Content-Type", "application/octet-stream");
+      x.onload = async () => {
+        const j = JSON.parse(x.responseText || "{}");
+        if (!j.ok) { toast(j.error || "import failed"); return; }
+        delete lutPacks[j.lut.file];
+        await commit({ op: "lut", id: wheel.id, file: j.lut.file, intensity: parseFloat(root.querySelector("[data-lutmix]")?.value || "1") });
+      };
+      x.onerror = () => toast("the upload failed");
+      x.send(f);
+    };
+    const clr = root.querySelector("[data-lutclear]");
+    if (clr) clr.onclick = () => commit({ op: "lut", id: wheel.id, clear: true });
+    const sl = root.querySelector("[data-lutmix]");
+    const mv = root.querySelector("[data-lutmv]");
+    if (sl) {
+      sl.oninput = () => { if (mv) mv.textContent = parseFloat(sl.value).toFixed(2); drawLutPreview(); };
+      sl.onchange = () => {
+        const it = doc && mainClip(play);
+        const v = parseFloat(sl.value);
+        if (it && it.lut && Math.abs(v - it.lut.intensity) < 0.005) return;
+        clearTimeout(lutT);
+        lutT = setTimeout(() => commit({ op: "lut", id: wheel.id, file: it.lut.file, intensity: v }), 400);
+      };
+    }
   }
 
   // ---- scopes: read the graded preview -------------------------------------------------
@@ -2018,6 +2107,7 @@
     if (t === shown && img.getAttribute("src")) return;
     shown = t;
     img.hidden = false;
+    img.onload = () => drawLutPreview();
     img.src = "/api/editor/" + encodeURIComponent(pid || "demo") + "/frame?t=" + t.toFixed(6);
   }
 

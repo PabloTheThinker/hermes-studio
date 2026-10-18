@@ -57,14 +57,14 @@ Each of these is a 1.x item after 1.0 ships.
 | Transitions | all 58 ffmpeg xfade kinds, picker, drag to resize | — |
 | Keyframes | position, scale, rotate, Ken Burns, curve editor, diamonds, drag handles, volume rubber band | opacity keyframes; easing (ease in/out) |
 | Speed | constant 0.1–10×, **speed ramps** (graph UI), **reverse**, **freeze frame** (Option+F), sound follows picture, retime ripples, one time map for render/preview/split, frame-accurate render | — (M1 done) |
-| Colour | primary grade (lift/gamma/gain/sat), wheels, curves (M/R/G/B), white balance + eyedropper, 5 looks, scopes (waveform/parade/vectorscope), live graded preview | **LUT (.cube) import; masks** |
+| Colour | primary grade (lift/gamma/gain/sat), wheels, curves (M/R/G/B), white balance + eyedropper, 5 looks, scopes (waveform/parade/vectorscope), live graded preview, **LUT (.cube) import with mix** | **masks** |
 | Audio | track mixer (mute/solo/gain), meters, waveforms, fades, volume keys, loudnorm, **pan (track balance), ducking under voice, export loudness readout (−14 LUFS ±1, measured on the file)** | — (M4 done) |
 | Text | caption track (burned ASS, word styles), **title objects**: lower third / title / end card, 5 house fonts, size 50–200%, dark panel, drag-to-place in the viewer, fade / slide motion, Alt+T | — (M3 done) |
 | Export | **presets** (1080p H.264, 4K, 1080p vertical, ProRes 422 HQ), custom fps and x264 quality tier, range render, progress + cancel, ffprobe summary on every export | — |
 | Safety | op log only writer, per-project lock, demo-only reset, per-media frame cache | crash-recovery test (kill mid-edit) |
 | UI/UX | inspector, tabs, resizable panels and tracks | **workspace pass**: Edit / Colour / Audio layouts, empty states, shortcut overlay, consistent inspector |
 
-Roughly **80% of the 1.0 toolset is built.** What's left: LUTs, masks,
+Roughly **82% of the 1.0 toolset is built.** What's left: masks,
 keyframe easing, the workspace/UI pass, and the acceptance film.
 
 ---
@@ -82,7 +82,7 @@ render or real CDP input before its commit.
 | **M3** ✅ | **Titles**: lower third, title and end-card templates; words, second line, accent; font (5 house faces), size 50-200%, dark panel on/off; drag to position in the viewer (snaps home, Alt frees); fade / slide-up / slide-left / cut in and out; Alt+T. ONE canvas PNG per title drawn by the Design renderer, overlaid by the render and shown by the page (not drawtext/ASS: that can't match the browser) | a title appears at the same place and size in the preview and the export (pixel-checked): tests compare the render to PNG-over-picture (median < 2 levels) for default and moved/scaled/restyled titles; motion checked against the formula; CDP drag and inspector on demo |
 | **M4** ✅ | **Audio finish**: pan, ducking (music under voice), export loudness (ebur128) shown after a render | music measurably drops under voice; the export reads −14 LUFS ±1. **Done**: `4c25446` (track balance on the header, ducking depth in dB on the music track, one point list to render and preview) + the export-loudness readout commit (ebur128 on the exported file; a hand-set mix is respected, not re-levelled, and the readout still says what it came to) |
 | **M5** ✅ | **Export presets**: 1080p H.264, 4K, 1080p vertical, ProRes 422, custom fps/quality; progress bar, cancel, ffprobe summary | each preset verified with ffprobe; cancel leaves no half file. **Done:** four presets ffprobed (width/height/fps/duration/codecs/channels/rate/bytes match a second ffprobe call); 720p canvas → 1920×1080 contain export; cancel on 4K leaves no `.part`, no output, no ffmpeg child; failed encode removes the temp; desk `render`/`render_status` and `hermes-studio render --json` carry `probe`; Edit page picker + progress + summary (CDP on throwaway desk) |
-| **M6** | **LUT import**: .cube 3D LUT on a clip, preview via the same LUT sampled, intensity | preview matches export within grade tolerance |
+| **M6** ✅ | **LUT import**: .cube 3D LUT on a clip, preview via the same LUT sampled, intensity | preview matches export within grade tolerance. **Done:** `lut.py` + `luts/<hash>.cube` upload; `set_lut` / `clear_lut`; render `lut3d` trilinear + mix; desk LUT row; JS `lut.js` pinned to Python; ffmpeg gradient cube median Δ≤2 (of 255) |
 | **M7** | **Masks**: rectangle and ellipse, feather, invert, position/size keyframable; isolates the grade or a blur | half-frame correction with a soft edge, preview = export |
 | **M8** | **Keyframe finish**: opacity keys, easing (linear / ease in / ease out / ease in-out) on every keyframe kind | an eased push-in's motion curve measured off the frames |
 | **M9** | **Workspace and UI/UX pass**: Edit / Colour / Audio layouts (Resolve pages, FCP-clean), shortcut sheet (`?`), empty states, consistent inspector, crash-recovery test | screenshot set of every layout; full keyboard pass; kill-and-reopen test |

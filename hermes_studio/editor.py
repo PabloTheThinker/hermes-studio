@@ -290,6 +290,16 @@ def view(doc: dict) -> dict:
                 )
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
+                lut = props.get("lut")
+                if isinstance(lut, dict) and lut.get("file"):
+                    from hermes_studio import lut as _LU
+
+                    folder = _dir(doc["id"])
+                    row["lut"] = {
+                        "file": lut["file"],
+                        "name": _LU.display_name(folder, lut["file"]),
+                        "intensity": _pair_to_float(lut.get("intensity", [1, 1])),
+                    }
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
@@ -1323,6 +1333,49 @@ def clear_grade(pid: str, item_id: str) -> dict:
     if it["type"] != "clip":
         raise EditorError("only a clip can be graded")
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": None, "look": None}}], f"Grade {item_id} reset")
+
+
+def import_lut(pid: str, raw: bytes, name: str = "") -> dict:
+    """Validate and store a .cube LUT under ``luts/`` (content hash). Returns ``file`` and ``name``."""
+    from hermes_studio import lut as _LU
+
+    folder = _dir(pid)
+    text = _LU.decode_bytes(raw)
+    rel = _LU.store_text(folder, text)
+    label = (name or _LU.parse(text).title or Path(rel).stem).strip()
+    if label:
+        _LU.save_display_name(folder, rel, label)
+    return {"file": rel, "name": _LU.display_name(folder, rel)}
+
+
+def set_lut(pid: str, item_id: str, file: str, intensity: float = 1.0) -> dict:
+    """Apply a 3D LUT to a clip (``file`` is ``luts/<hash>.cube`` in the project). One undo step."""
+    from hermes_studio import lut as _LU
+
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a LUT")
+    if not _LU._FILE_RE.match(file):
+        raise EditorError("file must be a LUT in this project's luts folder")
+    if not (_dir(pid) / file).is_file():
+        raise EditorError("import that LUT into the project first")
+    t = float(intensity)
+    if not (0.0 <= t <= 1.0):
+        raise EditorError("intensity must be from 0 to 1")
+    fr = Fraction(t).limit_denominator(1000)
+    pair = [fr.numerator, fr.denominator]
+    op: dict = {"op": "set_lut", "id": item_id, "file": file}
+    if pair != [1, 1]:
+        op["intensity"] = pair
+    return apply(pid, [op], f"LUT {item_id}")
+
+
+def clear_lut(pid: str, item_id: str) -> dict:
+    """Remove a clip's LUT. One undo step."""
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a LUT")
+    return apply(pid, [{"op": "clear_lut", "id": item_id}], f"LUT {item_id} cleared")
 
 
 def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:
