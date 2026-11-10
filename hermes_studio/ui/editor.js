@@ -94,6 +94,24 @@
       .tl-lutrow .tl-lutname{color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .tl-lutbtn input{cursor:pointer}
       .tl-lutrow .tl-wsat{grid-column:1/-1}
+      .tl-wsbtn{font:600 11px var(--sans);padding:4px 8px;border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:6px;cursor:pointer}
+      .tl-wsbtn.on{color:var(--ink);border-color:var(--amber,#ffc83d);background:rgba(255,200,61,.08)}
+      .tl-helpbtn{margin-left:4px}
+      .tl-sheethelp{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+      .tl-sheethelp .box{max-width:720px;max-height:86vh;overflow:auto;background:#0b0b0c;border:1px solid var(--line);border-radius:12px;padding:18px 20px;color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+      .tl-sheethelp h3{margin:0 0 10px;font:800 16px var(--sans);letter-spacing:.04em;text-transform:uppercase}
+      .tl-sheethelp table{width:100%;border-collapse:collapse;font:500 12px/1.45 var(--sans)}
+      .tl-sheethelp td{padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+      .tl-sheethelp td:first-child{width:38%;font:600 11px var(--mono);color:var(--amber,#ffc83d);white-space:nowrap}
+      .tl-sheethelp .close{float:right;border:0;background:transparent;color:var(--dim);cursor:pointer;font:600 14px var(--sans)}
+      .tl.ws-colour .tl-stage{grid-template-rows:minmax(0,1.35fr) 5px minmax(120px,.65fr)}
+      .tl.ws-colour .tl-insp .tl-can,.tl.ws-colour .tl-insp .tl-can2{display:none}
+      .tl.ws-audio .tl-scope{display:none}
+      .tl.ws-audio .tl-stage{grid-template-rows:minmax(100px,.55fr) 5px minmax(0,1.45fr)}
+      .tl.ws-audio .tl-insp .tl-colour,.tl.ws-audio .tl-insp .tl-curves,.tl.ws-audio .tl-insp .tl-lutrow,.tl.ws-audio .tl-insp .tl-maskbox{display:none}
+      .tl-empty{margin:18px 8px;padding:16px;border:1px dashed var(--line);border-radius:10px;color:var(--dim);font:400 13px/1.5 var(--sans);max-width:420px}
+      .tl-empty b{color:var(--ink);font-weight:700}
+
       .tl-pick{padding:8px 4px 24px;max-width:760px}
       .tl-film{display:flex;justify-content:space-between;align-items:baseline;gap:16px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font:600 16px var(--sans)}
       .tl-film span{color:var(--dim);font:500 12px var(--mono)}
@@ -266,6 +284,10 @@
   let exportPreset = (() => { try { return localStorage.getItem("hs-export-preset") || "1080p"; } catch (e) { return "1080p"; } })();
   let exportQuality = (() => { try { return localStorage.getItem("hs-export-quality") || "standard"; } catch (e) { return "standard"; } })();
   let exportFps = (() => { try { return localStorage.getItem("hs-export-fps") || ""; } catch (e) { return ""; } })();
+  let wsMode = (() => { try { return localStorage.getItem("tl-ws") || "edit"; } catch (e) { return "edit"; } })();
+  if (!["edit", "colour", "audio"].includes(wsMode)) wsMode = "edit";
+  let helpOpen = false;
+
   let renderJob = null; // {state, progress, result, error}
   let renderPoll = null;
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
@@ -1697,6 +1719,40 @@
   // focused one is noted before and focused again after: otherwise a commit made by the first
   // arrow press on a menu or slider dropped focus and the next presses went nowhere.
   const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-lutmix", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
+
+  const SHORTCUTS = [
+    ["Space / K", "Play / pause (K also holds for frame step with J/L)"],
+    ["J / L", "Shuttle reverse / forward (repeat for 2× 4× 8×)"],
+    ["← →", "Step one frame (Shift = one second)"],
+    ["I / O", "Mark In / Out (Shift jumps, Alt clears, Alt+X clears both)"],
+    ["/", "Play In→Out range"],
+    ["W / D / E", "Insert / overwrite / append from source (bin)"],
+    ["S", "Split at playhead"],
+    ["⌫ / Del", "Lift selection"],
+    [", / .", "Nudge selection (Alt = slip, Shift = 1s)"],
+    ["M", "Add or delete marker (Shift+M rename)"],
+    ["N", "Toggle snap"],
+    ["Alt+T", "Lower-third title"],
+    ["Alt+F", "Freeze frame"],
+    ["Ctrl+Z / Shift+Ctrl+Z", "Undo / redo"],
+    ["− = / Fit", "Zoom out / in / fit"],
+    ["?", "This shortcut sheet"],
+    ["1 / 2 / 3", "Workspace: Edit / Colour / Audio"],
+  ];
+  function helpMarkup() {
+    if (!helpOpen) return "";
+    const rows = SHORTCUTS.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
+    return `<div class="tl-sheethelp" data-help><div class="box"><button type="button" class="close" data-act="help-close" title="Close">✕</button><h3>Keyboard</h3><table>${rows}</table><p style="margin:12px 0 0;color:var(--dim);font:400 12px var(--sans)">Press <b>?</b> or Esc to close. Full Cut page stays keyboard-first.</p></div></div>`;
+  }
+  function setWorkspace(mode) {
+    if (!["edit", "colour", "audio"].includes(mode)) return;
+    wsMode = mode;
+    try { localStorage.setItem("tl-ws", wsMode); } catch (e) { /* private */ }
+    if (mode === "colour" && scopeMode === "off") scopeMode = "wave";
+    if (mode === "audio") { /* keep meters; scopes optional off already handled by CSS */ }
+    paint();
+  }
+
   function paint() {
     if (!root || !doc) return;
     const ae = document.activeElement;
@@ -1731,10 +1787,18 @@
     const rows = it
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
+    const emptyMain = !(d.tracks || []).some((tr) => (tr.items || []).length);
     root.innerHTML = `
-      <div class="tl ${folded ? "tl-collapsed" : ""}" style="--lab:${LAB}px">
+      <div class="tl ${folded ? "tl-collapsed" : ""} ws-${wsMode}" style="--lab:${LAB}px">
+        ${helpMarkup()}
         <div class="tl-top">
           <b>Edit</b>
+          <span class="tl-ws" title="Workspace layout">
+            <button type="button" class="tl-wsbtn ${wsMode === "edit" ? "on" : ""}" data-act="ws-edit">Edit</button>
+            <button type="button" class="tl-wsbtn ${wsMode === "colour" ? "on" : ""}" data-act="ws-colour">Colour</button>
+            <button type="button" class="tl-wsbtn ${wsMode === "audio" ? "on" : ""}" data-act="ws-audio">Audio</button>
+          </span>
+          <button type="button" class="tl-wsbtn tl-helpbtn" data-act="help" title="Keyboard shortcuts (?)">?</button>
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
           <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
           <span class="tl-exp" title="Export preset and quality (saved in this browser)">
@@ -1796,7 +1860,7 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; const ke = k.ease || "linear"; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <input data-kfop type="number" min="0" max="1" step="0.05" value="${k.opacity != null ? k.opacity : 1}" style="width:48px" title="Opacity"> <select data-kfease title="Easing for the segment after this key">${KF_EASE.map(([v, l]) => `<option value="${v}" ${ke === v ? "selected" : ""}>${l}</option>`).join("")}</select> <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
-            <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
+            <div class="tl-keys">? shortcuts · 1/2/3 workspace<br>Space play · S split · ⌫ lift<br>J K L · I O · W D E</div>
             ${pid === "demo" ? `<div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>` : ""}
           </aside>
         </div>
@@ -1816,6 +1880,7 @@
             <button type="button" data-act="fit">Fit</button>
           </div>
           <div class="tl-scroll">
+            ${emptyMain && tab === "clips" ? `<div class="tl-empty"><b>Empty timeline.</b> Import into the Bin, mark In/Out on the source (I/O), then <b>W</b> insert, <b>D</b> overwrite or <b>E</b> append. Press <b>?</b> for every key.</div>` : ""}
             ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : tab === "act" ? `<div class="tl-act">${hist.length ? hist.map((h) => `<div class="row"><span class="who ${h.kind === "agent" ? "agent" : ""} ${h.undone ? "undone" : ""}">${esc(h.actor)}</span><span class="what ${h.undone ? "undone" : ""}">${esc(h.summary)}</span><span class="ver">v${esc(h.to)}</span></div>`).join("") : `<span style="color:var(--dim)">No changes yet. Trim, split or lift and each step lands here.</span>`}</div>` : `
             <div class="tl-ruler" style="width:${width - LAB}px">${rg ? `<span class="tl-rng" style="left:${rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></span>` : ""}${ticks.join("")}${inOut.in != null && rg ? `<span class="tl-mk in" style="left:${rg[0] * pps}px" title="In ${esc(tc(rg[0]))}"></span>` : ""}${inOut.out != null && rg ? `<span class="tl-mk out" style="left:${rg[1] * pps}px" title="Out ${esc(tc(rg[1]))}"></span>` : ""}</div>
             <div class="tl-stack" style="width:${width}px">
@@ -3214,6 +3279,12 @@
     if (name === "title") { await addTitleHere("lower-third"); return; }
     if (name === "import") { const inp = root.querySelector("[data-import]"); if (inp) inp.click(); return; }
     if (name === "bin") { binOpen = !binOpen; try { localStorage.setItem("tl-bin", binOpen ? "1" : "0"); } catch (e) { /* private */ } paint(); return; }
+    if (name === "ws-edit") { setWorkspace("edit"); return; }
+    if (name === "ws-colour") { setWorkspace("colour"); return; }
+    if (name === "ws-audio") { setWorkspace("audio"); return; }
+    if (name === "help") { helpOpen = !helpOpen; paint(); return; }
+    if (name === "help-close") { helpOpen = false; paint(); return; }
+
     if (name === "src-insert" || name === "src-over" || name === "src-append") {
       await srcEdit(name === "src-insert" ? "insert" : name === "src-over" ? "overwrite" : "append");
       return;
@@ -3485,12 +3556,21 @@
 
   function onKey(e) {
     if (!document.body.classList.contains("editing") || !doc) return;
+
     // Any focused control keeps its own keys: a <select> takes the arrows, a range takes them
     // too, a text box takes letters. (A <select> used to lose its arrows to the timeline.)
     if (e.target.closest("input, textarea, select, [contenteditable]")) return;
     if (picking && e.key === "Escape") { e.preventDefault(); armPick(false); paint(); return; }
     const k = e.key.toLowerCase();
+    if (helpOpen && (k === "escape" || e.key === "?" || (e.shiftKey && k === "/"))) { e.preventDefault(); helpOpen = false; paint(); return; }
     if (binKey(e, e.code || "")) return;
+    if (e.key === "?" || (e.shiftKey && k === "/")) { e.preventDefault(); helpOpen = !helpOpen; paint(); return; }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && (k === "1" || k === "2" || k === "3")) {
+      e.preventDefault();
+      setWorkspace(k === "1" ? "edit" : k === "2" ? "colour" : "audio");
+      return;
+    }
+
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
     // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
     const code = e.code || "";
