@@ -8,6 +8,7 @@ transform keyframes on a rebased segment).
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from fractions import Fraction
 from typing import Any
 
@@ -231,6 +232,75 @@ def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
     return _EZ.interp_expr(kfs, key, tvar, eased=True)
 
 
+
+
+def has_animated_keys(mask: dict) -> bool:
+    """True when mask geometry is keyframed (must stay on per-frame geq)."""
+    keys = mask.get("keys")
+    return isinstance(keys, list) and len(keys) > 0
+
+
+def write_static_matte_png(mask: dict, w: int, h: int, path: Path) -> Path:
+    """Bake a static gray matte once. Render uses this instead of per-frame geq.
+
+    Nested smoothstep geq at 1080p is ~0.15x realtime and stalls full-timeline exports;
+    a one-shot numpy bake is ~100ms and maskedmerge stays realtime.
+    """
+    from pathlib import Path as _P
+
+    path = _P(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as e:  # pragma: no cover
+        raise RuntimeError("numpy+Pillow required for static mask mattes") from e
+
+    shape = str(mask.get("shape") or DEFAULT_SHAPE)
+    invert = mask.get("invert") is True
+    feather = _frac(mask.get("feather")) or 0.0
+    mx = _frac(mask.get("x")) or 0.0
+    my = _frac(mask.get("y")) or 0.0
+    mw = _frac(mask.get("w")) or 0.5
+    mh = _frac(mask.get("h")) or 0.5
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float64)
+    # pixel centres
+    px = xs + 0.5
+    py = ys + 0.5
+    cx_px = (0.5 + mx) * w
+    cy_px = (0.5 + my) * h
+    hw_px = mw * w * 0.5
+    hh_px = mh * h * 0.5
+    f_px = max(0.0, feather) * min(w, h)
+    if shape == "ellipse":
+        hw_s = max(hw_px, 1e-9)
+        hh_s = max(hh_px, 1e-9)
+        rn = np.sqrt(((px - cx_px) / hw_s) ** 2 + ((py - cy_px) / hh_s) ** 2)
+        d_px = (rn - 1.0) * min(hw_px, hh_px)
+    else:
+        d_px = np.maximum(np.abs(px - cx_px) - hw_px, np.abs(py - cy_px) - hh_px)
+    if f_px <= 1e-9:
+        m = (d_px <= 0.0).astype(np.float64)
+    else:
+        t = np.clip((-d_px) / f_px, 0.0, 1.0)
+        m = t * t * (3.0 - 2.0 * t)
+    if invert:
+        m = 1.0 - m
+    arr = (m * 255.0 + 0.5).astype(np.uint8)
+    Image.fromarray(arr, mode="L").save(path, format="PNG")
+    return path
+
+
+def movie_matte_filter(path: "Path", w: int, h: int) -> str:
+    """Source filter: loop a baked gray PNG as a matte stream (no video input)."""
+    from pathlib import Path as _P
+    p = str(_P(path).resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    return (
+        f"movie='{p}':loop=0,format=gray,"
+        f"scale={int(w)}:{int(h)}:flags=neighbor,setsar=1,format=gray"
+    )
+
+
 def geq_lum_expr(mask: dict, w: int, h: int, rate: int, tvar: str = "T") -> str:
     """Gray matte 0..255 for ffmpeg geq, evaluated per frame (``tvar`` in seconds)."""
     shape = str(mask.get("shape") or DEFAULT_SHAPE)
@@ -264,29 +334,52 @@ def geq_lum_expr(mask: dict, w: int, h: int, rate: int, tvar: str = "T") -> str:
     else:
         mx, my, mw, mh = map(_ffmpeg_num, (bx, by, bw, bh))
 
-    wn, hn = _ffmpeg_num(float(w)), _ffmpeg_num(float(h))
-    fp = _ffmpeg_num(feather * min(w, h))
-    cx = f"(0.5+({mx}))"
-    cy = f"(0.5+({my}))"
-    lx = f"((X+0.5)/{wn})"
-    ly = f"((Y+0.5)/{hn})"
-    px = f"({lx}*{wn})"
-    py = f"({ly}*{hn})"
-    cxp = f"({cx}*{wn})"
-    cyp = f"({cy}*{hn})"
-    hwp = f"(({mw})*{wn}*0.5)"
-    hhp = f"(({mh})*{hn}*0.5)"
-    if shape == "ellipse":
-        rn = f"sqrt(pow(({px})-({cxp}),2)/pow(({hwp}),2)+pow(({py})-({cyp}),2)/pow(({hhp}),2))"
-        dpx = f"(({rn})-1)*min(({hwp}),({hhp}))"
+    # Compact pixel-space expr. Avoid (X+0.5)/W*W round-trips — each nest costs realtime.
+    wn, hn = float(w), float(h)
+    cxp = (0.5 + (float(mx) if isinstance(mx, str) is False else 0))  # may be expr str
+    # mx/my/mw/mh are either numeric strings or animated expressions
+    def _is_num(s: str) -> bool:
+        try:
+            float(s)
+            return True
+        except ValueError:
+            return False
+
+    if _is_num(str(mx)) and _is_num(str(my)) and _is_num(str(mw)) and _is_num(str(mh)):
+        cx_px = (0.5 + float(mx)) * wn
+        cy_px = (0.5 + float(my)) * hn
+        hw_px = float(mw) * wn * 0.5
+        hh_px = float(mh) * hn * 0.5
+        fp = feather * min(wn, hn)
+        if shape == "ellipse":
+            # hypot((X-cx)/hw, (Y-cy)/hh) — one distance, no pow nests
+            rn = f"hypot((X+0.5-{cx_px:.4f})/{max(hw_px,1e-6):.4f},(Y+0.5-{cy_px:.4f})/{max(hh_px,1e-6):.4f})"
+            dpx = f"({rn}-1)*{min(hw_px, hh_px):.4f}"
+        else:
+            dpx = (
+                f"max(abs(X+0.5-{cx_px:.4f})-{hw_px:.4f},"
+                f"abs(Y+0.5-{cy_px:.4f})-{hh_px:.4f})"
+            )
+        if feather <= 1e-9:
+            m = f"if(lte({dpx},0),255,0)"
+        else:
+            m = f"(max(0,min(1,(-({dpx}))/{max(fp,1e-9):.4f})))*255"
     else:
-        dpx = f"max(abs(({px})-({cxp}))-({hwp}),abs(({py})-({cyp}))-({hhp}))"
-    if feather <= 1e-9:
-        m = f"if(lte(({dpx}),0),255,0)"
-    else:
-        t = f"max(0,min(1,(-({dpx}))/({fp})))"
-        sm = f"({t})*({t})*(3-2*({t}))"
-        m = f"({sm})*255"
+        # Animated keys: keep general form but still avoid W round-trips
+        fp = _ffmpeg_num(feather * min(w, h))
+        cxp = f"((0.5+({mx}))*{_ffmpeg_num(wn)})"
+        cyp = f"((0.5+({my}))*{_ffmpeg_num(hn)})"
+        hwp = f"(({mw})*{_ffmpeg_num(wn)}*0.5)"
+        hhp = f"(({mh})*{_ffmpeg_num(hn)}*0.5)"
+        if shape == "ellipse":
+            rn = f"hypot((X+0.5-({cxp}))/({hwp}),(Y+0.5-({cyp}))/({hhp}))"
+            dpx = f"(({rn})-1)*min(({hwp}),({hhp}))"
+        else:
+            dpx = f"max(abs(X+0.5-({cxp}))-({hwp}),abs(Y+0.5-({cyp}))-({hhp}))"
+        if feather <= 1e-9:
+            m = f"if(lte(({dpx}),0),255,0)"
+        else:
+            m = f"(max(0,min(1,(-({dpx}))/({fp}))))*255"
     if invert:
         m = f"255-({m})"
     return m

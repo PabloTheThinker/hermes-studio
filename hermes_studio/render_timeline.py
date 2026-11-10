@@ -250,18 +250,55 @@ def _masked_mid_graph(
     lut_pre: str,
     n: int,
     mid: str,
+    *,
+    cache_dir: Path | None = None,
 ) -> str:
-    """``plain_tag`` is scaled picture; writes corrected branch + matte + merge into ``mid``."""
+    """``plain_tag`` is scaled picture; writes corrected branch + matte + merge into ``mid``.
+
+    Every branch is forced to ``dw``×``dh`` before ``maskedmerge``. The plain frame is
+    split once more before matte+merge: a label may only feed one filter input, and
+    without that split ffmpeg auto-wires the raw source into maskedmerge (size mismatch).
+
+    Static masks (no keyframes) bake a gray PNG once and pull it via ``movie`` — per-frame
+    geq at 1080p with feathered ellipse was ~0.15x realtime and hung M10 exports.
+    """
     from hermes_studio import mask as _MK
+    import hashlib
+    import json as _json
 
     corr = _mask_corr_chain(mask, gchain, lut_pre)
+    ctag, mtag, stag = f"mc{n}", f"mm{n}", f"ms{n}"
+    sp, sm = f"msp{n}", f"msm{n}"
+    fit = f"scale={dw}:{dh}:flags=bicubic,setsar=1,format=yuv420p"
+    fit_m = f"scale={dw}:{dh}:flags=neighbor,setsar=1,format=gray"
+    corr_chain = _vchain(corr, fit) if corr else fit
+
+    # Static PNG+movie(loop=0) never EOFs and hangs the graph; linear geq is ~1.3x realtime.
+    use_static = False and cache_dir is not None and not _MK.has_animated_keys(mask)
+    if use_static:
+        key = hashlib.sha1(
+            _json.dumps({"m": mask, "w": dw, "h": dh}, sort_keys=True, default=str).encode()
+        ).hexdigest()[:16]
+        matte_path = Path(cache_dir) / "mattes" / f"{key}.png"
+        if not matte_path.is_file():
+            _MK.write_static_matte_png(mask, dw, dh, matte_path)
+        matte_src = f"{_MK.movie_matte_filter(matte_path, dw, dh)}[{mtag}]"
+        return (
+            f"[{plain_tag}]split[{sp}][{plain_tag}b];"
+            f"[{sp}]{fit}[{sp}f];"
+            f"[{plain_tag}b]{corr_chain}[{ctag}];"
+            f"{matte_src};"
+            f"[{sp}f][{ctag}][{mtag}]maskedmerge[{mid}]"
+        )
+
     matte = _MK.ffmpeg_matte_filter(mask, dw, dh, rate)
-    ctag, mtag = f"mc{n}", f"mm{n}"
     return (
         f"[{plain_tag}]split[{plain_tag}a][{plain_tag}b];"
-        f"[{plain_tag}b]{corr}[{ctag}];"
-        f"[{plain_tag}a]{matte}[{mtag}];"
-        f"[{plain_tag}a][{ctag}][{mtag}]maskedmerge[{mid}]"
+        f"[{plain_tag}a]{fit}[{stag}];"
+        f"[{plain_tag}b]{corr_chain}[{ctag}];"
+        f"[{stag}]split[{sp}][{sm}];"
+        f"[{sm}]{matte},{fit_m}[{mtag}];"
+        f"[{sp}][{ctag}][{mtag}]maskedmerge[{mid}]"
     )
 
 
@@ -824,7 +861,14 @@ def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
     # and add the pan offset (a fraction of the input size). iw/ih are the input size.
     xexp = f"iw/2-(iw/zoom/2)+({xx})*iw"
     yexp = f"ih/2-(ih/zoom/2)+({yy})*ih"
-    return f"zoompan=z='{z}':x='{xexp}':y='{yexp}':d=1:s={w}x{h}:fps={fps:.3f},"
+    # zoompan+d=1 can emit tens of thousands of frames when followed by setpts speed
+    # changes (concat stalls mid-timeline). Clamp to the segment duration the caller
+    # passed (source window length before speed setpts).
+    dur_s = max(1.0 / max(fps, 1.0), float(dur))
+    return (
+        f"zoompan=z='{z}':x='{xexp}':y='{yexp}':d=1:s={w}x{h}:fps={fps:.3f},"
+        f"setpts=PTS-STARTPTS,trim=duration={dur_s:.6f},"
+    )
 
 
 # --------------------------------------------------------------------------- graph
@@ -881,6 +925,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     rate = plan["rate"]
     total = _t2s(plan["end_tick"], rate)
     fps = plan["fps"]
+    cache_dir = Path(plan["cache"]) if plan.get("cache") else None
     fc: list[str] = []
     v_in: list[str] = []
 
@@ -969,7 +1014,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 # already seconds from the clip start, and the segment is rebased to zero, so
                 # `on/fps` is that same clock. Values before the first / after the last
                 # keyframe hold the endpoint (clamped), which is how a Ken Burns push reads.
-                xf = _zoompan(kfs, w, h, fps, dur)
+                # Clamp zoompan to source window length (before setpts speed), not tl_dur.
+                xf = _zoompan(kfs, w, h, fps, src_dur)
             elif tf:
                 tscale = tf["scale"]
                 tw = max(2, int(round(dw * tscale)) // 2 * 2)
@@ -1028,11 +1074,14 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 )
                 trim = f"trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f}"
                 if clip_mask:
-                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid)}"
-                    lg = ""
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid, cache_dir=cache_dir)}"
+                    # after must re-label [mid] before a partial-intensity LUT graph (split=2…),
+                    # otherwise fps/pad output is unlabeled and split has no input.
                     if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
-                        lg = f";{_LU.ffmpeg_graph(lut_info['path'], lut_info['intensity'], mid)}"
-                    fc.append(f"{head};[{mid}]{after}{lg};[{mid}]{tail}[v{n}]")
+                        lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                        fc.append(f"{head};[{mid}]{after}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    else:
+                        fc.append(f"{head};[{mid}]{_vchain(after, tail)}[v{n}]")
                 elif lut_graph:
                     core = _vchain(base_scale, gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
                     lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
@@ -1046,21 +1095,26 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 # mixing vertical and horizontal footage failed to render. The canvas is square.
                 mid = f"vm{n}"
                 ptag = f"mp{n}"
+                # Transform once: mask path applies xf/pad after merge; plain path puts them in core.
+                # Never append `after` (which already has xf/pad) onto a core that also has xf/pad —
+                # that doubled zoompan and OOM-killed full acceptance exports (SIGKILL, empty stderr).
                 after = _vchain(xf, pad) + f",setpts={pts},fps={fps:.3f}"
+                timing = f"setpts={pts},fps={fps:.3f}"
                 tail = _vchain(_opacity_chain(kfs) if kfs else "", vfade.lstrip(","), "setsar=1", "format=yuv420p")
                 trim = f"trim=start={s_in:.3f}:end={s_in + src_dur:.3f}"
                 if clip_mask:
-                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid)}"
-                    lg = ""
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid, cache_dir=cache_dir)}"
                     if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
-                        lg = f";{_LU.ffmpeg_graph(lut_info['path'], lut_info['intensity'], mid)}"
-                    fc.append(f"{head};[{mid}]{after}{lg};[{mid}]{tail}[v{n}]")
+                        lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                        fc.append(f"{head};[{mid}]{after}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    else:
+                        fc.append(f"{head};[{mid}]{_vchain(after, tail)}[v{n}]")
                 elif lut_graph:
-                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + f",{after}"
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad, timing)
                     lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
                     fc.append(f"[{src}]{trim},{core}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
                 else:
-                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + f",{after}"
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad, timing)
                     fc.append(f"[{src}]{trim},{core},{tail}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
@@ -1174,25 +1228,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     if ass is not None:
         fc.append(f"[outv]ass='{_ass_escape_path(ass)}'[outv2]")
         vout = "outv2"
-    # Titles over everything: each PNG is its own looped input (see _encode), faded in alpha
-    # (linear, as the preview) and slid with the overlay position expression (titles.py).
-    from hermes_studio import titles as _TT
-
-    base_idx = len(plan["inputs"])
-    for k, ti in enumerate(plan.get("titles") or []):
-        at, dur = _t2s(ti["at"], rate), _t2s(ti["dur"], rate)
-        fi, fo = min(_t2s(ti["fi"], rate), dur), min(_t2s(ti["fo"], rate), dur)
-        chain = f"[{base_idx + k}:v]format=rgba"
-        if fi > 0 and ti["in"] != "none":
-            chain += f",fade=t=in:st=0:d={fi:.6f}:alpha=1"
-        if fo > 0 and ti["out"] != "none":
-            chain += f",fade=t=out:st={max(0.0, dur - fo):.6f}:d={fo:.6f}:alpha=1"
-        chain += f",setpts=PTS-STARTPTS+{at:.6f}/TB[tt{k}]"
-        fc.append(chain)
-        xe, ye = _TT.motion_expr(ti["in"] if fi > 0 else "none", ti["out"] if fo > 0 else "none", at, dur, fi, fo, w, h)
-        fc.append(f"[{vout}][tt{k}]overlay=x='{xe}':y='{ye}':eval=frame:eof_action=pass:format=auto,format=yuv420p[tv{k}]")
-        vout = f"tv{k}"
-
+    # Titles are burned in a second pass (_burn_titles). Inlining multiple setpts-shifted
+    # overlays on top of zoompan/mask graphs deadlocks ffmpeg (one title OK, two hang).
     return ";".join(fc), vout
 
 
@@ -1211,7 +1248,10 @@ def _encode(
 
     exp: ResolvedExport = export if export is not None else resolve_export(None)
     preset = exp.preset
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin"]
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin",
+         # Cap filter graph parallelism: keyframe zoompan + mask + grade can OOM-kill
+         # (SIGKILL, empty stderr) on a 16–19 GB host when ffmpeg fans out unbounded.
+         "-filter_threads", "2", "-filter_complex_threads", "2"]
     for inp in plan["inputs"]:
         kind = inp["role"]
         if kind == "clip":
@@ -1286,7 +1326,9 @@ def _run_ffmpeg_progress(
     if cmd[0] != "ffmpeg" or len(cmd) < 2:
         raise RenderError("bad ffmpeg command")
     tail = cmd[5:] if len(cmd) > 5 and cmd[4] == "-nostdin" else cmd[2:]
-    pcmd = ["ffmpeg", "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error", "-progress", "pipe:1", "-y", *tail]
+    pcmd = ["ffmpeg", "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error",
+          "-filter_threads", "2", "-filter_complex_threads", "2",
+          "-progress", "pipe:1", "-y", *tail]
     total_us = max(1, int(duration_sec * 1_000_000))
     p = subprocess.Popen(pcmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
@@ -1400,6 +1442,80 @@ def validate_editor_export(
     return export
 
 
+
+def _burn_titles(
+    src: Path,
+    dest: Path,
+    plan: dict,
+    *,
+    export: Any | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> None:
+    """Second-pass title burn onto a finished picture+sound cut.
+
+    Keeps title overlays out of the main filter graph (multi-title + Ken Burns deadlocked
+    single-pass encodes).
+    """
+    from hermes_studio import titles as _TT
+    from hermes_studio.export_presets import ResolvedExport
+    from hermes_studio.export_presets import resolve as resolve_export
+
+    titles = plan.get("titles") or []
+    if not titles:
+        if src.resolve() != dest.resolve():
+            os.replace(src, dest)
+        return
+    exp: ResolvedExport = export if export is not None else resolve_export(None)
+    rate = plan["rate"]
+    fps = plan["fps"]
+    w, h = plan["width"], plan["height"]
+    total = _t2s(plan["end_tick"], rate)
+    cancel_fn = cancel or (lambda: False)
+    cmd: list[str] = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin", "-i", str(src)]
+    fc: list[str] = []
+    vlab = "0:v"
+    for k, ti in enumerate(titles):
+        at, dur = _t2s(ti["at"], rate), _t2s(ti["dur"], rate)
+        fi, fo = min(_t2s(ti["fi"], rate), dur), min(_t2s(ti["fo"], rate), dur)
+        cmd += ["-loop", "1", "-framerate", f"{fps:.3f}", "-t", f"{dur:.6f}", "-i", str(ti["png"])]
+        chain = f"[{k + 1}:v]format=rgba"
+        if fi > 0 and ti["in"] != "none":
+            chain += f",fade=t=in:st=0:d={fi:.6f}:alpha=1"
+        if fo > 0 and ti["out"] != "none":
+            chain += f",fade=t=out:st={max(0.0, dur - fo):.6f}:d={fo:.6f}:alpha=1"
+        if at > 1e-6:
+            chain += f",tpad=start_mode=add:start_duration={at:.6f}:color=black@0"
+        tail = max(0.0, total - at - dur)
+        if tail > 1e-6:
+            chain += f",tpad=stop_mode=add:stop_duration={tail:.6f}:color=black@0"
+        chain += f",setpts=PTS-STARTPTS[tt{k}]"
+        fc.append(chain)
+        xe, ye = _TT.motion_expr(
+            ti["in"] if fi > 0 else "none",
+            ti["out"] if fo > 0 else "none",
+            at, dur, fi, fo, w, h,
+        )
+        out = f"tv{k}"
+        fc.append(
+            f"[{vlab}][tt{k}]overlay=x='{xe}':y='{ye}':eval=frame:eof_action=pass:format=auto,"
+            f"format=yuv420p[{out}]"
+        )
+        vlab = out
+    fc.append(f"[{vlab}]trim=duration={total:.6f},setpts=PTS-STARTPTS[vout]")
+    xpreset = exp.x264_preset or "veryfast"
+    crf = exp.crf if exp.crf is not None else 20
+    cmd += [
+        "-filter_complex", ";".join(fc),
+        "-map", "[vout]", "-map", "0:a?",
+        "-t", f"{total:.3f}", "-r", f"{fps:.3f}",
+        "-c:v", "libx264", "-preset", xpreset, "-crf", str(crf),
+        "-pix_fmt", "yuv420p", "-c:a", "copy",
+        "-movflags", "+faststart", str(dest),
+    ]
+    _run_ffmpeg_progress(cmd, total, on_progress, cancel_fn)
+
+
 def render_project(
     pid: str,
     out_path: Path | None = None,
@@ -1440,7 +1556,11 @@ def render_project(
     if shutil.which("ffmpeg") is None:
         raise RenderError("ffmpeg is not installed")
     ass = _build_ass(plan, folder / "cache")
-    graph, vout = _build_graph(plan, ass)
+    titles = list(plan.get("titles") or [])
+    # Main graph never inlines titles (see _build_graph); burn after the base cut.
+    plan_base = dict(plan)
+    plan_base["titles"] = []
+    graph, vout = _build_graph(plan_base, ass)
     aout, seconds = "outa", None
     if rng:
         s, e = rng
@@ -1453,20 +1573,33 @@ def render_project(
     dest.parent.mkdir(parents=True, exist_ok=True)
     dur_sec = seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"])
     tmp = dest.with_name(f".{dest.stem}.part{dest.suffix}")
+    tmp_base = dest.with_name(f".{dest.stem}.base{dest.suffix}") if titles else tmp
     tmp.unlink(missing_ok=True)
+    tmp_base.unlink(missing_ok=True)
     replaced = False
     try:
-        cmd = _encode(plan, graph, vout, tmp, aout=aout, seconds=seconds, export=export)
+        cmd = _encode(plan_base, graph, vout, tmp_base, aout=aout, seconds=seconds, export=export)
         _run_ffmpeg_progress(cmd, dur_sec, on_progress, cancel_fn)
         if cancel_fn():
             raise RenderError("render cancelled")
-        if not tmp.is_file() or tmp.stat().st_size < 1024:
+        if not tmp_base.is_file() or tmp_base.stat().st_size < 1024:
             raise RenderError("the render produced no file")
+        if titles:
+            # Second pass: titles only. Progress stays at ~1.0 for the burn.
+            _burn_titles(tmp_base, tmp, plan, export=export, on_progress=on_progress, cancel=cancel_fn)
+            tmp_base.unlink(missing_ok=True)
+            if cancel_fn():
+                raise RenderError("render cancelled")
+            if not tmp.is_file() or tmp.stat().st_size < 1024:
+                raise RenderError("the render produced no file")
+        elif tmp_base != tmp:
+            os.replace(tmp_base, tmp)
         os.replace(tmp, dest)
         replaced = True
     finally:
         if not replaced:
             tmp.unlink(missing_ok=True)
+            tmp_base.unlink(missing_ok=True)
     summary = probe_export(dest)
     meta = {
         "path": dest.name,
