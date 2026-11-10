@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import queue
+import re
 import secrets
 import threading
+import time
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -62,6 +65,10 @@ SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+# Desktop's plugin frame is an opaque origin. Only /e/<token>/ answers it, and
+# only while this file holds a live token. The open desk stays unframeable.
+EMBED_FILE = Path.home() / ".hermes" / "clips" / "desktop-embed.json"
+_EMBED_PATH = re.compile(r"^/e/([A-Za-z0-9_-]{20,80})(/.*)?$")
 
 
 def _extra_hosts() -> set[str]:
@@ -78,6 +85,41 @@ def host_allowed(host_header: str | None) -> bool:
     if name.startswith("[") and "]" in name:
         name = name[: name.index("]") + 1]
     return name in LOOPBACK_NAMES or name.endswith(".ts.net") or name in _extra_hosts()
+
+
+def embed_token_ok(token: str) -> bool:
+    """True when ``token`` matches the Desktop embed file and has not expired."""
+    try:
+        data = json.loads(EMBED_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    saved = str(data.get("desk") or "")
+    try:
+        exp = float(data.get("exp") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not saved or exp < time.time():
+        return False
+    return hmac.compare_digest(saved, token)
+
+
+def embed_headers(host: str) -> dict[str, str]:
+    """Framing headers for one token-gated document. Not used on the open desk."""
+    origin = "https://" + host.strip() if host else "'none'"
+    csp = (
+        f"default-src {origin}; script-src {origin} 'unsafe-inline'; "
+        f"style-src {origin} 'unsafe-inline' https://fonts.googleapis.com; "
+        f"font-src {origin} https://fonts.gstatic.com; "
+        f"img-src {origin} data: blob:; media-src {origin} blob:; connect-src {origin}; "
+        "base-uri 'none'; object-src 'none'"
+    )
+    return {
+        "Content-Security-Policy": csp,
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
 
 
 def origin_ok(origin: str | None, host_header: str | None) -> bool:
@@ -301,9 +343,33 @@ class StudioHandler(BaseHTTPRequestHandler):
         return
 
     def end_headers(self) -> None:
-        for k, v in SECURITY_HEADERS.items():
+        headers = embed_headers(self.headers.get("Host") or "") if getattr(self, "_embed", False) else SECURITY_HEADERS
+        for k, v in headers.items():
             self.send_header(k, v)
+        if getattr(self, "_embed", False):
+            self.send_header("Access-Control-Allow-Origin", "null")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+            self.send_header("Vary", "Origin")
         super().end_headers()
+
+    def _claim_embed(self) -> bool:
+        """Strip a valid /e/<token> prefix. Invalid tokens are a 404. Plain paths pass through."""
+        parsed = urlparse(self.path)
+        match = _EMBED_PATH.match(parsed.path)
+        if not match:
+            return True
+        if not embed_token_ok(match.group(1)):
+            self._refuse(404, "not found")
+            return False
+        rest = match.group(2) or "/"
+        if not rest.startswith("/"):
+            rest = "/" + rest
+        query = ("?" + parsed.query) if parsed.query else ""
+        self._embed = True
+        self._embed_token = match.group(1)
+        self.path = rest + query
+        return True
 
     def _refuse(self, code: int, why: str) -> None:
         body = json.dumps({"ok": False, "error": why}).encode()
@@ -323,7 +389,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._refuse(421, "host not allowed")
             return False
         if write:
-            if not origin_ok(self.headers.get("Origin"), self.headers.get("Host")):
+            origin = self.headers.get("Origin")
+            allowed = origin == "null" and getattr(self, "_embed", False)
+            if not allowed and not origin_ok(origin, self.headers.get("Host")):
                 self._refuse(403, "cross-origin request refused")
                 return False
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -347,13 +415,19 @@ class StudioHandler(BaseHTTPRequestHandler):
             return False
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        if not self._no_body():
+        if not self._claim_embed() or not self._no_body():
             return
-        # No CORS: cross-site preflights get nothing to work with.
-        self._refuse(405, "no cross-origin access")
+        if not getattr(self, "_embed", False):
+            self._refuse(405, "no cross-origin access")
+            return
+        if not self._guard(write=False):
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
-        if not self._guard(write=False) or not self._no_body():
+        if not self._claim_embed() or not self._guard(write=False) or not self._no_body():
             return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -376,7 +450,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        if not self._guard(write=False):
+        if not self._claim_embed() or not self._guard(write=False):
             return
         parsed = urlparse(self.path)
         segs = path_segments(parsed.path)  # split first, then decode each segment
@@ -384,6 +458,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         path = "/".join(segs)
         if path in {"/", "/index.html"}:
+            if getattr(self, "_embed", False):
+                return self._embed_html()
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
         if is_project_route(segs) or segs == ["", "mcp"]:
             from hermes_studio import http_engine
@@ -566,6 +642,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._claim_embed():
+            return
         up = urlparse(self.path).path
         if up.startswith("/api/editor/") and up.endswith("/upload") and up.count("/") == 4:
             if not self._guard(write=True, raw_ok=True):
@@ -1289,6 +1367,34 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 404, {"ok": False, "error": "unknown design action"})
         except (design.DesignError, photo.PhotoError) as exc:
             return _json(self, 400, {"ok": False, "error": str(exc)[:300]})
+
+    def _embed_html(self) -> None:
+        """The real desk, with absolute URLs pinned under the embed token."""
+        token = getattr(self, "_embed_token", "")
+        prefix = "/e/" + token
+        raw = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        raw = raw.replace('src="/', f'src="{prefix}/')
+        raw = raw.replace("src='/", f"src='{prefix}/")
+        boot = (
+            "<script>(function(){var P=" + json.dumps(prefix) + ";"
+            "function fix(u){return typeof u==='string'&&u.charAt(0)==='/'&&u.indexOf(P+'/')!==0&&u!==P?P+u:u;}"
+            "var f=window.fetch;window.fetch=function(input,init){"
+            "if(typeof input==='string')input=fix(input);"
+            "return f.call(this,input,init);};"
+            "function wrap(proto,prop){var d=Object.getOwnPropertyDescriptor(proto,prop);if(!d||!d.set)return;"
+            "Object.defineProperty(proto,prop,{get:d.get,set:function(v){d.set.call(this,fix(v));},configurable:true});}"
+            "wrap(HTMLMediaElement.prototype,'src');wrap(HTMLImageElement.prototype,'src');"
+            "var open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){"
+            "arguments[1]=fix(u);return open.apply(this,arguments);};})();</script>"
+        )
+        raw = raw.replace("<head>", "<head>" + boot, 1)
+        body = raw.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _file(self, path: Path, content_type: str, cache: bool = False) -> None:
         size = path.stat().st_size
