@@ -35,41 +35,42 @@ def root() -> Path:
     return Path(os.environ.get("HERMES_STUDIO_EDITOR") or Path.home() / ".hermes" / "hermes-studio" / "editor")
 
 
-def _contained(root_path: Path, *parts: str) -> str:
-    """Real path under root_path, or raise. String form so CodeQL sees the guard."""
-    base = os.path.realpath(str(root_path))
-    prefix = base.rstrip(os.sep) + os.sep
-    candidate = base
-    for part in parts:
-        if not part or part in {".", ".."} or os.sep in part or (os.altsep and os.altsep in part):
-            raise EditorError("bad project path")
-        candidate = os.path.join(candidate, part)
-    real = os.path.realpath(candidate)
-    if real != base and not real.startswith(prefix):
-        raise EditorError("bad project path")
-    return real
-
-
 def _dir(pid: str) -> Path:
     if not T.ID_RE.fullmatch(pid or ""):
         raise EditorError("bad project id")
     # id arrives off a URL — realpath + prefix check is the CodeQL-visible barrier
-    return Path(_contained(root(), pid))
-
-
-def _project_file(folder: Path, name: str) -> str:
-    """Absolute path string to a fixed filename inside a project folder."""
-    if Path(name).name != name or not name or name in {".", ".."}:
-        raise EditorError("bad project file")
-    return _contained(folder, name)
+    base = os.path.realpath(str(root()))
+    prefix = base.rstrip(os.sep) + os.sep
+    folder = os.path.realpath(os.path.join(base, pid))
+    if folder != base and not folder.startswith(prefix):
+        raise EditorError("bad project id")
+    return Path(folder)
 
 
 def _write_project_text(folder: Path, name: str, text: str) -> None:
-    """Write a project file only after the resolved path is proven under the folder."""
-    path = _project_file(folder, name)
+    """Write a fixed project filename after an inlined realpath prefix check."""
+    if Path(name).name != name or not name or name in {".", ".."}:
+        raise EditorError("bad project file")
+    base = os.path.realpath(str(folder))
+    prefix = base.rstrip(os.sep) + os.sep
+    path = os.path.realpath(os.path.join(base, name))
+    if not path.startswith(prefix):
+        raise EditorError("bad project path")
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:  # path is prefix-checked
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
+
+
+def _project_path(folder: Path, name: str) -> str:
+    """Absolute path string to a fixed filename; raises unless under folder."""
+    if Path(name).name != name or not name or name in {".", ".."}:
+        raise EditorError("bad project file")
+    base = os.path.realpath(str(folder))
+    prefix = base.rstrip(os.sep) + os.sep
+    path = os.path.realpath(os.path.join(base, name))
+    if not path.startswith(prefix):
+        raise EditorError("bad project path")
+    return path
 
 
 def _cid() -> str:
@@ -201,14 +202,16 @@ def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     text = json.dumps(doc, separators=(",", ":"), sort_keys=True)
     _write_project_text(folder, "timeline.json.tmp", text)
-    os.replace(_project_file(folder, "timeline.json.tmp"), _project_file(folder, "timeline.json"))
+    src = _project_path(folder, "timeline.json.tmp")
+    dst = _project_path(folder, "timeline.json")
+    os.replace(src, dst)
 
 
 def _log(folder: Path) -> O.Oplog:
-    base_path = _project_file(folder, "base.json")
+    base_path = _project_path(folder, "base.json")
     with open(base_path, encoding="utf-8") as fh:
         base = json.loads(fh.read())
-    path = Path(_project_file(folder, "oplog.jsonl"))
+    path = Path(_project_path(folder, "oplog.jsonl"))
     if path.exists() and path.stat().st_size:
         return O.Oplog.load(base, path)
     return O.Oplog(base, path=path)
@@ -431,10 +434,11 @@ def create(pid: str = "demo") -> dict:
         return open_project(pid)
     d, _ = T.stamp_hash(_seed(pid))
     with _locked(folder):
-        if os.path.exists(_project_file(folder, "base.json")):  # another request created it while we waited
+        base_json = _project_path(folder, "base.json")
+        if os.path.exists(base_json):  # another request created it while we waited
             return view(_log(folder).doc)
         _write_project_text(folder, "base.json", json.dumps(d))
-        log = O.Oplog(d, path=Path(_project_file(folder, "oplog.jsonl")))
+        log = O.Oplog(d, path=Path(_project_path(folder, "oplog.jsonl")))
         _save_current(folder, log.doc)
         return view(log.doc)
 
@@ -1968,7 +1972,7 @@ def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> 
         _write_project_text(folder, "base.json", json.dumps(d))
         # An imported cut starts with an empty log, but the log file must exist: without it
         # the film has no history surface until somebody happens to make an edit.
-        oplog_path = Path(_project_file(folder, "oplog.jsonl"))
+        oplog_path = Path(_project_path(folder, "oplog.jsonl"))
         log = O.Oplog(d, path=oplog_path)
         oplog_path.touch(exist_ok=True)
         _save_current(folder, log.doc)
