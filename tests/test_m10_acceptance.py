@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,9 +10,7 @@ import pytest
 from hermes_studio import editor as E
 from hermes_studio import render_timeline as R
 from hermes_studio.timeline import new_timeline
-
-MEDIA_ROOT = Path("/home/ilo/.hermes/cache/scratch/m10-accept-20261110/media")
-DELIVER = Path("/home/ilo/.hermes/cache/scratch/m10-accept-20261110")
+from tests.test_editor import _make_source
 
 
 def _main_clips(view: dict) -> list[dict]:
@@ -38,9 +35,10 @@ def accept_home(tmp_path, monkeypatch):
 
 def test_m10_acceptance_film(accept_home):
     """Nine-step Editor 1.0 acceptance on scratch media (not Sir's films)."""
-    assert MEDIA_ROOT.is_dir(), "scratch media missing — generate c1..c3 first"
+    media_root = accept_home / "scratch-media"
+    media_root.mkdir()
     for i in (1, 2, 3):
-        assert (MEDIA_ROOT / f"c{i}.mp4").is_file()
+        _make_source(media_root / f"c{i}.mp4", seconds=5.0)
 
     pid = "m10film"
     folder = accept_home / pid
@@ -53,7 +51,7 @@ def test_m10_acceptance_film(accept_home):
 
     # 1 Assemble
     for i in (1, 2, 3):
-        v = E.import_media(pid, MEDIA_ROOT / f"c{i}.mp4", name=f"c{i}.mp4")
+        v = E.import_media(pid, media_root / f"c{i}.mp4", name=f"c{i}.mp4")
         mid = _bin_ids(v)[-1]
         E.place(pid, mid, 0.0, 3.5, "append")
     v = E.open_project(pid)
@@ -117,9 +115,10 @@ def test_m10_acceptance_film(accept_home):
     dur = E.open_project(pid)["duration"]
     E.add_title(pid, "end-card", max(0.0, dur - 2.2), text="END", sub="Editor 1.0", dur=2.0)
 
-    # 7 Export two presets (draft = memory-safe on 19 GB host)
+    # 7 Export two presets (draft = memory-safe on constrained hosts)
     exports = {}
-    DELIVER.mkdir(parents=True, exist_ok=True)
+    deliver = accept_home / "deliver"
+    deliver.mkdir(parents=True, exist_ok=True)
     for preset in ("1080p", "vertical"):
         out = folder / "cache" / f"m10-{preset}.mp4"
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +132,7 @@ def test_m10_acceptance_film(accept_home):
         else:
             assert probe["width"] == 1080 and probe["height"] == 1920
         assert float(probe.get("duration") or 0) > 5.0
-        exports[preset] = {"path": str(path), "probe": probe, "bytes": path.stat().st_size}
-        shutil.copy2(path, DELIVER / f"m10-{preset}.mp4")
+        exports[preset] = {"path": str(path.name), "probe": probe, "bytes": path.stat().st_size}
 
     # 8 Undo / redo — markers survive
     before = E.open_project(pid)["version"]
@@ -165,4 +163,4 @@ def test_m10_acceptance_film(accept_home):
         "markers": labels,
         "duration": E.open_project(pid)["duration"],
     }
-    (DELIVER / "m10-pytest-report.json").write_text(json.dumps(report, indent=2))
+    (deliver / "m10-pytest-report.json").write_text(json.dumps(report, indent=2))

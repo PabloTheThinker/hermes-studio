@@ -126,7 +126,7 @@ def test_embed_serves_the_desk(tmp_path, monkeypatch):
     embed = tmp_path / "desktop-embed.json"
     embed.write_text(json.dumps({"desk": slug, "exp": 9_999_999_999}), encoding="utf-8")
     monkeypatch.setattr(studio, "EMBED_FILE", embed)
-    h = _Fake("GET", f"/e/{slug}/", _h(Host="parallax.tail623771.ts.net:3870"))
+    h = _Fake("GET", f"/e/{slug}/", _h(Host="127.0.0.1:3870"))
     h.do_GET()
     raw = h.raw()
     assert h.status() == 200
