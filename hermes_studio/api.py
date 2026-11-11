@@ -84,7 +84,13 @@ def check_source(src: str) -> str:
     if not s:
         raise HermesStudioError("No source given.", hint="Pass a video file or an http(s) link.")
     if _is_url(s):
-        return s
+        from hermes_studio.guard import URLRefused, check_url
+
+        try:
+            return check_url(s)
+        except URLRefused as exc:
+            raise HermesStudioError(f"Link refused: {exc}", code="bad_input",
+                                    hint="Only public http(s) links are fetched; local and private network addresses are refused.") from None
     if "://" in s:
         raise HermesStudioError(f"Only http(s) links are supported: {s}", hint="Use a https:// link or a local file.")
     try:
@@ -100,6 +106,35 @@ def check_source(src: str) -> str:
             "That file is outside the folders Hermes Studio may read.",
             hint="Move it into your home folder or a mounted drive, or add its folder to HERMES_STUDIO_MEDIA_ROOTS.",
         ) from None
+
+
+def _out_dir(p: str | Path) -> Path:
+    """An --out / --work folder: inside the Studio folder (or HERMES_STUDIO_OUT_ROOTS)."""
+    from hermes_studio import guard
+
+    try:
+        return guard.out_dir(p)
+    except guard.PathRefused as exc:
+        raise HermesStudioError(str(exc), code="bad_input", hint="Leave --out empty (clips land in the library) or pick a folder inside ~/.hermes/clips.") from None
+
+
+def _captions_dest(out: str | Path | None) -> Path:
+    """Where agent captions go: a new .mp4 inside the Studio folder; never an existing file."""
+    from hermes_studio import guard
+
+    try:
+        if out and Path(str(out)).suffix.lower() == ".mp4":
+            dest = guard.out_file(out, {".mp4"})
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            return dest
+        folder = guard.out_dir(out) if out else guard.studio_root() / "agent-captions"
+    except guard.PathRefused as exc:
+        raise HermesStudioError(str(exc), code="bad_input") from None
+    folder.mkdir(parents=True, exist_ok=True)
+    dest, n = folder / "captions.mp4", 2
+    while dest.exists() or dest.is_symlink():
+        dest, n = folder / f"captions-{n}.mp4", n + 1
+    return dest
 
 
 def require_ffmpeg() -> None:
@@ -223,7 +258,7 @@ def run(
         look=look or {},
         fixes=fixes or "",
         transcript=Path(transcript).expanduser() if transcript else None,
-        work=Path(work).expanduser().resolve() if work else None,
+        work=_out_dir(work) if work else None,
         live_seconds=int(live_seconds or LIVE_DEFAULT_SEC),
         live_from_start=bool(live_from_start),
     )
@@ -239,7 +274,7 @@ def run(
         kw["prompt"] = rec.get("prompt") or kw["prompt"]
         kw["keywords"] = rec.get("keywords") or kw["keywords"]
     t0 = time.monotonic()
-    out_dir = Path(out).expanduser().resolve() if out else None
+    out_dir = _out_dir(out) if out else None
     res = run_once(source, out_dir, on_progress=on_progress, on_created=on_created, **kw)
     res["seconds"] = round(time.monotonic() - t0, 1)
     if rec is not None:
@@ -319,12 +354,23 @@ def restyle(job_id: str, file: str, *, look: dict | None = None, style: str | No
 
 def edit(src: str, op: str = "trim", *, start: float | None = None, end: float | None = None, at: float | None = None,
          out: str | None = None) -> dict:
+    """trim / split / duplicate / drop / restore. ``src`` goes through ``local_source`` (a media file
+    under a media root); drop and restore only touch files inside the Studio folder; ``out`` must be
+    a new media file inside the Studio folder (or HERMES_STUDIO_OUT_ROOTS). Nothing is overwritten."""
+    from hermes_studio import guard
+    from hermes_studio.download import MEDIA_EXTS, local_source
     from hermes_studio.edit import drop_file, duplicate_file, restore_file, split_file, trim_file
 
     _one_of("op", op, ("trim", "split", "duplicate", "drop", "restore"))
-    path = Path(src).expanduser()
-    if op != "restore" and not path.is_file():
-        raise HermesStudioError(f"File not found: {src}", code="not_found")
+    try:
+        path = guard.studio_file(src) if op in ("drop", "restore") else local_source(str(src))
+        dest = guard.out_file(out, MEDIA_EXTS) if out and op in ("trim", "duplicate") else None
+    except FileNotFoundError:
+        raise HermesStudioError(f"File not found: {src}", code="not_found") from None
+    except ValueError as exc:
+        raise HermesStudioError(str(exc), code="bad_input",
+                                hint="Sources: media files in your home folder, a mounted drive or the library. "
+                                     "Outputs: new files inside ~/.hermes/clips.") from None
     try:
         if op == "split":
             if at is None:
@@ -332,7 +378,7 @@ def edit(src: str, op: str = "trim", *, start: float | None = None, end: float |
             a, b = split_file(path, float(at))
             return {"ok": True, "op": op, "files": [str(a), str(b)]}
         if op == "duplicate":
-            return {"ok": True, "op": op, "file": str(duplicate_file(path, Path(out).expanduser() if out else None))}
+            return {"ok": True, "op": op, "file": str(duplicate_file(path, dest))}
         if op == "drop":
             return {"ok": True, "op": op, "file": str(drop_file(path))}
         if op == "restore":
@@ -340,10 +386,12 @@ def edit(src: str, op: str = "trim", *, start: float | None = None, end: float |
             return {"ok": True, "op": op, "file": str(p)}
         if start is None or end is None:
             raise HermesStudioError("trim needs --start and --end (seconds).")
-        dest = Path(out).expanduser() if out else path.with_name(path.stem + "-trim" + path.suffix)
+        dest = dest or guard.default_out_file(path, "-trim")
         return {"ok": True, "op": op, "file": str(trim_file(path, dest, float(start), float(end)))}
     except HermesStudioError:
         raise
+    except guard.PathRefused as exc:
+        raise HermesStudioError(str(exc), code="bad_input") from None
     except Exception as exc:
         raise HermesStudioError(str(exc).strip()[-600:] or "Edit failed.", code="failed") from None
 
@@ -377,7 +425,47 @@ def copy(src: str, clip_title: str = "") -> dict:
     return {"ok": True, **copy_from_job_dir(Path(root), clip_title)}
 
 
+def burn_agent_captions(
+    src: str,
+    lines: list | str | Path,
+    *,
+    out: str | Path | None = None,
+    style: str = "pop",
+    layout: str = "fit",
+    aspect: str = "9:16",
+    hook: str = "",
+) -> dict:
+    """Burn lines the calling Hermes agent wrote. Does not call a speech model."""
+    import tempfile
+
+    from hermes_studio.agent_captions import burn, load_cues
+    from hermes_studio.download import fetch
+
+    if isinstance(lines, (str, Path)) and not isinstance(lines, list):
+        loaded, file_hook = load_cues(lines)
+        lines = loaded
+        hook = hook or file_hook
+    if not isinstance(lines, list) or not lines:
+        raise HermesStudioError(
+            "Caption lines are required.",
+            hint="The Hermes agent writes the lines. A speech model is only a draft ear, not the caption writer.",
+        )
+    source = check_source(src)
+    require_ffmpeg()
+    _one_of("style", style, STYLES)
+    _one_of("layout", layout, LAYOUTS)
+    sizes = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350)}
+    width, height = sizes.get(aspect or "9:16", (1080, 1920))
+    work = Path(tempfile.mkdtemp(prefix="hs-agent-captions-"))
+    video = fetch(source, work) if _is_url(source) else Path(source)
+    dest = _captions_dest(out)
+    burn(video, lines, dest, work, style=style, layout=layout if layout != "auto" else "fit",
+         width=width, height=height, hook=hook)
+    return {"ok": True, "writer": "agent", "file": str(dest), "lines": len(lines)}
+
+
 def transcribe_only(src: str, *, work: str | None = None, whisper: str = "fast") -> dict:
+    """Draft ear only. The agent rewrites these words before they are burned."""
     import tempfile
 
     from hermes_studio.download import fetch
@@ -386,11 +474,19 @@ def transcribe_only(src: str, *, work: str | None = None, whisper: str = "fast")
 
     source = check_source(src)
     require_ffmpeg()
-    wd = Path(work).expanduser().resolve() if work else Path(tempfile.mkdtemp(prefix="hermes-studio-"))
+    wd = _out_dir(work) if work else Path(tempfile.mkdtemp(prefix="hermes-studio-"))
     wd.mkdir(parents=True, exist_ok=True)
     video = fetch(source, wd)
     tr = transcribe(video, wd, model_size=whisper_model(whisper))
-    return {"ok": True, "transcript": str(wd / "transcript.json"), "words": len(tr.words), "duration": tr.duration}
+    return {
+        "ok": True,
+        "draft": True,
+        "writer": "speech-draft",
+        "transcript": str(wd / "transcript.json"),
+        "words": len(tr.words),
+        "duration": tr.duration,
+        "hint": "Rewrite these words yourself, then burn them with captions --cues. Do not ship this draft.",
+    }
 
 
 def tools() -> dict:

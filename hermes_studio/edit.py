@@ -5,18 +5,24 @@ import subprocess
 from pathlib import Path
 
 
-def trim_file(src: Path, dest: Path, start: float, end: float) -> Path:
-    """Local analog of Opus edit_clip trim. Re-encodes so cuts land cleanly. Does not post."""
+def trim_file(src: Path, dest: Path, start: float, end: float, *, overwrite: bool = False) -> Path:
+    """Local analog of Opus edit_clip trim. Re-encodes so cuts land cleanly. Does not post.
+
+    An existing ``dest`` is refused unless ``overwrite`` (the desk re-trims its own clip copy)."""
+    from hermes_studio.guard import PathRefused
+
     src = Path(src).expanduser().resolve()
     dest = Path(dest).expanduser().resolve()
     if not src.is_file():
         raise FileNotFoundError(str(src))
     if end <= start:
         raise ValueError("end must be after start")
+    if not overwrite and (dest.exists() or dest.is_symlink()):
+        raise PathRefused(f"refusing to overwrite an existing file: {dest.name}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
-        "-y",
+        "-y" if overwrite else "-n",
         "-ss",
         f"{start:.3f}",
         "-to",
@@ -51,23 +57,32 @@ def split_file(src: Path, at: float, dest_a: Path | None = None, dest_b: Path | 
     dur = probe_duration(src)
     if at <= 0.2 or at >= dur - 0.2:
         raise ValueError("split point must sit inside the clip")
-    dest_a = Path(dest_a).expanduser().resolve() if dest_a else src.with_name(src.stem + "-a" + src.suffix)
-    dest_b = Path(dest_b).expanduser().resolve() if dest_b else src.with_name(src.stem + "-b" + src.suffix)
+    from hermes_studio.guard import default_out_file, out_file
+
+    dest_a = out_file(dest_a) if dest_a else default_out_file(src, "-a")
+    dest_b = out_file(dest_b) if dest_b else default_out_file(src, "-b")
     a = trim_file(src, dest_a, 0.0, at)
     b = trim_file(src, dest_b, at, dur)
     return a, b
 
 
 def duplicate_file(src: Path, dest: Path | None = None) -> Path:
-    """Safe copy to edit. Opus duplicate_clip analog. Does not post."""
+    """Safe copy to edit. Opus duplicate_clip analog. Does not post.
+
+    ``src`` must be a video/audio file under a media root (``local_source``); ``dest`` must be a
+    media file inside the Studio folder that does not exist yet (created exclusively, never
+    overwritten). The default lands next to a Studio clip, else in ``<studio>/edits``."""
     import shutil
 
-    src = Path(src).expanduser().resolve()
-    if not src.is_file():
-        raise FileNotFoundError(str(src))
-    dest = Path(dest).expanduser().resolve() if dest else src.with_name(src.stem + "-copy" + src.suffix)
+    from hermes_studio.download import MEDIA_EXTS, local_source
+    from hermes_studio.guard import default_out_file, out_file
+
+    src = local_source(str(src))
+    dest = out_file(dest, MEDIA_EXTS) if dest else default_out_file(src, "-copy")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
+    with open(src, "rb") as r, open(dest, "xb") as w:  # "x": fail if it appeared meanwhile
+        shutil.copyfileobj(r, w)
+    shutil.copystat(src, dest)
     return dest
 
 

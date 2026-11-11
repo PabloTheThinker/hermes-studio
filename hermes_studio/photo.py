@@ -164,10 +164,22 @@ def look(img, name: str):
 
 
 def run_file(op: str, src: str, out: str = "", *, look_name: str = "", strength: float = 1.0) -> dict:
-    """CLI/agent entry: read an image file, apply op, write the result next to it (or to out)."""
-    p = Path(src).expanduser()
-    if not p.is_file():
-        raise PhotoError(f"no file {src}")
+    """CLI/agent entry: read an image file, apply op, write a new file.
+
+    ``src`` must be a PNG/JPEG/WebP under a media root; ``out`` must be a new image file inside
+    the Studio folder (or HERMES_STUDIO_OUT_ROOTS). Nothing is overwritten."""
+    from hermes_studio import guard
+    from hermes_studio.download import image_source
+
+    if op not in ("cutout", "enhance", "look"):
+        raise PhotoError("op must be cutout, enhance or look")
+    try:
+        p = image_source(src)
+        explicit = guard.out_file(out, guard.IMAGE_EXTS) if out else None
+    except FileNotFoundError:
+        raise PhotoError(f"no file {src}") from None
+    except ValueError as exc:
+        raise PhotoError(str(exc)) from None
     if p.stat().st_size > 60 * 1024 * 1024:
         raise PhotoError("image too large (60 MB max)")
     img = decode(p.read_bytes())
@@ -175,13 +187,16 @@ def run_file(op: str, src: str, out: str = "", *, look_name: str = "", strength:
         res = cutout(img)
     elif op == "enhance":
         res = enhance(img, strength)
-    elif op == "look":
-        res = look(img, look_name or "warm")
     else:
-        raise PhotoError("op must be cutout, enhance or look")
+        res = look(img, look_name or "warm")
     ext = ".png" if res.shape[2] == 4 else ".jpg"
-    dest = Path(out).expanduser() if out else p.with_name(f"{p.stem}-{op}{ext}")
-    dest = dest.with_suffix(ext)
+    if explicit is not None:
+        dest = explicit.with_suffix(ext)
+        if dest.exists() or dest.is_symlink():
+            raise PhotoError(f"refusing to overwrite an existing file: {dest.name}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        dest = guard.default_out_file(p, f"-{op}", ext, sub="photos")
     write(dest, res)
     return {"ok": True, "op": op, "src": str(p), "file": str(dest), "w": res.shape[1], "h": res.shape[0],
             "transparent": res.shape[2] == 4}

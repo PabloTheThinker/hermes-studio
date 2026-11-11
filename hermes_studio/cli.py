@@ -224,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--style", choices=STYLES, default="pop")
     c.add_argument("--layout", choices=LAYOUTS, default="fit")
     c.add_argument("--aspect", choices=ASPECTS, default="9:16")
-    c.add_argument("--whisper", default="fast")
+    c.add_argument("--whisper", default="fast", help="draft ear only. Ignored when --cues is set.")
+    c.add_argument("--cues", default="", help="JSON lines written by the Hermes agent. Skips the speech model.")
     c.add_argument("--no-hook", action="store_true")
     _look_args(c)
     _common(c)
@@ -431,6 +432,14 @@ def _print_run_result(o: Out, res: dict) -> None:
 def cmd_run(a: argparse.Namespace, o: Out) -> int:
     from hermes_studio import api
 
+    if a.cmd == "captions" and getattr(a, "cues", ""):
+        res = api.burn_agent_captions(
+            a.src, a.cues, out=a.out or None, style=a.style, layout=a.layout, aspect=a.aspect,
+            hook="" if a.no_hook else "",
+        )
+        o.emit(res)
+        o.say(o.green("✓ ") + f"agent captions  {res['file']}")
+        return 0
     if a.cmd == "captions":
         a.mode, a.max_clips, a.min_sec, a.max_sec = "captions", 1, 12, 45
         a.plan, a.pacing, a.transcript, a.work, a.prompt, a.keywords = "heuristic", "natural", "", "", "", ""
@@ -495,8 +504,8 @@ def _detach(a: argparse.Namespace, o: Out, kw: dict) -> int:
 def cmd_list(a: argparse.Namespace, o: Out) -> int:
     from hermes_studio import api
 
-    if a.out:  # legacy: print a manifest.json folder
-        man = Path(a.out).expanduser() / "manifest.json"
+    if a.out:  # legacy: print a manifest.json folder (inside the Studio folder only)
+        man = api._out_dir(a.out) / "manifest.json"
         if not man.is_file():
             raise HermesStudioError(f"No manifest.json in {a.out}", code="not_found")
         print(man.read_text())

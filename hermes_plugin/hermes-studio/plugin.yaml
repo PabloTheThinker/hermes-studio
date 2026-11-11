@@ -1,11 +1,15 @@
 name: hermes-studio
-version: "0.6.0"
-description: >
-  Hermes Studio for any Hermes Agent: long video or link in, captioned
-  short clips out; Canva-style designs (carousels, covers, thumbnails) and
-  photo edits. Local Whisper + FFmpeg. Localhost library. Does not post.
+version: "0.6.2"
+description: >-
+  Local NLE for Hermes: long video or link in, captioned shorts out; timeline
+  editor, Canva-style designs, photo tools. Whisper + FFmpeg on your machine.
+  Never posts.
 author: "Pablo Navarro"
+homepage: "https://github.com/PabloTheThinker/hermes-studio"
+license: MIT
 kind: standalone
+requires_hermes: ">=0.19.0"
+tags: [video, clips, captions, editor, ffmpeg, whisper, nle]
 provides_tools:
   - hermes_studio_run
   - hermes_studio_transcribe
@@ -21,3 +25,4 @@ provides_tools:
   - hermes_studio_name
   - hermes_studio_design
   - hermes_studio_photo
+provides_hooks: []

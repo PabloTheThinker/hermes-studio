@@ -853,7 +853,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 start = _seconds(body.get("start")) or 0.0
                 end = _seconds(body.get("end")) or 0.0
                 dest = media.with_name(media.stem + "-trim" + media.suffix)
-                path = trim_file(media, dest, start, end)
+                path = trim_file(media, dest, start, end, overwrite=True)  # the desk's own -trim copy
                 return _json(self, 200, {"ok": True, "op": "trim", "file": path.name})
             except Exception as exc:
                 return _json(self, 400, {"ok": False, "error": str(exc)[-800:]})
