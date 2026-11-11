@@ -1,15 +1,15 @@
 name: hermes-studio
-version: "0.6.0"
+version: "0.6.1"
 description: >-
   Local NLE for Hermes: long video or link in, captioned shorts out; timeline
   editor, Canva-style designs, photo tools. Whisper + FFmpeg on your machine.
-  Desktop section page embeds the Studio desk. Never posts.
+  Never posts.
 author: "Pablo Navarro"
 homepage: "https://github.com/PabloTheThinker/hermes-studio"
 license: MIT
 kind: standalone
 requires_hermes: ">=0.19.0"
-tags: [video, clips, captions, editor, desktop, ffmpeg, whisper, nle]
+tags: [video, clips, captions, editor, ffmpeg, whisper, nle]
 provides_tools:
   - hermes_studio_run
   - hermes_studio_transcribe

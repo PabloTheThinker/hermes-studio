@@ -2,6 +2,8 @@
 
 Local video NLE + clip factory for any Hermes Agent. Long video or URL in → captioned shorts, timeline edit, designs, photo tools. **Does not post.**
 
+Plugin version 0.6.1.
+
 ## Install
 
 ```bash
@@ -19,20 +21,16 @@ Or from source: `hermes plugins install ./hermes_plugin/hermes-studio` after clo
 | Surface | Capability |
 |--------|------------|
 | **Agent tools** | `hermes_studio_run` (clip/captions/reframe/tighten/transcript), recommend, edit, restyle, name, copy, design, photo, desk, probe, list |
-| **Desktop** | Sidebar **Studio** → in-app page `/studio` with the live timeline (tokened desk embed) |
+| **Chat** | Slash command `studio` (`clip`, `captions`, `reframe`, `tighten`, `transcribe`, `this`, `desk`) |
 | **CLI / MCP** | `hermes-studio` CLI and MCP server (engine package) |
 
 ## Disclosure (catalog rule 13)
 
 - **Local compute:** FFmpeg + Whisper on the host; jobs write under the Studio library / project dirs.
 - **Network:** optional fetch of public media URLs via yt-dlp / HTTP when you pass a URL; oEmbed for titles. No telemetry. Never publishes to social networks.
-- **Shell:** tools invoke the `hermes-studio` CLI (or a source checkout). Desktop companion may call `shell.exec` on the gateway to mint a desk embed URL when the Studio desk is running.
+- **Shell:** tools invoke the `hermes-studio` CLI (or a source checkout).
 - **Credentials:** none required. Optional local Ollama for clip naming (`HERMES_STUDIO_NAMER`); no cloud key by default.
 - **Does not post.** You seal every publish.
-
-## Desktop companion
-
-`desktop/plugin.js` registers `SIDEBAR_NAV` + route `/studio`. It loads a frame URL from the Studio desk (embed path). Start the desk with `hermes_studio_desk` or `hermes-studio studio` / the user unit. Without a running desk the page shows a recoverable empty state.
 
 ## License
 
