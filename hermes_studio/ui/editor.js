@@ -8,13 +8,14 @@
     const s = document.createElement("style");
     s.id = "tl-css";
     s.textContent = `
-      .tl{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:52px minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
+      .tl{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
       .tl-grip{cursor:row-resize;background:var(--line);position:relative;touch-action:none}
       .tl-grip::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:2px;border-radius:2px;background:var(--line-2)}
       .tl-grip:hover,.tl-grip.on{background:var(--amber)}
       .tl-grip:hover::after,.tl-grip.on::after{background:var(--amber-ink)}
-      .tl-collapsed{grid-template-rows:52px minmax(0,1fr) 5px 40px!important}
-      .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);min-width:0}
+      .tl-collapsed{grid-template-rows:auto minmax(0,1fr) 5px 40px!important}
+      .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);min-width:0;flex-wrap:wrap;row-gap:6px}
+      .tl-top [data-act="play"]{position:sticky;right:0;z-index:3;background:var(--bg);touch-action:manipulation}
       .tl-top b{font-weight:800;letter-spacing:.04em;text-transform:uppercase;font-variation-settings:"wdth" 125}
       .tl-clock{font:500 13px var(--mono);color:var(--amber);white-space:nowrap}
       .tl-status{flex:1;min-width:0;color:var(--dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -85,6 +86,8 @@
       .tl-can2{display:flex;gap:6px;align-items:center;margin:0 0 8px}
       .tl-can2 input{width:5.2rem;margin:0;padding:.35rem .4rem}
       .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
+      .tl-playbig{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;pointer-events:auto;background:var(--amber);color:#1a1408;border:0;border-radius:999px;padding:10px 18px;font:700 14px var(--sans);letter-spacing:.08em;cursor:pointer}
+      .tl-playbig.on{left:12px;top:12px;transform:none;opacity:.9}
       .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
       .tl-lutc{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1;pointer-events:none;display:none}
       .tl-maskbox{position:absolute;border:1px solid #ffc83d;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:3}
@@ -182,7 +185,7 @@
       .tl-sheet{min-height:0;min-width:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
-      .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim)}
+      .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim);cursor:ew-resize;touch-action:none}
       .tl-ruler i{position:absolute;top:0;bottom:0;padding:4px 0 0 4px;border-left:1px solid var(--line-2);font-style:normal;white-space:nowrap}
       .tl-ruler b{position:absolute;bottom:0;width:1px;height:5px;background:var(--line-2)}
       .tl-rng{position:absolute;top:0;bottom:0;background:rgba(255,200,61,.22);pointer-events:none}
@@ -277,8 +280,9 @@
       .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4);cursor:pointer}
       .tl-kf:hover{filter:brightness(1.3)}
       .tl-kf.on{background:#fff;box-shadow:0 0 0 2px var(--amber);width:10px;height:10px;margin-left:-5px}
-      .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:4;pointer-events:none}
-      .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%)}
+      .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:9;pointer-events:auto;cursor:ew-resize;touch-action:none}
+      .tl-play::after{content:"";position:absolute;top:0;bottom:0;left:-11px;width:24px;pointer-events:auto}
+      .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%);pointer-events:none}
     `;
     document.head.appendChild(s);
   }
@@ -1864,6 +1868,7 @@
         ${helpMarkup()}
         <div class="tl-top">
           <b>Edit</b>
+          <button type="button" data-act="films" title="Back to the film list">Films</button>
           <span class="tl-ws" title="Workspace layout">
             <button type="button" class="tl-wsbtn ${wsMode === "edit" ? "on" : ""}" data-act="ws-edit">Edit</button>
             <button type="button" class="tl-wsbtn ${wsMode === "colour" ? "on" : ""}" data-act="ws-colour">Colour</button>
@@ -1897,6 +1902,7 @@
             <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
+            <button type="button" class="tl-playbig${playing ? " on" : ""}" data-act="play" title="Play. Sound starts from this click.">${playing ? "Pause" : "Play"}</button>
             <canvas class="tl-lutc" aria-hidden="true"></canvas>
             <span class="tl-titles" aria-hidden="true"></span>
             <span class="tl-maskov" aria-hidden="true"></span>
@@ -1974,7 +1980,18 @@
       if (img) img.hidden = true;
       bindFilm(keep);
     }
-    root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
+    root.querySelectorAll("[data-act]").forEach((b) => {
+      if (b.dataset.act === "play") {
+        b.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          act("play", b);
+        });
+        return;
+      }
+      b.addEventListener("click", () => act(b.dataset.act, b));
+    });
     wireBin();
     wireTitle();
     wireTitleDrag();
@@ -2063,6 +2080,8 @@
     }, { passive: false });
     sc.addEventListener("pointermove", movePtr);
     sc.addEventListener("pointerup", up);
+    bindSeek(root.querySelector(".tl-play"));
+    bindSeek(root.querySelector(".tl-ruler"));
     // The preview must follow its box whatever changed it: window, split drag, Hide, a
     // taller track. A window resize event alone misses most of those.
     if (viewRo) viewRo.disconnect();
@@ -2456,6 +2475,27 @@
     const lane = root.querySelector(".tl-lane");
     const r = lane.getBoundingClientRect();
     return (e.clientX - r.left) / pps;
+  }
+
+  function startSeek(e, captureEl) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    stop();
+    if (mix) mix.unlock();
+    drag = { kind: "seek" };
+    play = snap(Math.max(0, Math.min(doc.duration, xToTime(e))));
+    head();
+    try { captureEl.setPointerCapture(e.pointerId); } catch (err) { /* still scrub while the pointer stays over the line */ }
+  }
+
+  function bindSeek(el) {
+    if (!el || el.dataset.seekBound) return;
+    el.dataset.seekBound = "1";
+    el.addEventListener("pointerdown", (e) => startSeek(e, el));
+    el.addEventListener("pointermove", movePtr);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   }
 
   function down(e) {
@@ -3167,8 +3207,9 @@
     if (!v || !it || !it.file) return false;
     filmOn = true;
     v.hidden = false;
-    v.muted = false;
     previewMix(v);
+    v.muted = false;
+    v.volume = 1;
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
     const want = window.HSMix.srcTime(it, play - it.at);
@@ -3183,7 +3224,15 @@
     if (v.readyState >= 1) arm();
     else v.addEventListener("loadedmetadata", arm, { once: true });
     const pending = v.play();
-    if (pending && pending.catch) pending.catch(() => { msg = "Press Play again for sound."; playing = false; });
+    if (pending && pending.catch) pending.catch(() => {
+      // A Desktop iframe often refuses video.play() (no gesture / autoplay).
+      // Keep the playhead moving on the wall clock so Play, Space, J and L still work.
+      filmOn = false;
+      msg = "Playhead is moving. Click inside the picture once if you want sound.";
+      if (playing) { lastT = 0; if (!raf) raf = requestAnimationFrame(loop); }
+      const st = root && root.querySelector(".tl-status");
+      if (st) st.textContent = msg;
+    });
     bindFilm(v);
     return true;
   }
@@ -3201,7 +3250,11 @@
       return;
     }
     v.hidden = false;
-    v.muted = true; // the sound comes from the mix (or the shuttle is silent)
+    // Mute the picture only while the mixer is actually running. Otherwise this
+    // silences the only sound the click can start.
+    const mixOn = mixing && mix && mix.context && mix.context.state === "running";
+    v.muted = mixOn;
+    if (!mixOn) previewMix(v);
     if (img) img.hidden = true;
     const sp = it.speed || 1;
     // The one time map (constant speed or a ramp), shared with the mixer and the render.
@@ -3285,7 +3338,10 @@
     if (r > 0 && play >= doc.duration - 0.01) play = 0;
     if (r < 0 && play <= 0.01) play = doc.duration;
     playing = true;
-    if ((r === 1 || r === 2) && mix && mix.unlock() && mix.ready(doc)) {
+    // The mixer only counts if the audio clock is already running. A suspended
+    // context freezes the playhead and mutes the picture — that is the dead Play button.
+    const mixLive = !!(mix && mix.unlock() && mix.context && mix.context.state === "running" && mix.ready(doc));
+    if ((r === 1 || r === 2) && mixLive) {
       mixing = true;
       mix.start(doc, play, r);
       paint();
@@ -3323,8 +3379,10 @@
     paint();
   }
   async function act(name, el) {
+    if (name === "films") { location.hash = "#/edit"; return; }
     if (name === "play") {
-      if (playing) { stop(); paint(); return; }
+      // Play always means forward. A reverse shuttle (J) must not survive this click.
+      if (playing && rate > 0) { stop(); paint(); return; }
       transport(1);
       return;
     }
@@ -3818,6 +3876,26 @@
   document.addEventListener("keydown", onKey);
   document.addEventListener("keyup", (e) => { if (e.key && e.key.toLowerCase() === "k") kHeld = false; });
   window.addEventListener("blur", () => { kHeld = false; });
+  let playGuard = 0;
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (!d || d.type !== "hs-edit-cmd" || !doc || !document.body.classList.contains("editing")) return;
+    if (d.cmd === "play") {
+      playGuard = performance.now();
+      act("play");
+      return;
+    }
+    // A Play click must not be followed by a reverse shuttle from the same gesture.
+    if ((d.cmd === "j" || d.cmd === "l") && performance.now() - playGuard < 500) return;
+    if (d.cmd === "j" || d.cmd === "l") {
+      const dir = d.cmd === "l" ? 1 : -1;
+      const speeds = [1, 2, 4, 8];
+      const next = playing && Math.sign(rate) === dir ? dir * speeds[Math.min(speeds.length - 1, Math.max(0, speeds.indexOf(Math.abs(rate))) + 1)] : dir;
+      transport(next);
+      return;
+    }
+    if (d.cmd === "k") { if (playing) { stop(); paint(); } }
+  });
   window.HSEdit = {
     open, leave,
     // Read-only view of the preview mixer, for checks and support.
