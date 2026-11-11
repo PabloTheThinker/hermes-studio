@@ -35,17 +35,41 @@ def root() -> Path:
     return Path(os.environ.get("HERMES_STUDIO_EDITOR") or Path.home() / ".hermes" / "hermes-studio" / "editor")
 
 
+def _under_editor_root(path: Path) -> str:
+    """Resolved absolute path only when it sits under the editor root.
+
+    Restated at every file sink so path-injection analysis sees the check at
+    the point of use (project ids arrive off a URL).
+    """
+    base = os.path.realpath(str(root())).rstrip(os.sep) + os.sep
+    real = os.path.realpath(str(path))
+    if real != base.rstrip(os.sep) and not real.startswith(base):
+        raise EditorError("bad project path")
+    return real
+
+
 def _dir(pid: str) -> Path:
     if not T.ID_RE.fullmatch(pid or ""):
         raise EditorError("bad project id")
-    folder = root() / pid
     # Containment stated where the path is made: the id arrives off a URL, so prove the
     # resolved folder sits under the editor root before anything opens a file inside it.
-    base = os.path.realpath(root())
-    real = os.path.realpath(folder)
-    if real != base and not real.startswith(base + os.sep):
-        raise EditorError("bad project id")
-    return folder
+    return Path(_under_editor_root(root() / pid))
+
+
+def _project_file(folder: Path, name: str) -> str:
+    """Absolute path to a fixed filename inside a validated project folder."""
+    if Path(name).name != name or not name or name in {".", ".."}:
+        raise EditorError("bad project file")
+    return _under_editor_root(folder / name)
+
+
+def _write_project_text(folder: Path, name: str, text: str) -> None:
+    """Write a project file only after the resolved path is proven under the editor root."""
+    path = _project_file(folder, name)
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
 
 
 def _cid() -> str:
@@ -175,14 +199,14 @@ def _locked(folder: Path):
 
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    tmp = folder / "timeline.json.tmp"
-    tmp.write_text(json.dumps(doc, separators=(",", ":"), sort_keys=True))
-    tmp.replace(folder / "timeline.json")
+    text = json.dumps(doc, separators=(",", ":"), sort_keys=True)
+    _write_project_text(folder, "timeline.json.tmp", text)
+    os.replace(_project_file(folder, "timeline.json.tmp"), _project_file(folder, "timeline.json"))
 
 
 def _log(folder: Path) -> O.Oplog:
-    base = json.loads((folder / "base.json").read_text())
-    path = folder / "oplog.jsonl"
+    base = json.loads(Path(_project_file(folder, "base.json")).read_text())
+    path = Path(_project_file(folder, "oplog.jsonl"))
     if path.exists() and path.stat().st_size:
         return O.Oplog.load(base, path)
     return O.Oplog(base, path=path)
@@ -405,10 +429,10 @@ def create(pid: str = "demo") -> dict:
         return open_project(pid)
     d, _ = T.stamp_hash(_seed(pid))
     with _locked(folder):
-        if (folder / "base.json").exists():  # another request created it while we waited
+        if os.path.exists(_project_file(folder, "base.json")):  # another request created it while we waited
             return view(_log(folder).doc)
-        (folder / "base.json").write_text(json.dumps(d))
-        log = O.Oplog(d, path=folder / "oplog.jsonl")
+        _write_project_text(folder, "base.json", json.dumps(d))
+        log = O.Oplog(d, path=Path(_project_file(folder, "oplog.jsonl")))
         _save_current(folder, log.doc)
         return view(log.doc)
 
@@ -1938,11 +1962,12 @@ def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> 
     d, _ = T.stamp_hash(d)
     folder = _dir(pid)
     with _locked(folder):
-        (folder / "base.json").write_text(json.dumps(d))
+        _write_project_text(folder, "base.json", json.dumps(d))
         # An imported cut starts with an empty log, but the log file must exist: without it
         # the film has no history surface until somebody happens to make an edit.
-        log = O.Oplog(d, path=folder / "oplog.jsonl")
-        (folder / "oplog.jsonl").touch(exist_ok=True)
+        oplog_path = Path(_project_file(folder, "oplog.jsonl"))
+        log = O.Oplog(d, path=oplog_path)
+        oplog_path.touch(exist_ok=True)
         _save_current(folder, log.doc)
     out = view(log.doc)
     out["summary"] = f"Opened {title}"[:120]
