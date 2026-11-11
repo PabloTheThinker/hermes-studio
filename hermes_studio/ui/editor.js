@@ -86,6 +86,8 @@
       .tl-can2{display:flex;gap:6px;align-items:center;margin:0 0 8px}
       .tl-can2 input{width:5.2rem;margin:0;padding:.35rem .4rem}
       .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
+      .tl-playbig{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:6;pointer-events:auto;background:var(--amber);color:#1a1408;border:0;border-radius:999px;padding:10px 18px;font:700 14px var(--sans);letter-spacing:.08em;cursor:pointer}
+      .tl-playbig.on{left:12px;top:12px;transform:none;opacity:.9}
       .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
       .tl-lutc{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1;pointer-events:none;display:none}
       .tl-maskbox{position:absolute;border:1px solid #ffc83d;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:3}
@@ -1900,6 +1902,7 @@
             <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
+            <button type="button" class="tl-playbig${playing ? " on" : ""}" data-act="play" title="Play. Sound starts from this click.">${playing ? "Pause" : "Play"}</button>
             <canvas class="tl-lutc" aria-hidden="true"></canvas>
             <span class="tl-titles" aria-hidden="true"></span>
             <span class="tl-maskov" aria-hidden="true"></span>
@@ -1977,7 +1980,18 @@
       if (img) img.hidden = true;
       bindFilm(keep);
     }
-    root.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b)));
+    root.querySelectorAll("[data-act]").forEach((b) => {
+      if (b.dataset.act === "play") {
+        b.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          e.stopPropagation();
+          act("play", b);
+        });
+        return;
+      }
+      b.addEventListener("click", () => act(b.dataset.act, b));
+    });
     wireBin();
     wireTitle();
     wireTitleDrag();
@@ -3193,8 +3207,9 @@
     if (!v || !it || !it.file) return false;
     filmOn = true;
     v.hidden = false;
-    v.muted = false;
     previewMix(v);
+    v.muted = false;
+    v.volume = 1;
     const img = root.querySelector(".tl-pic");
     if (img) img.hidden = true;
     const want = window.HSMix.srcTime(it, play - it.at);
@@ -3235,7 +3250,11 @@
       return;
     }
     v.hidden = false;
-    v.muted = true; // the sound comes from the mix (or the shuttle is silent)
+    // Mute the picture only while the mixer is actually running. Otherwise this
+    // silences the only sound the click can start.
+    const mixOn = mixing && mix && mix.context && mix.context.state === "running";
+    v.muted = mixOn;
+    if (!mixOn) previewMix(v);
     if (img) img.hidden = true;
     const sp = it.speed || 1;
     // The one time map (constant speed or a ramp), shared with the mixer and the render.
@@ -3319,7 +3338,10 @@
     if (r > 0 && play >= doc.duration - 0.01) play = 0;
     if (r < 0 && play <= 0.01) play = doc.duration;
     playing = true;
-    if ((r === 1 || r === 2) && mix && mix.unlock() && mix.ready(doc)) {
+    // The mixer only counts if the audio clock is already running. A suspended
+    // context freezes the playhead and mutes the picture — that is the dead Play button.
+    const mixLive = !!(mix && mix.unlock() && mix.context && mix.context.state === "running" && mix.ready(doc));
+    if ((r === 1 || r === 2) && mixLive) {
       mixing = true;
       mix.start(doc, play, r);
       paint();
