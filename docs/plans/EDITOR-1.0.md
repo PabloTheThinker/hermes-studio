@@ -52,7 +52,7 @@ Each of these is a 1.x item after 1.0 ships.
 
 | Area | Shipped | Missing for 1.0 |
 |---|---|---|
-| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range, **bin (import/upload) + source viewer + insert W / overwrite D / append E** (3-point editing, frame-grid edit points) | drag from bin to timeline (nice-to-have) |
+| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range, **bin (import/upload) + source viewer + insert W / overwrite D / append E** (3-point editing, frame-grid edit points), **drag from bin → timeline** (Alt = overwrite) | — |
 | Playback | real preview mix on the audio clock, J/K/L shuttle, frame step, timecode, adaptive ruler | — |
 | Transitions | all 58 ffmpeg xfade kinds, picker, drag to resize | — |
 | Keyframes | position, scale, rotate, opacity, easing (linear / ease-in / ease-out / ease-in-out), Ken Burns, curve editor, diamonds, drag handles, volume rubber band | — |

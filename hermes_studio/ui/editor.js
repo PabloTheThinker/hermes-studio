@@ -50,10 +50,13 @@
       .tl-binmsg{padding:0 12px;font:500 11px var(--mono);color:var(--amber);min-height:0}
       .tl-binmsg:empty{display:none}
       .tl-binlist{overflow:auto;min-height:0;padding:4px 8px 12px;display:grid;gap:6px;align-content:start}
-      .tl-binit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;padding:5px;border:1px solid var(--line);border-radius:3px;cursor:pointer}
+      .tl-binit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;padding:5px;border:1px solid var(--line);border-radius:3px;cursor:grab}
       .tl-binit:hover{border-color:var(--line-2)}
       .tl-binit.on{border-color:var(--amber);box-shadow:inset 0 0 0 1px var(--amber)}
+      .tl-binit.dragging{opacity:.55;cursor:grabbing}
       .tl-binit:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+      .tl-stack.drop-on{outline:1px dashed rgba(222,171,66,.45);outline-offset:-2px}
+      .tl-drop{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--amber);box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:12}
       .tl-binit img{grid-row:1/3;width:64px;height:36px;object-fit:cover;background:#050505;border-radius:2px}
       .tl-binit .nm{text-transform:none;letter-spacing:0;font:500 12px var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:end}
       .tl-binit .du{text-transform:none;letter-spacing:0;font:500 10px var(--mono);color:var(--dim)}
@@ -776,21 +779,24 @@
     srcVid.pause();
     srcVid.currentTime = srcSnap(m, (srcVid.currentTime || 0) + frames / srcFps(m));
   }
-  async function srcEdit(mode) {
-    const m = binItem(srcId);
+  async function placeFromBin(mediaId, mode, at) {
+    const m = binItem(mediaId);
     if (!m) { msg = "Pick a clip in the bin first."; paint(); return; }
     if (srcVid) srcVid.pause();
     const [a, b] = srcRange(m);
-    // Three-point editing: the source In/Out plus ONE timeline point -- the timeline In mark if
-    // there is one, else the playhead. Append ignores it and goes to the end.
-    const at = inOut.in != null ? inOut.in : play;
     const before = doc.duration;
-    await commit({ op: "place", media: m.id, src_in: a, src_out: b, mode, at });
+    const t = at == null ? (inOut.in != null ? inOut.in : play) : at;
+    await commit({ op: "place", media: m.id, src_in: a, src_out: b, mode, at: t });
     const len = b - a;
     if (mode === "append") play = Math.max(0, doc.duration - 0.001);
-    else play = Math.min(doc.duration, Math.min(at, before) + len); // the playhead lands after the edit
+    else play = Math.min(doc.duration, Math.min(t, before) + len); // the playhead lands after the edit
     head();
     paint();
+  }
+  async function srcEdit(mode) {
+    // Three-point editing: the source In/Out plus ONE timeline point -- the timeline In mark if
+    // there is one, else the playhead. Append ignores it and goes to the end.
+    await placeFromBin(srcId, mode, null);
   }
   async function importFiles(files) {
     for (const f of files) {
@@ -827,9 +833,9 @@
     return `<aside class="tl-bin" aria-label="Bin">
       <div class="tl-binhd"><b>Bin</b><span class="n">${bin.length}</span><button type="button" data-act="import" title="Import video files into this cut's bin">Import</button><input type="file" data-import accept="video/*,.mov,.mkv,.m4v,.webm" multiple hidden></div>
       <div class="tl-binmsg">${esc(importing)}</div>
-      <div class="tl-binlist">${bin.length ? bin.map((m) => `<button type="button" class="tl-binit${m.id === srcId ? " on" : ""}" data-bin="${esc(m.id)}" title="${esc(m.name)} · ${esc(tc(m.dur))}${m.audio ? "" : " · no sound"} · click to open in the source viewer">
-          <img loading="lazy" alt="" src="${esc(thumb(m))}"><span class="nm">${esc(m.name)}</span><span class="du">${esc(tc(m.dur))}${m.uses ? ` · <i>in cut</i>` : ""}</span></button>`).join("")
-        : `<p class="tl-binempty">No files yet. <b>Import</b> a video, mark In and Out (I, O), then <b>W</b> insert, <b>D</b> overwrite, <b>E</b> append at the playhead.</p>`}</div>
+      <div class="tl-binlist">${bin.length ? bin.map((m) => `<button type="button" draggable="true" class="tl-binit${m.id === srcId ? " on" : ""}" data-bin="${esc(m.id)}" title="${esc(m.name)} · ${esc(tc(m.dur))}${m.audio ? "" : " · no sound"} · click source · drag to timeline (Alt = overwrite)">
+          <img loading="lazy" alt="" draggable="false" src="${esc(thumb(m))}"><span class="nm">${esc(m.name)}</span><span class="du">${esc(tc(m.dur))}${m.uses ? ` · <i>in cut</i>` : ""}</span></button>`).join("")
+        : `<p class="tl-binempty">No files yet. <b>Import</b> a video, mark In and Out (I, O), then <b>W</b> insert, <b>D</b> overwrite, <b>E</b> append — or drag from the bin onto the timeline.</p>`}</div>
     </aside>`;
   }
   function srcBarMarkup() {
@@ -849,7 +855,29 @@
       </div>`;
   }
   function wireBin() {
-    root.querySelectorAll("[data-bin]").forEach((b) => b.addEventListener("click", () => loadSource(b.dataset.bin)));
+    let dragged = false;
+    root.querySelectorAll("[data-bin]").forEach((b) => {
+      b.addEventListener("click", () => { if (dragged) { dragged = false; return; } loadSource(b.dataset.bin); });
+      b.addEventListener("dragstart", (e) => {
+        dragged = true;
+        const id = b.dataset.bin;
+        try {
+          e.dataTransfer.setData("application/x-hermes-bin", id);
+          e.dataTransfer.setData("text/plain", id);
+        } catch (err) { /* some browsers reject custom types mid-drag */ }
+        e.dataTransfer.effectAllowed = "copyMove";
+        b.classList.add("dragging");
+        srcId = id;
+      });
+      b.addEventListener("dragend", () => {
+        b.classList.remove("dragging");
+        const stack = root.querySelector(".tl-stack");
+        if (stack) stack.classList.remove("drop-on");
+        const line = root.querySelector(".tl-drop");
+        if (line) line.hidden = true;
+        setTimeout(() => { dragged = false; }, 0);
+      });
+    });
     const inp = root.querySelector("[data-import]");
     if (inp) inp.addEventListener("change", () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) importFiles(fs); });
     const slot = root.querySelector(".tl-srcslot");
@@ -869,6 +897,48 @@
       const up = () => { strip.removeEventListener("pointermove", mv); strip.removeEventListener("pointerup", up); };
       strip.addEventListener("pointermove", mv);
       strip.addEventListener("pointerup", up);
+    });
+    wireBinDrop();
+  }
+  function wireBinDrop() {
+    const stack = root.querySelector(".tl-stack");
+    if (!stack) return;
+    let line = stack.querySelector(".tl-drop");
+    if (!line) {
+      line = document.createElement("i");
+      line.className = "tl-drop";
+      line.hidden = true;
+      stack.appendChild(line);
+    }
+    const hide = () => { stack.classList.remove("drop-on"); line.hidden = true; };
+    const isBin = (dt) => {
+      const types = [...(dt && dt.types) || []];
+      return types.includes("application/x-hermes-bin") || types.includes("text/plain");
+    };
+    stack.addEventListener("dragover", (e) => {
+      if (!isBin(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.altKey ? "copy" : "move";
+      stack.classList.add("drop-on");
+      const t = snap(Math.max(0, xToTime(e)));
+      line.hidden = false;
+      line.style.left = (LAB + t * pps) + "px";
+      line.title = e.altKey ? "Overwrite at " + tc(t) : "Insert at " + tc(t);
+    });
+    stack.addEventListener("dragleave", (e) => {
+      if (!stack.contains(e.relatedTarget)) hide();
+    });
+    stack.addEventListener("drop", async (e) => {
+      if (!isBin(e.dataTransfer)) return;
+      e.preventDefault();
+      const mid = e.dataTransfer.getData("application/x-hermes-bin") || e.dataTransfer.getData("text/plain");
+      hide();
+      if (!mid || !binItem(mid)) return;
+      srcId = mid;
+      const mode = e.altKey ? "overwrite" : "insert";
+      const at = snap(Math.max(0, xToTime(e)));
+      msg = mode === "overwrite" ? "Overwrite from bin…" : "Insert from bin…";
+      await placeFromBin(mid, mode, at);
     });
   }
   // Keys while a source is loaded. Returns true when it took the key.
@@ -1727,6 +1797,7 @@
     ["I / O", "Mark In / Out (Shift jumps, Alt clears, Alt+X clears both)"],
     ["/", "Play In→Out range"],
     ["W / D / E", "Insert / overwrite / append from source (bin)"],
+    ["Drag bin → timeline", "Insert at drop (Alt = overwrite)"],
     ["S", "Split at playhead"],
     ["⌫ / Del", "Lift selection"],
     [", / .", "Nudge selection (Alt = slip, Shift = 1s)"],
@@ -1880,7 +1951,7 @@
             <button type="button" data-act="fit">Fit</button>
           </div>
           <div class="tl-scroll">
-            ${emptyMain && tab === "clips" ? `<div class="tl-empty"><b>Empty timeline.</b> Import into the Bin, mark In/Out on the source (I/O), then <b>W</b> insert, <b>D</b> overwrite or <b>E</b> append. Press <b>?</b> for every key.</div>` : ""}
+            ${emptyMain && tab === "clips" ? `<div class="tl-empty"><b>Empty timeline.</b> Import into the Bin, then drag onto the timeline (Alt = overwrite) or mark In/Out (I/O) and <b>W</b>/<b>D</b>/<b>E</b>. Press <b>?</b> for every key.</div>` : ""}
             ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : tab === "act" ? `<div class="tl-act">${hist.length ? hist.map((h) => `<div class="row"><span class="who ${h.kind === "agent" ? "agent" : ""} ${h.undone ? "undone" : ""}">${esc(h.actor)}</span><span class="what ${h.undone ? "undone" : ""}">${esc(h.summary)}</span><span class="ver">v${esc(h.to)}</span></div>`).join("") : `<span style="color:var(--dim)">No changes yet. Trim, split or lift and each step lands here.</span>`}</div>` : `
             <div class="tl-ruler" style="width:${width - LAB}px">${rg ? `<span class="tl-rng" style="left:${rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></span>` : ""}${ticks.join("")}${inOut.in != null && rg ? `<span class="tl-mk in" style="left:${rg[0] * pps}px" title="In ${esc(tc(rg[0]))}"></span>` : ""}${inOut.out != null && rg ? `<span class="tl-mk out" style="left:${rg[1] * pps}px" title="Out ${esc(tc(rg[1]))}"></span>` : ""}</div>
             <div class="tl-stack" style="width:${width}px">

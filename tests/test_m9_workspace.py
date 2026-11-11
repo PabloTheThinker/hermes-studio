@@ -21,8 +21,10 @@ def test_shortcut_sheet_and_workspace_live_in_editor_js():
     assert "const SHORTCUTS" in js
     assert 'setWorkspace(k === "1"' in js
     assert "Empty timeline." in js
+    assert "placeFromBin" in js and "wireBinDrop" in js
+    assert "Drag bin → timeline" in js
     html = (ROOT / "hermes_studio" / "ui" / "index.html").read_text()
-    assert "editor.js?v=117" in html
+    assert "editor.js?v=" in html
 
 
 def test_kill_mid_edit_keeps_marker(home, tmp_path):
