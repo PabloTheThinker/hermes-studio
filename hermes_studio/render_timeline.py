@@ -262,9 +262,10 @@ def _masked_mid_graph(
     Static masks (no keyframes) bake a gray PNG once and pull it via ``movie`` — per-frame
     geq at 1080p with feathered ellipse was ~0.15x realtime and hung M10 exports.
     """
-    from hermes_studio import mask as _MK
     import hashlib
     import json as _json
+
+    from hermes_studio import mask as _MK
 
     corr = _mask_corr_chain(mask, gchain, lut_pre)
     ctag, mtag, stag = f"mc{n}", f"mm{n}", f"ms{n}"
@@ -277,7 +278,8 @@ def _masked_mid_graph(
     use_static = False and cache_dir is not None and not _MK.has_animated_keys(mask)
     if use_static:
         key = hashlib.sha1(
-            _json.dumps({"m": mask, "w": dw, "h": dh}, sort_keys=True, default=str).encode()
+            _json.dumps({"m": mask, "w": dw, "h": dh}, sort_keys=True, default=str).encode(),
+            usedforsecurity=False,
         ).hexdigest()[:16]
         matte_path = Path(cache_dir) / "mattes" / f"{key}.png"
         if not matte_path.is_file():

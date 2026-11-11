@@ -8,8 +8,8 @@ transform keyframes on a rebased segment).
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from fractions import Fraction
+from pathlib import Path
 from typing import Any
 
 SHAPES = frozenset({"rect", "ellipse"})
@@ -291,7 +291,7 @@ def write_static_matte_png(mask: dict, w: int, h: int, path: Path) -> Path:
     return path
 
 
-def movie_matte_filter(path: "Path", w: int, h: int) -> str:
+def movie_matte_filter(path: Path, w: int, h: int) -> str:
     """Source filter: loop a baked gray PNG as a matte stream (no video input)."""
     from pathlib import Path as _P
     p = str(_P(path).resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")

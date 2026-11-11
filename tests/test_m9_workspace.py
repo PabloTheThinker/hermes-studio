@@ -8,7 +8,6 @@ from pathlib import Path
 
 from hermes_studio import editor as E
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
