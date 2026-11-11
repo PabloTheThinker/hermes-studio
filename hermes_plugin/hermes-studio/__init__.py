@@ -18,7 +18,7 @@ __plugin_version__ = "0.6.2"
 _HERE = Path(__file__).resolve().parent
 _ENGINE_TAG = "v0.6.2"  # oldest engine with path confinement and the URL guard
 _MIN_ENGINE = (0, 6, 2)
-_INSTALL = f"uv tool install git+https://github.com/PabloTheThinker/hermes-studio@{_ENGINE_TAG}"
+_INSTALL = f"uv tool install --python 3.12 git+https://github.com/PabloTheThinker/hermes-studio@{_ENGINE_TAG}"
 
 
 def _source_checkouts() -> list[Path]:
