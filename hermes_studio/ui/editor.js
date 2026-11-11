@@ -3359,7 +3359,8 @@
   async function act(name, el) {
     if (name === "films") { location.hash = "#/edit"; return; }
     if (name === "play") {
-      if (playing) { stop(); paint(); return; }
+      // Play always means forward. A reverse shuttle (J) must not survive this click.
+      if (playing && rate > 0) { stop(); paint(); return; }
       transport(1);
       return;
     }
@@ -3853,11 +3854,17 @@
   document.addEventListener("keydown", onKey);
   document.addEventListener("keyup", (e) => { if (e.key && e.key.toLowerCase() === "k") kHeld = false; });
   window.addEventListener("blur", () => { kHeld = false; });
-  // Desktop plugin chrome and forwarded keys. The parent cannot call into this frame.
+  let playGuard = 0;
   window.addEventListener("message", (e) => {
     const d = e.data;
     if (!d || d.type !== "hs-edit-cmd" || !doc || !document.body.classList.contains("editing")) return;
-    if (d.cmd === "play") { act("play"); return; }
+    if (d.cmd === "play") {
+      playGuard = performance.now();
+      act("play");
+      return;
+    }
+    // A Play click must not be followed by a reverse shuttle from the same gesture.
+    if ((d.cmd === "j" || d.cmd === "l") && performance.now() - playGuard < 500) return;
     if (d.cmd === "j" || d.cmd === "l") {
       const dir = d.cmd === "l" ? 1 : -1;
       const speeds = [1, 2, 4, 8];
