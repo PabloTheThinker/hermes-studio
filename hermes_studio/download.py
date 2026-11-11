@@ -35,9 +35,30 @@ def local_source(src: str) -> Path:
     if os.path.splitext(norm)[1].lower() not in MEDIA_EXTS:
         raise ValueError(f"not a video or audio file: {os.path.basename(norm)}")
     real = os.path.realpath(norm)
+    if os.path.splitext(real)[1].lower() not in MEDIA_EXTS:  # a clip.mp4 symlink to a key file
+        raise ValueError(f"not a video or audio file: {os.path.basename(norm)}")
     for root in media_roots():
         prefix = root.rstrip(os.sep) + os.sep
         # Both the path as typed and where its symlinks lead must be under the root.
+        if norm.startswith(prefix) and real.startswith(prefix):
+            if not os.path.isfile(real):
+                raise FileNotFoundError(os.path.basename(norm))
+            return Path(real)
+    raise ValueError("local files must be in your home folder, a mounted drive or the library")
+
+
+def image_source(src: str) -> Path:
+    """Like ``local_source`` for photo tools: an existing PNG/JPEG/WebP under a media root."""
+    from hermes_studio.guard import IMAGE_EXTS
+
+    norm = os.path.normpath(os.path.abspath(os.path.expanduser(str(src))))
+    if os.path.splitext(norm)[1].lower() not in IMAGE_EXTS:
+        raise ValueError(f"not a PNG, JPEG or WebP image: {os.path.basename(norm)}")
+    real = os.path.realpath(norm)
+    if os.path.splitext(real)[1].lower() not in IMAGE_EXTS:
+        raise ValueError(f"not a PNG, JPEG or WebP image: {os.path.basename(norm)}")
+    for root in media_roots():
+        prefix = root.rstrip(os.sep) + os.sep
         if norm.startswith(prefix) and real.startswith(prefix):
             if not os.path.isfile(real):
                 raise FileNotFoundError(os.path.basename(norm))
@@ -89,6 +110,23 @@ def _ytdlp() -> list[str]:
     return [found]
 
 
+def _ytdlp_guarded() -> list[str]:
+    """yt-dlp run through ``hermes_studio.safe_fetch``: every connection, redirect hop and
+    child-process fetch is checked against public addresses only. Needs the yt_dlp package
+    (a declared dependency); a bare yt-dlp binary cannot be guarded, so it is not used for links."""
+    import importlib.util
+
+    if importlib.util.find_spec("yt_dlp") is None:
+        raise RuntimeError("the yt-dlp Python package is required for links (pip install yt-dlp)")
+    return [sys.executable, "-m", "hermes_studio.safe_fetch"]
+
+
+def _check_link(src: str) -> None:
+    from hermes_studio.guard import check_url
+
+    check_url(src)  # URLRefused (ValueError) on a non-http(s) or non-public link
+
+
 def _node_args() -> list[str]:
     node = shutil.which("node") or shutil.which("nodejs")
     if not node:
@@ -123,7 +161,8 @@ def probe(src: str) -> SourceInfo:
             duration=None,
             webpage_url=str(p),
         )
-    ytdlp = _ytdlp()
+    _check_link(src)
+    ytdlp = _ytdlp_guarded()
     cmd = [
         *ytdlp,
         "--no-playlist",
@@ -171,8 +210,9 @@ def fetch(
     if not is_url(src):
         return local_source(src)
 
+    _check_link(src)
     work.mkdir(parents=True, exist_ok=True)
-    ytdlp = _ytdlp()
+    ytdlp = _ytdlp_guarded()
     meta = info or probe(src)
     (work / "source.json").write_text(
         json.dumps(

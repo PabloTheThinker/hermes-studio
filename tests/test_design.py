@@ -143,9 +143,13 @@ def test_list_duplicate_delete():
     assert [d["id"] for d in design.list_designs()] == [b["id"]]
 
 
-def test_photo_tools(tmp_path):
+def test_photo_tools(tmp_path, monkeypatch):
     pytest.importorskip("cv2")
     from hermes_studio import photo
+
+    # v0.6.2: photo sources come from a media root, outputs land inside an out root
+    monkeypatch.setenv("HERMES_STUDIO_MEDIA_ROOTS", str(tmp_path))
+    monkeypatch.setenv("HERMES_STUDIO_OUT_ROOTS", str(tmp_path))
 
     src = tmp_path / "p.png"
     src.write_bytes(_png(64, 80, (120, 110, 100, 255)))

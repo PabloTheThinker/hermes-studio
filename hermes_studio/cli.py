@@ -500,8 +500,8 @@ def _detach(a: argparse.Namespace, o: Out, kw: dict) -> int:
 def cmd_list(a: argparse.Namespace, o: Out) -> int:
     from hermes_studio import api
 
-    if a.out:  # legacy: print a manifest.json folder
-        man = Path(a.out).expanduser() / "manifest.json"
+    if a.out:  # legacy: print a manifest.json folder (inside the Studio folder only)
+        man = api._out_dir(a.out) / "manifest.json"
         if not man.is_file():
             raise HermesStudioError(f"No manifest.json in {a.out}", code="not_found")
         print(man.read_text())

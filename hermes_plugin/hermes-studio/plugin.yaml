@@ -1,5 +1,5 @@
 name: hermes-studio
-version: "0.6.1"
+version: "0.6.2"
 description: >-
   Local NLE for Hermes: long video or link in, captioned shorts out; timeline
   editor, Canva-style designs, photo tools. Whisper + FFmpeg on your machine.
