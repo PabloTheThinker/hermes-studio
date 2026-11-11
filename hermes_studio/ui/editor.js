@@ -8,13 +8,14 @@
     const s = document.createElement("style");
     s.id = "tl-css";
     s.textContent = `
-      .tl{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:52px minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
+      .tl{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(140px,var(--stage,62fr)) 5px minmax(178px,var(--sheet,38fr));height:calc(100vh - 64px);background:var(--bg);color:var(--ink);overflow:hidden;min-width:0}
       .tl-grip{cursor:row-resize;background:var(--line);position:relative;touch-action:none}
       .tl-grip::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:2px;border-radius:2px;background:var(--line-2)}
       .tl-grip:hover,.tl-grip.on{background:var(--amber)}
       .tl-grip:hover::after,.tl-grip.on::after{background:var(--amber-ink)}
-      .tl-collapsed{grid-template-rows:52px minmax(0,1fr) 5px 40px!important}
-      .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid var(--line);min-width:0}
+      .tl-collapsed{grid-template-rows:auto minmax(0,1fr) 5px 40px!important}
+      .tl-top,.tl-tools{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);min-width:0;flex-wrap:wrap;row-gap:6px}
+      .tl-top [data-act="play"]{position:sticky;right:0;z-index:3;background:var(--bg);touch-action:manipulation}
       .tl-top b{font-weight:800;letter-spacing:.04em;text-transform:uppercase;font-variation-settings:"wdth" 125}
       .tl-clock{font:500 13px var(--mono);color:var(--amber);white-space:nowrap}
       .tl-status{flex:1;min-width:0;color:var(--dim);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -182,7 +183,7 @@
       .tl-sheet{min-height:0;min-width:0;display:flex;flex-direction:column;border-top:1px solid var(--line)}
       .tl-tools{height:40px;flex:none}
       .tl-scroll{flex:1;overflow:auto;position:relative}
-      .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim)}
+      .tl-ruler{height:22px;margin-left:var(--lab,164px);position:relative;font:500 10px var(--mono);color:var(--dim);cursor:ew-resize;touch-action:none}
       .tl-ruler i{position:absolute;top:0;bottom:0;padding:4px 0 0 4px;border-left:1px solid var(--line-2);font-style:normal;white-space:nowrap}
       .tl-ruler b{position:absolute;bottom:0;width:1px;height:5px;background:var(--line-2)}
       .tl-rng{position:absolute;top:0;bottom:0;background:rgba(255,200,61,.22);pointer-events:none}
@@ -277,8 +278,9 @@
       .tl-kf{position:absolute;bottom:3px;width:8px;height:8px;margin-left:-4px;background:var(--amber);transform:rotate(45deg);border-radius:1px;z-index:3;box-shadow:0 0 0 1px rgba(0,0,0,.4);cursor:pointer}
       .tl-kf:hover{filter:brightness(1.3)}
       .tl-kf.on{background:#fff;box-shadow:0 0 0 2px var(--amber);width:10px;height:10px;margin-left:-5px}
-      .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:4;pointer-events:none}
-      .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%)}
+      .tl-play{position:absolute;top:0;bottom:0;width:2px;background:var(--amber);z-index:9;pointer-events:auto;cursor:ew-resize;touch-action:none}
+      .tl-play::after{content:"";position:absolute;top:0;bottom:0;left:-11px;width:24px;pointer-events:auto}
+      .tl-play::before{content:"";position:absolute;top:0;left:-4px;width:10px;height:8px;background:var(--amber);clip-path:polygon(0 0,100% 0,50% 100%);pointer-events:none}
     `;
     document.head.appendChild(s);
   }
@@ -1864,6 +1866,7 @@
         ${helpMarkup()}
         <div class="tl-top">
           <b>Edit</b>
+          <button type="button" data-act="films" title="Back to the film list">Films</button>
           <span class="tl-ws" title="Workspace layout">
             <button type="button" class="tl-wsbtn ${wsMode === "edit" ? "on" : ""}" data-act="ws-edit">Edit</button>
             <button type="button" class="tl-wsbtn ${wsMode === "colour" ? "on" : ""}" data-act="ws-colour">Colour</button>
@@ -2063,6 +2066,8 @@
     }, { passive: false });
     sc.addEventListener("pointermove", movePtr);
     sc.addEventListener("pointerup", up);
+    bindSeek(root.querySelector(".tl-play"));
+    bindSeek(root.querySelector(".tl-ruler"));
     // The preview must follow its box whatever changed it: window, split drag, Hide, a
     // taller track. A window resize event alone misses most of those.
     if (viewRo) viewRo.disconnect();
@@ -2456,6 +2461,27 @@
     const lane = root.querySelector(".tl-lane");
     const r = lane.getBoundingClientRect();
     return (e.clientX - r.left) / pps;
+  }
+
+  function startSeek(e, captureEl) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    stop();
+    if (mix) mix.unlock();
+    drag = { kind: "seek" };
+    play = snap(Math.max(0, Math.min(doc.duration, xToTime(e))));
+    head();
+    try { captureEl.setPointerCapture(e.pointerId); } catch (err) { /* still scrub while the pointer stays over the line */ }
+  }
+
+  function bindSeek(el) {
+    if (!el || el.dataset.seekBound) return;
+    el.dataset.seekBound = "1";
+    el.addEventListener("pointerdown", (e) => startSeek(e, el));
+    el.addEventListener("pointermove", movePtr);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
   }
 
   function down(e) {
@@ -3323,6 +3349,7 @@
     paint();
   }
   async function act(name, el) {
+    if (name === "films") { location.hash = "#/edit"; return; }
     if (name === "play") {
       if (playing) { stop(); paint(); return; }
       transport(1);
