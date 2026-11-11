@@ -3209,7 +3209,15 @@
     if (v.readyState >= 1) arm();
     else v.addEventListener("loadedmetadata", arm, { once: true });
     const pending = v.play();
-    if (pending && pending.catch) pending.catch(() => { msg = "Press Play again for sound."; playing = false; });
+    if (pending && pending.catch) pending.catch(() => {
+      // A Desktop iframe often refuses video.play() (no gesture / autoplay).
+      // Keep the playhead moving on the wall clock so Play, Space, J and L still work.
+      filmOn = false;
+      msg = "Playhead is moving. Click inside the picture once if you want sound.";
+      if (playing) { lastT = 0; if (!raf) raf = requestAnimationFrame(loop); }
+      const st = root && root.querySelector(".tl-status");
+      if (st) st.textContent = msg;
+    });
     bindFilm(v);
     return true;
   }
@@ -3845,6 +3853,20 @@
   document.addEventListener("keydown", onKey);
   document.addEventListener("keyup", (e) => { if (e.key && e.key.toLowerCase() === "k") kHeld = false; });
   window.addEventListener("blur", () => { kHeld = false; });
+  // Desktop plugin chrome and forwarded keys. The parent cannot call into this frame.
+  window.addEventListener("message", (e) => {
+    const d = e.data;
+    if (!d || d.type !== "hs-edit-cmd" || !doc || !document.body.classList.contains("editing")) return;
+    if (d.cmd === "play") { act("play"); return; }
+    if (d.cmd === "j" || d.cmd === "l") {
+      const dir = d.cmd === "l" ? 1 : -1;
+      const speeds = [1, 2, 4, 8];
+      const next = playing && Math.sign(rate) === dir ? dir * speeds[Math.min(speeds.length - 1, Math.max(0, speeds.indexOf(Math.abs(rate))) + 1)] : dir;
+      transport(next);
+      return;
+    }
+    if (d.cmd === "k") { if (playing) { stop(); paint(); } }
+  });
   window.HSEdit = {
     open, leave,
     // Read-only view of the preview mixer, for checks and support.
