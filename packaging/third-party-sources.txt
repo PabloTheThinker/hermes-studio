@@ -14,6 +14,7 @@
 # opencv-python-headless: 5.0.0.93
 # electron: 44.5.1
 # pyav-ffmpeg-tag: 8.1.2-1
+# pyav-ffmpeg-commit: a71bf9279f7a4659154b68ba6783e89be460bcd5
 # columns (tab-separated): component version used_by filename sha256 size kind source rev
 ffmpeg	2a571b606854520cf89804d8030c8b328e621689	ffmpeg-linux64,ffmpeg-win64	ffmpeg-2a571b606854520cf89804d8030c8b328e621689.tar.gz	f02fc0809a13f37e3d4e1f74254d07e035a5ef01a6d91e727b915b1764d97540	17336083	url	https://github.com/FFmpeg/FFmpeg/archive/2a571b606854520cf89804d8030c8b328e621689.tar.gz	2a571b606854520cf89804d8030c8b328e621689
 btbn-ffmpeg-builds	autobuild-2026-09-30-13-08	ffmpeg-linux64,ffmpeg-win64	btbn-ffmpeg-builds-autobuild-2026-09-30-13-08.tar.gz	81da4f7c878dc0f60e6b8d0049a112e32178e20f025d468fe4e99e77b2dfe0ec	107893	url	https://github.com/BtbN/FFmpeg-Builds/archive/6c9aec5fc9a72ec3abedd1fa84db141fa18cf52b.tar.gz	6c9aec5fc9a72ec3abedd1fa84db141fa18cf52b

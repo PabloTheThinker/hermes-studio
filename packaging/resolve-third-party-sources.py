@@ -14,7 +14,7 @@ and prints manifest rows (without sha256) for packaging/third-party-sources.txt.
 `scripts/mirror-sources.py --update` then fills in the sha256 column.
 
 Usage: resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION \\
-         OPENCV_VERSION ELECTRON_VERSION
+         OPENCV_VERSION ELECTRON_VERSION [PYAV_FFMPEG_COMMIT]
 
 Submodules that are only tests, fuzz corpora or demos are left out (TEST_ONLY below):
 they are fetched by the build scripts but never compiled into the shipped binaries.
@@ -223,13 +223,17 @@ def row(component, version, used, filename, kind, source, rev, sha="-"):
     return f"{component}\t{version}\t{','.join(sorted(used))}\t{filename}\t{sha}\t-\t{kind}\t{source}\t{rev}"
 
 
-def extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version):
+def extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version, pyav_commit: str = ""):
     """Sources outside the per-library scripts: FFmpeg itself, the build recipes, the
     toolchain runtime linked into the binaries, and what auditwheel/MSYS2 add to the wheels."""
     import json
     import urllib.request
     btbn_rev = resolve_rev("https://github.com/BtbN/FFmpeg-Builds.git", btbn_tag)
-    pyav_rev = resolve_rev("https://github.com/PyAV-Org/pyav-ffmpeg.git", pyav_tag)
+    # Tag 8.1.2-1 was deleted upstream; the pin keeps the label, the commit is the archive.
+    if re.fullmatch(r"[0-9a-f]{40}", pyav_commit or ""):
+        pyav_rev = pyav_commit
+    else:
+        pyav_rev = resolve_rev("https://github.com/PyAV-Org/pyav-ffmpeg.git", pyav_tag)
     pypi = json.load(urllib.request.urlopen(f"https://pypi.org/pypi/av/{av_version}/json"))
     sdist = next(f for f in pypi["urls"] if f["packagetype"] == "sdist")
     alma = "https://vault.almalinux.org/8.10/AppStream/Source/Packages"
@@ -342,10 +346,18 @@ def electron(electron_version: str) -> list[str]:
 
 
 def main() -> None:
+    args = sys.argv[1:]
+    if len(args) not in (8, 9):
+        raise SystemExit(
+            "usage: resolve-third-party-sources.py BTBN_DIR BTBN_TAG FFMPEG_COMMIT "
+            "PYAV_FFMPEG_DIR PYAV_FFMPEG_TAG AV_VERSION OPENCV_VERSION ELECTRON_VERSION "
+            "[PYAV_FFMPEG_COMMIT]"
+        )
     (btbn_dir, btbn_tag, ffmpeg_commit, pyav_dir, pyav_tag, av_version, opencv_version,
-     electron_version) = sys.argv[1:9]
+     electron_version) = args[:8]
+    pyav_commit = args[8] if len(args) == 9 else ""
     rows = [row(c, v, u, f, "url", s, r, sha) for c, v, u, f, s, r, sha in
-            extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version)]
+            extras(btbn_tag, ffmpeg_commit, pyav_tag, av_version, pyav_commit)]
     for e in sorted(btbn(btbn_dir).values(), key=lambda e: e["name"]):
         if "url" in e:
             rows.append(row(e["name"], e["version"], e["used"], f"{e['name']}-{Path(e['url']).name}", "url", e["url"], "-", e["sha"]))
