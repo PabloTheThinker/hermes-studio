@@ -129,20 +129,29 @@ def hermes_studio_run(
 def hermes_studio_captions(
     src: str,
     out: str = "",
-    whisper: str = "tiny",
+    lines: list | None = None,
     style: str = "pop",
     layout: str = "fit",
     aspect: str = "9:16",
-    hook: bool = True,
+    hook: str = "",
 ) -> str:
+    """Burn caption lines the calling agent wrote. Does not call a speech model."""
     if not src or not str(src).strip():
         return json.dumps({"ok": False, "error": "src is required"})
+    if not lines:
+        return json.dumps({
+            "ok": False,
+            "error": "You write the caption lines. Pass lines.",
+            "hint": "transcribe is a draft ear only. Rewrite the words, then pass lines: [{text, start, end}].",
+        })
+    cue_path = Path.home() / ".hermes" / "clips" / "agent-cues.json"
+    cue_path.parent.mkdir(parents=True, exist_ok=True)
+    cue_path.write_text(json.dumps({"hook": hook, "lines": lines}), encoding="utf-8")
     argv = [
         "captions",
         str(src).strip(),
-        *(["--out", str(Path(out).expanduser())] if out else []),
-        "--whisper",
-        whisper or "tiny",
+        "--cues",
+        str(cue_path),
         "--style",
         style if style in ("pop", "impact", "clean", "glow", "neon", "boxed") else "pop",
         "--layout",
@@ -150,9 +159,13 @@ def hermes_studio_captions(
         "--aspect",
         aspect if aspect in ("9:16", "16:9", "1:1", "4:5") else "9:16",
     ]
+    if out:
+        argv += ["--out", str(Path(out).expanduser())]
     if not hook:
         argv.append("--no-hook")
     result = _run_mod(argv)
+    if isinstance(result, dict):
+        result["writer"] = result.get("writer") or "agent"
     return json.dumps(result)
 
 
@@ -488,7 +501,7 @@ def register(ctx) -> None:
         toolset="hermes-studio",
         schema={
             "name": "hermes_studio_transcribe",
-            "description": "Hermes Studio: local Whisper transcript.json only. No render. No post.",
+            "description": "Draft ear only. Returns words for YOU to rewrite. Do not burn these words. Pass your rewritten lines to hermes_studio_captions. No post.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -583,31 +596,31 @@ def register(ctx) -> None:
         toolset="hermes-studio",
         schema={
             "name": "hermes_studio_captions",
-            "description": "Hermes Studio: burn captions on the full video (no clip planner). Local only. Does not post.",
+            "description": "Burn caption lines YOU wrote. Pass lines: [{text, start, end}]. Do not send raw speech-model words. transcribe is a draft ear only. Does not post.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "src": {"type": "string"},
                     "out": {"type": "string"},
-                    "whisper": {"type": "string", "default": "tiny"},
+                    "lines": {"type": "array", "items": {"type": "object"}, "description": "Caption lines you wrote: {text, start, end} in seconds."},
                     "style": {"type": "string", "default": "pop"},
                     "layout": {"type": "string", "enum": ["auto", "fit", "fill", "split"], "default": "fit"},
                     "aspect": {"type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"], "default": "9:16"},
-                    "hook": {"type": "boolean", "default": True},
+                    "hook": {"type": "string", "description": "Short title you wrote. Empty skips the hook card."},
                 },
-                "required": ["src"],
+                "required": ["src", "lines"],
             },
         },
         handler=lambda args, **kw: hermes_studio_captions(
             src=(args or {}).get("src") or "",
             out=(args or {}).get("out") or "",
-            whisper=(args or {}).get("whisper") or "tiny",
+            lines=(args or {}).get("lines") or None,
             style=(args or {}).get("style") or "pop",
             layout=(args or {}).get("layout") or "fit",
             aspect=(args or {}).get("aspect") or "9:16",
-            hook=(args or {}).get("hook", True) is not False,
+            hook=(args or {}).get("hook") or "",
         ),
-        description="Hermes Studio: burn captions on the full video. Does not post.",
+        description="Burn the calling agent's caption lines. Does not call a speech model. Does not post.",
     )
     ctx.register_tool(
         name="hermes_studio_edit",

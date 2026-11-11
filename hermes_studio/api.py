@@ -377,7 +377,51 @@ def copy(src: str, clip_title: str = "") -> dict:
     return {"ok": True, **copy_from_job_dir(Path(root), clip_title)}
 
 
+def burn_agent_captions(
+    src: str,
+    lines: list | str | Path,
+    *,
+    out: str | Path | None = None,
+    style: str = "pop",
+    layout: str = "fit",
+    aspect: str = "9:16",
+    hook: str = "",
+) -> dict:
+    """Burn lines the calling Hermes agent wrote. Does not call a speech model."""
+    import tempfile
+
+    from hermes_studio.agent_captions import burn, load_cues
+    from hermes_studio.download import fetch
+
+    if isinstance(lines, (str, Path)) and not isinstance(lines, list):
+        loaded, file_hook = load_cues(lines)
+        lines = loaded
+        hook = hook or file_hook
+    if not isinstance(lines, list) or not lines:
+        raise HermesStudioError(
+            "Caption lines are required.",
+            hint="The Hermes agent writes the lines. A speech model is only a draft ear, not the caption writer.",
+        )
+    source = check_source(src)
+    require_ffmpeg()
+    _one_of("style", style, STYLES)
+    _one_of("layout", layout, LAYOUTS)
+    sizes = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080), "4:5": (1080, 1350)}
+    width, height = sizes.get(aspect or "9:16", (1080, 1920))
+    work = Path(tempfile.mkdtemp(prefix="hs-agent-captions-"))
+    video = fetch(source, work) if _is_url(source) else Path(source)
+    dest_dir = Path(out).expanduser() if out else Path.home() / ".hermes" / "clips" / "agent-captions"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "captions.mp4" if dest_dir.is_dir() or not dest_dir.suffix else dest_dir
+    if dest.suffix != ".mp4":
+        dest = dest_dir / "captions.mp4"
+    burn(video, lines, dest, work, style=style, layout=layout if layout != "auto" else "fit",
+         width=width, height=height, hook=hook)
+    return {"ok": True, "writer": "agent", "file": str(dest), "lines": len(lines)}
+
+
 def transcribe_only(src: str, *, work: str | None = None, whisper: str = "fast") -> dict:
+    """Draft ear only. The agent rewrites these words before they are burned."""
     import tempfile
 
     from hermes_studio.download import fetch
@@ -390,7 +434,15 @@ def transcribe_only(src: str, *, work: str | None = None, whisper: str = "fast")
     wd.mkdir(parents=True, exist_ok=True)
     video = fetch(source, wd)
     tr = transcribe(video, wd, model_size=whisper_model(whisper))
-    return {"ok": True, "transcript": str(wd / "transcript.json"), "words": len(tr.words), "duration": tr.duration}
+    return {
+        "ok": True,
+        "draft": True,
+        "writer": "speech-draft",
+        "transcript": str(wd / "transcript.json"),
+        "words": len(tr.words),
+        "duration": tr.duration,
+        "hint": "Rewrite these words yourself, then burn them with captions --cues. Do not ship this draft.",
+    }
 
 
 def tools() -> dict:
