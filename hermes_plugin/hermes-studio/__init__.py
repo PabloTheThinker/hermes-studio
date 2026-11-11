@@ -34,8 +34,39 @@ def _command() -> tuple[list[str], dict, str | None]:
     return [sys.executable, "-m", "hermes_studio"], {}, None
 
 
+def _missing_engine() -> dict:
+    """Actionable error when the engine CLI is not on this host."""
+    return {
+        "ok": False,
+        "code": "missing_dependency",
+        "error": "Hermes Studio engine is not installed. The chat tools need the hermes-studio CLI.",
+        "hint": (
+            "Install the engine (separate from this plugin), then retry: "
+            "uv tool install git+https://github.com/PabloTheThinker/hermes-studio"
+            " -- or: curl -fsSL https://raw.githubusercontent.com/PabloTheThinker/hermes-studio/main/scripts/install.sh | bash"
+        ),
+    }
+
+
+def _engine_available() -> bool:
+    """True when the hermes-studio CLI, a source checkout, or this interpreter can import the engine."""
+    if shutil.which("hermes-studio"):
+        return True
+    for root in _source_checkouts():
+        py = root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if py.is_file() and (root / "hermes_studio").is_dir():
+            return True
+    try:
+        import importlib.util
+        return importlib.util.find_spec("hermes_studio") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _run_mod(argv: list[str], timeout: int = 3600) -> dict:
     """Run the CLI with --json: stdout is exactly one JSON object, progress goes to stderr."""
+    if not _engine_available():
+        return _missing_engine()
     cmd, extra_env, cwd = _command()
     if "--json" not in argv:
         argv = [*argv, "--json"]
@@ -43,15 +74,17 @@ def _run_mod(argv: list[str], timeout: int = 3600) -> dict:
         proc = subprocess.run([*cmd, *argv], capture_output=True, text=True,
                               env={**os.environ, **extra_env}, timeout=timeout, cwd=cwd)
     except FileNotFoundError:
-        return {"ok": False, "code": "missing_dependency", "error": "Hermes Studio is not installed.",
-                "hint": "uv tool install git+https://github.com/PabloTheThinker/hermes-studio"}
+        return _missing_engine()
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+    err = proc.stderr or ""
+    if proc.returncode != 0 and "No module named hermes_studio" in err:
+        return _missing_engine()
     out = (proc.stdout or "").strip()
     try:
         return json.loads(out.splitlines()[-1])
     except Exception:
-        return {"ok": proc.returncode == 0, "error": (proc.stderr or proc.stdout or "")[-2000:], "exit_code": proc.returncode}
+        return {"ok": proc.returncode == 0, "error": (err or proc.stdout or "")[-2000:], "exit_code": proc.returncode}
 
 
 def hermes_studio_run(
@@ -333,6 +366,8 @@ def hermes_studio_desk(host: str = "127.0.0.1", port: int = 3870) -> str:
                 return json.dumps({"ok": True, "url": url, "already": True})
     except Exception:
         pass
+    if not _engine_available():
+        return json.dumps(_missing_engine())
     cmd, extra_env, cwd = _command()
     log = Path.home() / ".hermes" / "clips" / "studio.log"
     log.parent.mkdir(parents=True, exist_ok=True)

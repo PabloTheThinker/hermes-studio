@@ -16,6 +16,9 @@ hermes plugins install hermes-studio
 
 Or from source: `hermes plugins install ./hermes_plugin/hermes-studio` after cloning this repo.
 
+The chat tools call the `hermes-studio` CLI. If it is not installed they return a `missing_dependency` error with the install command above, instead of a raw traceback.
+
+
 ## What you get
 
 | Surface | Capability |
