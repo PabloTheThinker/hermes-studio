@@ -1,7 +1,7 @@
 /**
  * hermes-studio — Studio timeline as an in-Desktop section page.
  *
- * STAMP: studio-editor-v7-inpage-20261110
+ * STAMP: studio-editor-v12-shipped-frame-20261111
  *
  * Standalone desktop plugin (no .hermes-package.json marker):
  * loads enabled by default from desktop-plugins/hermes-studio/.
@@ -24,8 +24,8 @@ import {
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'hermes-studio'
-const STAMP = 'studio-editor-v7-inpage-20261110'
-const CMD = 'python3 ~/.hermes/scripts/hermes-studio-desktop-data.py --frame'
+const STAMP = 'studio-editor-v12-shipped-frame-20261111'
+const CMD = 'python3 "${HERMES_HOME:-$HOME/.hermes}/plugins/hermes-studio/frame.py"'
 
 const $src = atom('')
 const $loading = atom(false)
@@ -42,8 +42,11 @@ async function loadFrame() {
       throw new Error((res && res.stderr) || 'studio frame failed')
     }
     const data = JSON.parse(res.stdout || '{}')
-    if (!data.ok || typeof data.frame !== 'string' || data.frame.indexOf('https://') !== 0) {
-      throw new Error(data.error || 'no studio frame')
+    const frame = data && data.frame
+    const local = typeof frame === 'string' && (frame.indexOf('http://127.0.0.1:') === 0 || frame.indexOf('http://localhost:') === 0)
+    const remote = typeof frame === 'string' && frame.indexOf('https://') === 0
+    if (!data.ok || (!local && !remote)) {
+      throw new Error((data && data.error) || 'no studio frame')
     }
     const root = data.frame.endsWith('/') ? data.frame : data.frame + '/'
     $src.set(root + '#/edit')
