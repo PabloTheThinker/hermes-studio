@@ -48,11 +48,11 @@ Each of these is a 1.x item after 1.0 ships.
 
 ---
 
-## Where it stands today (verified 2026-11-10 — M10 acceptance green + Desktop embed live)
+## Where it stands today (verified 2026-11-11 — PR #59 merge-ready)
 
 | Area | Shipped | Missing for 1.0 |
 |---|---|---|
-| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range, **bin (import/upload) + source viewer + insert W / overwrite D / append E** (3-point editing, frame-grid edit points), **drag from bin → timeline** (Alt = overwrite) | — |
+| Timeline editing | trim, split, lift, ripple delete, move, nudge, **roll, slip, slide**, multi-select (marquee, shift-click, group move/delete), markers (colour, rename, jump), snapping, In/Out range, **bin (import/upload) + source viewer + insert W / overwrite D / append E** (3-point editing, frame-grid edit points), **drag from bin → timeline** (Alt = overwrite; editor.js v=118) | — |
 | Playback | real preview mix on the audio clock, J/K/L shuttle, frame step, timecode, adaptive ruler | — |
 | Transitions | all 58 ffmpeg xfade kinds, picker, drag to resize | — |
 | Keyframes | position, scale, rotate, opacity, easing (linear / ease-in / ease-out / ease-in-out), Ken Burns, curve editor, diamonds, drag handles, volume rubber band | — |
@@ -61,11 +61,13 @@ Each of these is a 1.x item after 1.0 ships.
 | Audio | track mixer (mute/solo/gain), meters, waveforms, fades, volume keys, loudnorm, **pan (track balance), ducking under voice, export loudness readout (−14 LUFS ±1, measured on the file)** | — (M4 done) |
 | Text | caption track (burned ASS, word styles), **title objects**: lower third / title / end card, 5 house fonts, size 50–200%, dark panel, drag-to-place in the viewer, fade / slide motion, Alt+T | — (M3 done) |
 | Export | **presets** (1080p H.264, 4K, 1080p vertical, ProRes 422 HQ), custom fps and x264 quality tier, range render, progress + cancel, ffprobe summary on every export | — |
-| Safety | op log only writer, per-project lock, demo-only reset, per-media frame cache, crash-recovery test | — |
+| Safety | op log only writer, per-project lock, demo-only reset, per-media frame cache, crash-recovery test; **project-path realpath prefix checks** at editor sinks (CodeQL clear on PR tip) | — |
 | UI/UX | inspector, tabs, resizable panels and tracks, **workspace layouts**, shortcut sheet | — |
 | Desktop | token-gated `/e/<slug>/` embed (opaque-origin frame), SandboxedFrame Editor tab + Library | — |
+| Ship | **PR #59** `feat/editor-1.0-m5-m10` → main: required checks green (test, secrets, CodeQL, linux, windows); human seal to merge | optional `sources` job red if packaging touched (upstream pyav-ffmpeg tag `8.1.2-1` deleted; not a required check) |
 
-**Editor 1.0 finish line met** for the automated acceptance film (M10) + live Desktop embed path.
+**Editor 1.0 finish line met** for the automated acceptance film (M10) + live Desktop embed path + PR #59 gate.
+Public merge of #59 is the remaining ship step (Sir seals).
 
 ---
 
