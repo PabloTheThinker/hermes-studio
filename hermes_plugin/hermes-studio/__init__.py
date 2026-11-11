@@ -725,3 +725,103 @@ def register(ctx) -> None:
         ),
         description="Hermes Studio: local social copy pack. Does not post.",
     )
+
+    _register_slash(ctx)
+
+
+_STUDIO_VERBS = ("clip", "captions", "reframe", "tighten", "transcribe", "desk", "open", "help", "this")
+
+
+def _studio_help() -> str:
+    return (
+        "Hermes Studio commands (Desktop chat, Telegram, CLI):\n"
+        "  /studio clip <url or file>       hook-first shorts\n"
+        "  /studio captions <url or file>   captioned take (you write the lines)\n"
+        "  /studio reframe <url or file>    change aspect\n"
+        "  /studio tighten <url or file>    cut filler\n"
+        "  /studio transcribe <url or file> draft transcript only\n"
+        "  /studio this <url or file>       throw it into Studio (clip)\n"
+        "  /studio desk                     open the local desk\n"
+        "Never posts. Attach a video or paste a link after the command."
+    )
+
+
+def _studio_prompt(verb: str, src: str) -> str:
+    if verb == "captions":
+        job = (
+            "Throw this video into Hermes Studio as captions. "
+            "I write the caption lines (hermes_studio_captions with lines). "
+            "A speech model is a draft ear only. Do not burn raw speech-model words. Never post."
+        )
+    elif verb == "reframe":
+        job = "Throw this video into Hermes Studio as a reframe (hermes_studio_run mode=reframe). Never post."
+    elif verb == "tighten":
+        job = "Throw this video into Hermes Studio and tighten it (hermes_studio_run mode=tighten). Never post."
+    elif verb == "transcribe":
+        job = (
+            "Throw this video into Hermes Studio for a draft transcript only "
+            "(hermes_studio_transcribe). I rewrite those words before any burn. Never post."
+        )
+    else:
+        job = (
+            "Throw this video into Hermes Studio as hook-first shorts "
+            "(hermes_studio_run mode=clip). Caption lines I write, not a speech model. Never post."
+        )
+    if src:
+        return job + f"\n\nSource: {src}"
+    return job + "\n\nUse the video I just attached or the last video in this chat."
+
+
+def _handle_studio(raw_args: str, *, session_id: str = "", session_key: str = "", platform: str = "") -> str:
+    text = (raw_args or "").strip()
+    if not text or text.split()[0].lower() in {"help", "-h", "--help"}:
+        return _studio_help()
+    parts = text.split(None, 1)
+    head = parts[0].lower().lstrip("/")
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    if head in _STUDIO_VERBS:
+        verb, src = head, rest
+    else:
+        verb, src = "clip", text
+    if verb in {"desk", "open"}:
+        return hermes_studio_desk()
+    if verb == "help":
+        return _studio_help()
+    prompt = _studio_prompt(verb, src)
+    injected = False
+    try:
+        fn = getattr(_handle_studio, "_inject", None)
+        if callable(fn):
+            injected = bool(fn(prompt, role="user", session_key=session_key or None))
+    except Exception:
+        injected = False
+    if injected:
+        return f"Studio queued ({verb}). The agent will pick it up this turn."
+    return (
+        "Studio command received. Paste this to the agent if it does not pick up:\n\n"
+        + prompt
+    )
+
+
+def _register_slash(ctx) -> None:
+    inject = getattr(ctx, "inject_message", None)
+    _handle_studio._inject = inject if callable(inject) else None  # type: ignore[attr-defined]
+    try:
+        ctx.register_command(
+            "studio",
+            _handle_studio,
+            description="Throw a video into Hermes Studio",
+            args_hint="<clip|captions|reframe|tighten|this> <url or file>",
+        )
+    except Exception:
+        pass
+    try:
+        ctx.register_cli_command(
+            "studio-plugin",
+            "Throw a video into Hermes Studio from chat (/studio)",
+            lambda p: p.add_argument("args", nargs="*", help="clip|captions|reframe <url>"),
+            lambda ns: print(_handle_studio(" ".join(getattr(ns, "args", []) or []))),
+        )
+    except Exception:
+        pass
+
