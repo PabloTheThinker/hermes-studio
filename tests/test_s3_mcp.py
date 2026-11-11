@@ -104,6 +104,10 @@ VALID_OPS = [
     {"op": "delete_items", "ids": ["c1"], "ripple": False},
     {"op": "set_track", "mute": True},
     {"op": "set_transition", "between": ["c1", "c2"], "dur": S // 2},
+    {"op": "set_lut", "file": "luts/" + "a" * 32 + ".cube"},
+    {"op": "clear_lut"},
+    {"op": "set_mask", "x": [0, 1], "y": [0, 1], "w": [1, 2], "h": [1, 1]},
+    {"op": "clear_mask"},
 ]
 assert sorted(op["op"] for op in VALID_OPS) == sorted(O.PUBLIC_OPS)
 NO_ID_OPS = {"set_canvas", "move_items", "delete_items"}  # no `id` arg (whole-timeline, or `ids`): an `id` is an unknown arg, not a bad one
@@ -177,6 +181,10 @@ ID_FOR = {
     "roll_edit": "c1",
     "set_marker": "k1",
     "set_track": "A2",
+    "set_lut": "c1",
+    "clear_lut": "c1",
+    "set_mask": "c1",
+    "clear_mask": "c1",
 }
 O_CODES = {
     "invalid_op",

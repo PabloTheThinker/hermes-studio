@@ -207,7 +207,8 @@ def png(t: dict, cache: Path) -> Path:
 def motion_expr(kind_in: str, kind_out: str, at: float, dur: float, fi: float, fo: float, w: int, h: int) -> tuple[str, str]:
     """ffmpeg overlay x/y expressions (eval=frame, t = output seconds) for the slide part of the
     motion; opacity is done with fade. p rises 0 -> 1 over the in, falls 1 -> 0 over the out;
-    the offset is SLIDE * (1 - e), e = 1 - (1 - p)^3."""
+    the offset is SLIDE * (1 - ease-out(p)) via easing.py."""
+    from hermes_studio import easing as _EZ
     def p_of(kind: str, which: str) -> str:
         if which == "in":
             return "1" if fi <= 0 or kind not in ("slide-up", "slide-left") else f"clip((t-{at:.6f})/{fi:.6f},0,1)"
@@ -220,7 +221,7 @@ def motion_expr(kind_in: str, kind_out: str, at: float, dur: float, fi: float, f
             if kind == want:
                 p = p_of(kind, which)
                 dist = SLIDE * (h if axis == "y" else w)
-                parts.append(f"{dist:.4f}*pow(1-({p}),3)")
+                parts.append(f"{dist:.4f}*(1-({_EZ.ease_ffmpeg(p, 'ease-out')}))")
         return "+".join(parts) if parts else "0"
 
     return off("x"), off("y")

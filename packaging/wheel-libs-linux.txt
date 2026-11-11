@@ -3,7 +3,7 @@
 # changes when upstream ships a different build. The engine build fails if the shipped set differs;
 # tests/test_notices.py says where each one's source or license is (NOTICE).
 
-ctranslate2.libs/libctranslate2-fd146744.so.4.8.2
+ctranslate2.libs/libctranslate2-211e4d4e.so.4.9.0
 ctranslate2.libs/libgomp-e985bcbb.so.1.0.0
 numpy.libs/libgfortran-83c28eba-468e71e5.so.5.0.0
 numpy.libs/libquadmath-2284e583-a9307bba.so.0.0.0
@@ -24,20 +24,20 @@ opencv_python_headless.libs/libswresample-2dfded3b.so.6.3.101
 opencv_python_headless.libs/libswscale-fe215b0b.so.9.5.101
 opencv_python_headless.libs/libvpx-4fb239ff.so.11.0.1
 pillow.libs/libXau-154567c4.so.6.0.0
-pillow.libs/libavif-8a7f9d56.so.16.4.2
+pillow.libs/libavif-c6062d5f.so.16.4.2
 pillow.libs/libbrotlicommon-53534446.so.1.2.0
 pillow.libs/libbrotlidec-7e5462ba.so.1.2.0
-pillow.libs/libfreetype-9fc94c80.so.6.20.6
-pillow.libs/libharfbuzz-172d1f63.so.0.61421.0
-pillow.libs/libjpeg-31e2ca52.so.62.4.0
-pillow.libs/liblcms2-dade1fbf.so.2.0.19
-pillow.libs/liblzma-2be87c3e.so.5.8.3
-pillow.libs/libopenjp2-b07f72ad.so.2.5.4
-pillow.libs/libpng16-abb096d5.so.16.58.0
+pillow.libs/libfreetype-57f805ba.so.6.20.6
+pillow.libs/libharfbuzz-fb49c9fc.so.0.61450.0
+pillow.libs/libjpeg-6dc8d115.so.62.4.0
+pillow.libs/liblcms2-88eaba2f.so.2.0.19
+pillow.libs/liblzma-de26b416.so.5.8.4
+pillow.libs/libopenjp2-e530e1bf.so.2.5.4
+pillow.libs/libpng16-1d1ba958.so.16.58.0
 pillow.libs/libsharpyuv-0066295b.so.0.1.2
-pillow.libs/libtiff-fc87e79d.so.6.2.0
+pillow.libs/libtiff-20b7e810.so.6.3.0
 pillow.libs/libwebp-51b0b3f7.so.7.2.0
 pillow.libs/libwebpdemux-9fe2abcc.so.2.0.17
 pillow.libs/libwebpmux-8fb1c9f6.so.3.1.2
-pillow.libs/libxcb-ad31f5a3.so.1.1.0
-pillow.libs/libzstd-44be1190.so.1.5.7
+pillow.libs/libxcb-9065bb12.so.1.1.0
+pillow.libs/libzstd-40ad5e7e.so.1.5.7

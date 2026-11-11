@@ -254,6 +254,7 @@ BAD = {
     "keyframes not a list": (_set("@c3.props.keyframes", {}), "bad_keyframes"),
     "keyframes empty": (_set("@c3.props.keyframes", []), "bad_keyframes"),
     "keyframes out of order": (_set("@c3.props.keyframes", [{"at": 8 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1]}]), "bad_order"),
+    "keyframes bad ease": (_set("@c3.props.keyframes", [{"at": 0, "x": [0, 1], "y": [0, 1], "scale": [1, 1], "rotate": [0, 1], "ease": "bounce"}, {"at": 2 * S, "x": [0, 1], "y": [0, 1], "scale": [2, 1], "rotate": [0, 1]}]), "bad_ease"),
     "speed_keys not a list": (_set("@c3.props.speed_keys", {}), "bad_speed_keys"),
     "speed_keys empty": (_set("@c3.props.speed_keys", []), "bad_speed_keys"),
     "mute on the main track": (lambda d: track(d, "V1").__setitem__("mute", True), "track_audio_only"),
@@ -269,6 +270,10 @@ BAD = {
     "track mute not a boolean": (lambda d: track(d, "A1").__setitem__("mute", 1), "wrong_type"),
     "track gain above 4": (lambda d: track(d, "A1").__setitem__("gain", [5, 1]), "out_of_range"),
     "track gain not a ratio": (lambda d: track(d, "A1").__setitem__("gain", 0.5), "bad_rational"),
+    "lut file outside luts": (lambda d: item(d, "c1").setdefault("props", {}).update(
+        {"lut": {"file": "media/evil.cube"}}), "bad_lut"),
+    "mask shape invalid": (lambda d: item(d, "c1").setdefault("props", {}).update(
+        {"mask": {"shape": "diamond", "x": [0, 1], "y": [0, 1], "w": [1, 2], "h": [1, 1]}}), "bad_mask"),
 }
 
 
@@ -637,7 +642,7 @@ def test_export_opens_in_otiotool(tmp_path):
 
 def test_every_rule_has_a_rejection_case():
     assert {r for _, r in BAD.values()} | {"not_object"} == set(T.RULES)
-    assert len(T.RULES) == 43  # every rule above has a case in BAD (bad_hold / bad_title / duck_music_only the last added)
+    assert len(T.RULES) == 46  # every rule above has a case in BAD (bad_ease the last added)
 
 
 def _huge_scaled_src(d):

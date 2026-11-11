@@ -25,6 +25,11 @@
       .tl button:hover{color:var(--ink);border-color:var(--amber)}
       .tl button.on{color:var(--ink);border-color:var(--amber);background:rgba(255,200,61,.08)}
       .tl-go{background:var(--amber)!important;color:var(--amber-ink)!important;border:0!important}
+      .tl-exp{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+      .tl-exp select,.tl-exp input[type=number]{background:var(--bg);border:1px solid var(--line-2);border-radius:6px;color:var(--ink);font:500 11px var(--mono);padding:4px 6px;max-width:72px}
+      .tl-renderbar{flex:1;min-width:80px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+      .tl-renderbar i{display:block;height:100%;background:var(--amber);width:0;transition:width .15s}
+      .tl-probe{font:500 11px var(--mono);color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
       .tl-stage{display:grid;grid-template-columns:minmax(0,1fr) 280px;grid-template-rows:minmax(0,1fr);min-height:0;overflow:hidden}
       .tl-frame.haspic{background:#000}
       .tl-frame.haspic .tl-shade,.tl-frame.haspic .k,.tl-frame.haspic .big,.tl-frame.haspic .who{display:none}
@@ -45,10 +50,13 @@
       .tl-binmsg{padding:0 12px;font:500 11px var(--mono);color:var(--amber);min-height:0}
       .tl-binmsg:empty{display:none}
       .tl-binlist{overflow:auto;min-height:0;padding:4px 8px 12px;display:grid;gap:6px;align-content:start}
-      .tl-binit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;padding:5px;border:1px solid var(--line);border-radius:3px;cursor:pointer}
+      .tl-binit{all:unset;box-sizing:border-box;display:grid;grid-template-columns:64px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;padding:5px;border:1px solid var(--line);border-radius:3px;cursor:grab}
       .tl-binit:hover{border-color:var(--line-2)}
       .tl-binit.on{border-color:var(--amber);box-shadow:inset 0 0 0 1px var(--amber)}
+      .tl-binit.dragging{opacity:.55;cursor:grabbing}
       .tl-binit:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+      .tl-stack.drop-on{outline:1px dashed rgba(222,171,66,.45);outline-offset:-2px}
+      .tl-drop{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:var(--amber);box-shadow:0 0 0 1px rgba(0,0,0,.4);pointer-events:none;z-index:12}
       .tl-binit img{grid-row:1/3;width:64px;height:36px;object-fit:cover;background:#050505;border-radius:2px}
       .tl-binit .nm{text-transform:none;letter-spacing:0;font:500 12px var(--sans);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;align-self:end}
       .tl-binit .du{text-transform:none;letter-spacing:0;font:500 10px var(--mono);color:var(--dim)}
@@ -78,6 +86,35 @@
       .tl-can2 input{width:5.2rem;margin:0;padding:.35rem .4rem}
       .tl-vid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:0}
       .tl-pic{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1}
+      .tl-lutc{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#050505;z-index:1;pointer-events:none;display:none}
+      .tl-maskbox{position:absolute;border:1px solid #ffc83d;box-shadow:0 0 0 1px rgba(0,0,0,.5);pointer-events:none;z-index:3}
+      .tl-maskbox.ellipse{border-radius:50%}
+      .tl-maskh{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;background:#ffc83d;border:1px solid #050505;border-radius:2px;pointer-events:auto;cursor:pointer;z-index:4}
+      .tl-maskh.move{cursor:move;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%}
+      .tl-maskrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0 4px;font-size:11px}
+      .tl-maskrow label{display:flex;gap:4px;align-items:center}
+      .tl-lutrow{display:grid;grid-template-columns:auto auto 1fr auto;gap:6px 8px;align-items:center;margin-top:10px;font-size:12px}
+      .tl-lutrow .tl-lutname{color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .tl-lutbtn input{cursor:pointer}
+      .tl-lutrow .tl-wsat{grid-column:1/-1}
+      .tl-wsbtn{font:600 11px var(--sans);padding:4px 8px;border:1px solid var(--line);background:transparent;color:var(--dim);border-radius:6px;cursor:pointer}
+      .tl-wsbtn.on{color:var(--ink);border-color:var(--amber,#ffc83d);background:rgba(255,200,61,.08)}
+      .tl-helpbtn{margin-left:4px}
+      .tl-sheethelp{position:fixed;inset:0;z-index:80;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:24px}
+      .tl-sheethelp .box{max-width:720px;max-height:86vh;overflow:auto;background:#0b0b0c;border:1px solid var(--line);border-radius:12px;padding:18px 20px;color:var(--ink);box-shadow:0 20px 60px rgba(0,0,0,.5)}
+      .tl-sheethelp h3{margin:0 0 10px;font:800 16px var(--sans);letter-spacing:.04em;text-transform:uppercase}
+      .tl-sheethelp table{width:100%;border-collapse:collapse;font:500 12px/1.45 var(--sans)}
+      .tl-sheethelp td{padding:4px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+      .tl-sheethelp td:first-child{width:38%;font:600 11px var(--mono);color:var(--amber,#ffc83d);white-space:nowrap}
+      .tl-sheethelp .close{float:right;border:0;background:transparent;color:var(--dim);cursor:pointer;font:600 14px var(--sans)}
+      .tl.ws-colour .tl-stage{grid-template-rows:minmax(0,1.35fr) 5px minmax(120px,.65fr)}
+      .tl.ws-colour .tl-insp .tl-can,.tl.ws-colour .tl-insp .tl-can2{display:none}
+      .tl.ws-audio .tl-scope{display:none}
+      .tl.ws-audio .tl-stage{grid-template-rows:minmax(100px,.55fr) 5px minmax(0,1.45fr)}
+      .tl.ws-audio .tl-insp .tl-colour,.tl.ws-audio .tl-insp .tl-curves,.tl.ws-audio .tl-insp .tl-lutrow,.tl.ws-audio .tl-insp .tl-maskbox{display:none}
+      .tl-empty{margin:18px 8px;padding:16px;border:1px dashed var(--line);border-radius:10px;color:var(--dim);font:400 13px/1.5 var(--sans);max-width:420px}
+      .tl-empty b{color:var(--ink);font-weight:700}
+
       .tl-pick{padding:8px 4px 24px;max-width:760px}
       .tl-film{display:flex;justify-content:space-between;align-items:baseline;gap:16px;width:100%;text-align:left;background:none;border:0;border-top:1px solid var(--line);border-radius:0;padding:14px 0;color:var(--ink);cursor:pointer;text-transform:none;letter-spacing:0;font:600 16px var(--sans)}
       .tl-film span{color:var(--dim);font:500 12px var(--mono)}
@@ -247,6 +284,15 @@
   }
 
   let root = null, doc = null, sel = "", play = 0, msg = "", pps = 24, pid = "", renderOut = null;
+  let exportPreset = (() => { try { return localStorage.getItem("hs-export-preset") || "1080p"; } catch (e) { return "1080p"; } })();
+  let exportQuality = (() => { try { return localStorage.getItem("hs-export-quality") || "standard"; } catch (e) { return "standard"; } })();
+  let exportFps = (() => { try { return localStorage.getItem("hs-export-fps") || ""; } catch (e) { return ""; } })();
+  let wsMode = (() => { try { return localStorage.getItem("tl-ws") || "edit"; } catch (e) { return "edit"; } })();
+  if (!["edit", "colour", "audio"].includes(wsMode)) wsMode = "edit";
+  let helpOpen = false;
+
+  let renderJob = null; // {state, progress, result, error}
+  let renderPoll = null;
   let selKf = -1;  // index of the selected keyframe on the selected clip, -1 = none
   // Multi-clip selection, Resolve / Final Cut style. selSet holds every selected clip id;
   // sel stays the "last one" so the inspector keeps pointing at something concrete. An
@@ -370,7 +416,22 @@
       <label class="tl-wsat">Look <select data-glook style="flex:1" aria-label="Look" title="A starting grade: the wheels show it and can take it further">
         ${it.grade && !it.look ? `<option value="__custom" selected disabled>Custom</option>` : ""}<option value="" ${it.grade ? "" : "selected"}>None</option>${["warm", "cool", "punch", "mono", "film"].map((l) => `<option value="${l}" ${it.look === l ? "selected" : ""}>${l[0].toUpperCase() + l.slice(1)}</option>`).join("")}</select></label>
       <div class="tl-curves"><nav>${[["m", "Master"], ["r", "R"], ["g", "G"], ["b", "B"]].map(([k, l]) => `<button type="button" data-ctab="${k}" class="${curveTab === k ? "on" : ""}" title="${k === "m" ? "Master curve: all three channels" : l + " channel curve"}${st.curves[k] ? " (shaped)" : ""}">${l}${st.curves[k] ? "•" : ""}</button>`).join("")}<button type="button" class="flat" data-cflat title="Make this curve a straight line again">Flat</button></nav>
-        <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div></div>`;
+        <canvas class="tl-curvec" data-curve width="236" height="150" aria-label="${curveTab === "m" ? "Master" : curveTab.toUpperCase()} curve: click to add a point, drag to move, double-click a point to remove it"></canvas></div>
+      <div class="tl-lutrow"><span>LUT</span><label class="tl-lutbtn"><input type="file" accept=".cube" data-lutfile hidden>Import</label>
+        <span class="tl-lutname" data-lutname>${it.lut ? esc(it.lut.name) : "None"}</span>
+        ${it.lut ? `<button type="button" data-lutclear title="Remove the LUT">Clear</button>` : ""}
+        <label class="tl-wsat">Mix <input type="range" data-lutmix min="0" max="1" step="0.01" value="${(it.lut ? it.lut.intensity : 1).toFixed(2)}" ${it.lut ? "" : "disabled"} aria-label="LUT mix"><b data-lutmv>${(it.lut ? it.lut.intensity : 1).toFixed(2)}</b></label></div>
+      <div class="tl-masksec"><h4>Mask</h4>
+        <div class="tl-maskrow">
+          <label>Shape <select data-mskshape><option value="rect" ${!it.mask || it.mask.shape === "rect" ? "selected" : ""}>Rectangle</option><option value="ellipse" ${it.mask && it.mask.shape === "ellipse" ? "selected" : ""}>Ellipse</option></select></label>
+          <label>Target <select data-msktgt><option value="grade" ${!it.mask || it.mask.target === "grade" ? "selected" : ""}>Grade</option><option value="blur" ${it.mask && it.mask.target === "blur" ? "selected" : ""}>Blur</option></select></label>
+          <label><input type="checkbox" data-mskinv ${it.mask && it.mask.invert ? "checked" : ""}> Invert</label>
+          ${it.mask ? `<button type="button" data-mskclear>Clear</button>` : `<button type="button" data-mskadd>Add</button>`}
+        </div>
+        ${it.mask ? `<div class="tl-maskrow"><label>Feather <input type="range" data-mskfeather min="0" max="0.5" step="0.005" value="${(it.mask.feather || 0).toFixed(3)}"><b data-mskfv>${(it.mask.feather || 0).toFixed(3)}</b></label>
+          ${it.mask.target === "blur" ? `<label>Blur <input type="number" data-mskblur min="1" max="200" step="1" value="${Math.round(it.mask.blur || 12)}" style="width:52px"> px</label>` : ""}
+          <button type="button" data-mskkey title="Keyframe mask at the playhead">◆ at playhead</button></div>` : `<p style="color:var(--dim);font-size:11px;margin:4px 0">Isolate the grade or a blur to part of the frame. Drag the box in the viewer.</p>`}
+      </div></div>`;
   }
   // ---- transitions: kind picker and drag-to-resize on the badge -----------------------
   // The badge on the timeline names the transition it is (Cross Fade, Wipe Right, ...). Click
@@ -718,21 +779,24 @@
     srcVid.pause();
     srcVid.currentTime = srcSnap(m, (srcVid.currentTime || 0) + frames / srcFps(m));
   }
-  async function srcEdit(mode) {
-    const m = binItem(srcId);
+  async function placeFromBin(mediaId, mode, at) {
+    const m = binItem(mediaId);
     if (!m) { msg = "Pick a clip in the bin first."; paint(); return; }
     if (srcVid) srcVid.pause();
     const [a, b] = srcRange(m);
-    // Three-point editing: the source In/Out plus ONE timeline point -- the timeline In mark if
-    // there is one, else the playhead. Append ignores it and goes to the end.
-    const at = inOut.in != null ? inOut.in : play;
     const before = doc.duration;
-    await commit({ op: "place", media: m.id, src_in: a, src_out: b, mode, at });
+    const t = at == null ? (inOut.in != null ? inOut.in : play) : at;
+    await commit({ op: "place", media: m.id, src_in: a, src_out: b, mode, at: t });
     const len = b - a;
     if (mode === "append") play = Math.max(0, doc.duration - 0.001);
-    else play = Math.min(doc.duration, Math.min(at, before) + len); // the playhead lands after the edit
+    else play = Math.min(doc.duration, Math.min(t, before) + len); // the playhead lands after the edit
     head();
     paint();
+  }
+  async function srcEdit(mode) {
+    // Three-point editing: the source In/Out plus ONE timeline point -- the timeline In mark if
+    // there is one, else the playhead. Append ignores it and goes to the end.
+    await placeFromBin(srcId, mode, null);
   }
   async function importFiles(files) {
     for (const f of files) {
@@ -769,9 +833,9 @@
     return `<aside class="tl-bin" aria-label="Bin">
       <div class="tl-binhd"><b>Bin</b><span class="n">${bin.length}</span><button type="button" data-act="import" title="Import video files into this cut's bin">Import</button><input type="file" data-import accept="video/*,.mov,.mkv,.m4v,.webm" multiple hidden></div>
       <div class="tl-binmsg">${esc(importing)}</div>
-      <div class="tl-binlist">${bin.length ? bin.map((m) => `<button type="button" class="tl-binit${m.id === srcId ? " on" : ""}" data-bin="${esc(m.id)}" title="${esc(m.name)} · ${esc(tc(m.dur))}${m.audio ? "" : " · no sound"} · click to open in the source viewer">
-          <img loading="lazy" alt="" src="${esc(thumb(m))}"><span class="nm">${esc(m.name)}</span><span class="du">${esc(tc(m.dur))}${m.uses ? ` · <i>in cut</i>` : ""}</span></button>`).join("")
-        : `<p class="tl-binempty">No files yet. <b>Import</b> a video, mark In and Out (I, O), then <b>W</b> insert, <b>D</b> overwrite, <b>E</b> append at the playhead.</p>`}</div>
+      <div class="tl-binlist">${bin.length ? bin.map((m) => `<button type="button" draggable="true" class="tl-binit${m.id === srcId ? " on" : ""}" data-bin="${esc(m.id)}" title="${esc(m.name)} · ${esc(tc(m.dur))}${m.audio ? "" : " · no sound"} · click source · drag to timeline (Alt = overwrite)">
+          <img loading="lazy" alt="" draggable="false" src="${esc(thumb(m))}"><span class="nm">${esc(m.name)}</span><span class="du">${esc(tc(m.dur))}${m.uses ? ` · <i>in cut</i>` : ""}</span></button>`).join("")
+        : `<p class="tl-binempty">No files yet. <b>Import</b> a video, mark In and Out (I, O), then <b>W</b> insert, <b>D</b> overwrite, <b>E</b> append — or drag from the bin onto the timeline.</p>`}</div>
     </aside>`;
   }
   function srcBarMarkup() {
@@ -791,7 +855,29 @@
       </div>`;
   }
   function wireBin() {
-    root.querySelectorAll("[data-bin]").forEach((b) => b.addEventListener("click", () => loadSource(b.dataset.bin)));
+    let dragged = false;
+    root.querySelectorAll("[data-bin]").forEach((b) => {
+      b.addEventListener("click", () => { if (dragged) { dragged = false; return; } loadSource(b.dataset.bin); });
+      b.addEventListener("dragstart", (e) => {
+        dragged = true;
+        const id = b.dataset.bin;
+        try {
+          e.dataTransfer.setData("application/x-hermes-bin", id);
+          e.dataTransfer.setData("text/plain", id);
+        } catch (err) { /* some browsers reject custom types mid-drag */ }
+        e.dataTransfer.effectAllowed = "copyMove";
+        b.classList.add("dragging");
+        srcId = id;
+      });
+      b.addEventListener("dragend", () => {
+        b.classList.remove("dragging");
+        const stack = root.querySelector(".tl-stack");
+        if (stack) stack.classList.remove("drop-on");
+        const line = root.querySelector(".tl-drop");
+        if (line) line.hidden = true;
+        setTimeout(() => { dragged = false; }, 0);
+      });
+    });
     const inp = root.querySelector("[data-import]");
     if (inp) inp.addEventListener("change", () => { const fs = [...inp.files]; inp.value = ""; if (fs.length) importFiles(fs); });
     const slot = root.querySelector(".tl-srcslot");
@@ -811,6 +897,48 @@
       const up = () => { strip.removeEventListener("pointermove", mv); strip.removeEventListener("pointerup", up); };
       strip.addEventListener("pointermove", mv);
       strip.addEventListener("pointerup", up);
+    });
+    wireBinDrop();
+  }
+  function wireBinDrop() {
+    const stack = root.querySelector(".tl-stack");
+    if (!stack) return;
+    let line = stack.querySelector(".tl-drop");
+    if (!line) {
+      line = document.createElement("i");
+      line.className = "tl-drop";
+      line.hidden = true;
+      stack.appendChild(line);
+    }
+    const hide = () => { stack.classList.remove("drop-on"); line.hidden = true; };
+    const isBin = (dt) => {
+      const types = [...(dt && dt.types) || []];
+      return types.includes("application/x-hermes-bin") || types.includes("text/plain");
+    };
+    stack.addEventListener("dragover", (e) => {
+      if (!isBin(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = e.altKey ? "copy" : "move";
+      stack.classList.add("drop-on");
+      const t = snap(Math.max(0, xToTime(e)));
+      line.hidden = false;
+      line.style.left = (LAB + t * pps) + "px";
+      line.title = e.altKey ? "Overwrite at " + tc(t) : "Insert at " + tc(t);
+    });
+    stack.addEventListener("dragleave", (e) => {
+      if (!stack.contains(e.relatedTarget)) hide();
+    });
+    stack.addEventListener("drop", async (e) => {
+      if (!isBin(e.dataTransfer)) return;
+      e.preventDefault();
+      const mid = e.dataTransfer.getData("application/x-hermes-bin") || e.dataTransfer.getData("text/plain");
+      hide();
+      if (!mid || !binItem(mid)) return;
+      srcId = mid;
+      const mode = e.altKey ? "overwrite" : "insert";
+      const at = snap(Math.max(0, xToTime(e)));
+      msg = mode === "overwrite" ? "Overwrite from bin…" : "Insert from bin…";
+      await placeFromBin(mid, mode, at);
     });
   }
   // Keys while a source is loaded. Returns true when it took the key.
@@ -863,7 +991,12 @@
     let alpha = 1, dx = 0, dy = 0;
     if (T.in !== "none" && fi > 0) alpha *= pin;
     if (T.out !== "none" && fo > 0) alpha *= pout;
-    const slide = (kind, p) => { const k = Math.pow(1 - p, 3) * TITLE_SLIDE; if (kind === "slide-up") dy += k; if (kind === "slide-left") dx += k; };
+    const slide = (kind, p) => {
+      const e = window.HSEase ? window.HSEase.easeProgress(p, "ease-out") : 1 - Math.pow(1 - p, 3);
+      const k = (1 - e) * TITLE_SLIDE;
+      if (kind === "slide-up") dy += k;
+      if (kind === "slide-left") dx += k;
+    };
     if (fi > 0) slide(T.in, pin);
     if (fo > 0) slide(T.out, pout);
     return { alpha, dx, dy }; // offsets as fractions of the canvas
@@ -995,11 +1128,13 @@
   // and Final Cut's video animation editor give you; the timeline diamonds stay as the compact
   // view and the two are the same data (one "keyframes" op, one undo step).
   let kfTab = "scale", kfCurveDrag = null;
+  const KF_EASE = [["linear", "Linear"], ["ease-in", "Ease in"], ["ease-out", "Ease out"], ["ease-in-out", "Ease in-out"]];
   const KF_PROPS = {
     scale: { label: "Scale", lo: 0.1, hi: 3, fmt: (v) => v.toFixed(2) + "×" },
     x: { label: "Pos X", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
     y: { label: "Pos Y", lo: -4, hi: 4, fmt: (v) => v.toFixed(2) },
     rotate: { label: "Rotate", lo: -360, hi: 360, fmt: (v) => v.toFixed(0) + "°" },
+    opacity: { label: "Opacity", lo: 0, hi: 1, fmt: (v) => v.toFixed(2) },
   };
   function kfClipDur() { const it = find(sel); return (it && it.dur) || 1; }
   // The graph's margins in CSS pixels. The drawing multiplies by the device pixel ratio for the
@@ -1029,15 +1164,15 @@
       ctx.fillText(P.fmt(v).replace(/[×°]$/, ""), 2 * k, y + 3 * k);
     }
     ctx.beginPath(); ctx.moveTo(M.l, M.t); ctx.lineTo(M.l, H - M.b); ctx.stroke();
-    // The line: linear between keys (the render is piecewise-linear too), flat before/after.
-    ctx.strokeStyle = "var(--amber)"; ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
+    // The line follows the same eased segments as the render (HSEase).
+    ctx.strokeStyle = "#DEAB42"; ctx.lineWidth = 1.6 * k;
     ctx.beginPath();
     if (kfs.length) {
-      const first = kfs[0];
-      ctx.moveTo(X(0), Y(first[kfTab]));
-      for (let i = 0; i < kfs.length; i++) { const p = kfs[i]; ctx.lineTo(X(p.at), Y(p[kfTab])); }
-      const last = kfs[kfs.length - 1];
-      ctx.lineTo(X(dur), Y(last[kfTab]));
+      const pts = window.HSEase
+        ? window.HSEase.sampleCurve(kfs, kfTab, 0, dur, 72)
+        : [[0, kfs[0][kfTab]], ...kfs.map((p) => [p.at, p[kfTab]]), [dur, kfs[kfs.length - 1][kfTab]]];
+      ctx.moveTo(X(pts[0][0]), Y(pts[0][1]));
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(X(pts[i][0]), Y(pts[i][1]));
     }
     ctx.stroke();
     ctx.fillStyle = "rgba(242,239,232,.35)";
@@ -1100,7 +1235,7 @@
         // Carry the values the curve already has at that time (the last key at or before t,
         // else the first key), so only the property you clicked on changes.
         const before = [...kfs].reverse().find((p) => p.at <= t);
-        const base = before || kfs[0] || { x: 0, y: 0, scale: 1, rotate: 0 };
+        const base = before || kfs[0] || { x: 0, y: 0, scale: 1, rotate: 0, opacity: 1 };
         const key = { ...base, at: t, [kfTab]: v };
         kfs.push(key);
         kfs.sort((a, b) => a.at - b.at);
@@ -1653,7 +1788,42 @@
   // The inspector controls a person drives from the keyboard. paint() rebuilds the DOM, so the
   // focused one is noted before and focused again after: otherwise a commit made by the first
   // arrow press on a menu or slider dropped focus and the next presses went nowhere.
-  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
+  const KEEP_FOCUS = ["data-glook", "data-wsat", "data-wm", "data-lutmix", "data-scope", "data-mkname", "data-ttpl", "data-ttext", "data-tsub", "data-tin", "data-tout", "data-tacc", "data-tfont", "data-tscale", "data-tbox"];
+
+  const SHORTCUTS = [
+    ["Space / K", "Play / pause (K also holds for frame step with J/L)"],
+    ["J / L", "Shuttle reverse / forward (repeat for 2× 4× 8×)"],
+    ["← →", "Step one frame (Shift = one second)"],
+    ["I / O", "Mark In / Out (Shift jumps, Alt clears, Alt+X clears both)"],
+    ["/", "Play In→Out range"],
+    ["W / D / E", "Insert / overwrite / append from source (bin)"],
+    ["Drag bin → timeline", "Insert at drop (Alt = overwrite)"],
+    ["S", "Split at playhead"],
+    ["⌫ / Del", "Lift selection"],
+    [", / .", "Nudge selection (Alt = slip, Shift = 1s)"],
+    ["M", "Add or delete marker (Shift+M rename)"],
+    ["N", "Toggle snap"],
+    ["Alt+T", "Lower-third title"],
+    ["Alt+F", "Freeze frame"],
+    ["Ctrl+Z / Shift+Ctrl+Z", "Undo / redo"],
+    ["− = / Fit", "Zoom out / in / fit"],
+    ["?", "This shortcut sheet"],
+    ["1 / 2 / 3", "Workspace: Edit / Colour / Audio"],
+  ];
+  function helpMarkup() {
+    if (!helpOpen) return "";
+    const rows = SHORTCUTS.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
+    return `<div class="tl-sheethelp" data-help><div class="box"><button type="button" class="close" data-act="help-close" title="Close">✕</button><h3>Keyboard</h3><table>${rows}</table><p style="margin:12px 0 0;color:var(--dim);font:400 12px var(--sans)">Press <b>?</b> or Esc to close. Full Cut page stays keyboard-first.</p></div></div>`;
+  }
+  function setWorkspace(mode) {
+    if (!["edit", "colour", "audio"].includes(mode)) return;
+    wsMode = mode;
+    try { localStorage.setItem("tl-ws", wsMode); } catch (e) { /* private */ }
+    if (mode === "colour" && scopeMode === "off") scopeMode = "wave";
+    if (mode === "audio") { /* keep meters; scopes optional off already handled by CSS */ }
+    paint();
+  }
+
   function paint() {
     if (!root || !doc) return;
     const ae = document.activeElement;
@@ -1688,19 +1858,37 @@
     const rows = it
       ? [["In", fmt(it.at)], ["Out", fmt(it.at + it.dur)], ["Length", it.dur.toFixed(2) + "s"], ["Source", it.src_in != null ? fmt(it.src_in) + " – " + fmt(it.src_out) : "—"]]
       : [];
+    const emptyMain = !(d.tracks || []).some((tr) => (tr.items || []).length);
     root.innerHTML = `
-      <div class="tl ${folded ? "tl-collapsed" : ""}" style="--lab:${LAB}px">
+      <div class="tl ${folded ? "tl-collapsed" : ""} ws-${wsMode}" style="--lab:${LAB}px">
+        ${helpMarkup()}
         <div class="tl-top">
           <b>Edit</b>
+          <span class="tl-ws" title="Workspace layout">
+            <button type="button" class="tl-wsbtn ${wsMode === "edit" ? "on" : ""}" data-act="ws-edit">Edit</button>
+            <button type="button" class="tl-wsbtn ${wsMode === "colour" ? "on" : ""}" data-act="ws-colour">Colour</button>
+            <button type="button" class="tl-wsbtn ${wsMode === "audio" ? "on" : ""}" data-act="ws-audio">Audio</button>
+          </span>
+          <button type="button" class="tl-wsbtn tl-helpbtn" data-act="help" title="Keyboard shortcuts (?)">?</button>
           <span class="tl-pill">v${esc(d.version)}</span>${d.tracks.some((t) => t.solo) ? `<span class="tl-pill solo" title="Only soloed tracks play, in the preview and in the render">Solo</span>` : ""}
           <span class="tl-clock" title="Timecode HH:MM:SS:FF at ${esc(fpsOf().toFixed(2))} fps">${esc(tc(play))} / ${esc(tc(w))}</span><span class="tl-pill tl-rate" hidden></span>${rg ? `<span class="tl-pill tl-rngpill" title="In ${esc(tc(rg[0]))} · Out ${esc(tc(rg[1]))} · / plays it · Alt+X clears">In–Out ${esc(tc(rg[1] - rg[0]))}</span>` : ""}
-          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}</span>
+          <span class="tl-exp" title="Export preset and quality (saved in this browser)">
+            <select data-export-preset aria-label="Export preset">
+              ${[["1080p", "1080p"], ["4k", "4K"], ["vertical", "Vertical"], ["prores", "ProRes"]].map(([v, l]) => `<option value="${v}" ${exportPreset === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+            <select data-export-quality aria-label="Export quality">
+              ${[["draft", "Draft"], ["standard", "Std"], ["high", "High"]].map(([v, l]) => `<option value="${v}" ${exportQuality === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+            <input type="number" data-export-fps min="1" max="120" step="0.01" placeholder="fps" value="${esc(exportFps)}" aria-label="Export fps override" title="Leave blank to use the timeline frame rate">
+          </span>
+          ${renderJob && (renderJob.state === "queued" || renderJob.state === "running") ? `<span class="tl-renderbar" title="Export progress"><i style="width:${Math.round((renderJob.progress || 0) * 100)}%"></i></span><button type="button" data-act="render-cancel">Cancel</button>` : ""}
+          <span class="tl-status">${esc(msg || "Drag an edge to trim. S splits at the playhead.")}${renderOut ? " <a class=\"tl-dl\" href=\"" + esc(renderOut.url) + "\" download>Save " + esc(renderOut.name) + "</a>" : ""}${renderJob && renderJob.result && renderJob.result.probe ? `<span class="tl-probe" title="ffprobe on the export"> ${esc(probeSummary(renderJob.result.probe))}</span>` : ""}</span>
           <button type="button" data-act="bin" class="${binOpen ? "on" : ""}" title="Show or hide the bin">Bin</button>
           <button type="button" data-act="title" title="Add a lower-third title at the playhead (Alt+T)">Title</button>
           <button type="button" data-act="play">${playing ? "Pause" : "Play"}</button>
           <button type="button" data-act="undo">Undo</button>
           <button type="button" data-act="redo">Redo</button>
-          <button type="button" class="tl-go" data-act="render" title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
+          <button type="button" class="tl-go" data-act="render" ${renderJob && (renderJob.state === "queued" || renderJob.state === "running") ? "disabled" : ""} title="${rg ? "Render the In–Out range only (Alt+X clears the marks)" : "Render the whole cut"}">${rg ? "Render range" : "Render"}</button>
           <button type="button" class="tl-go" data-act="split">Split</button>
         </div>
         <div class="tl-stage${binOpen ? " withbin" : ""}">
@@ -1709,7 +1897,9 @@
             <span class="tl-srcslot"></span>
             <video class="tl-vid" playsinline hidden></video>
             <img class="tl-pic" alt="" />
+            <canvas class="tl-lutc" aria-hidden="true"></canvas>
             <span class="tl-titles" aria-hidden="true"></span>
+            <span class="tl-maskov" aria-hidden="true"></span>
             <span class="tl-shade"></span>
             <span class="k">${esc(cw)} × ${esc(ch)}</span>
             <span class="big">${esc(fmt(play))}</span>
@@ -1740,8 +1930,8 @@
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Fade in</span><input data-fadein type="number" min="0" step="0.1" value="${it.fade_in || 0}">s</div><div class="tl-row"><span>Fade out</span><input data-fadeout type="number" min="0" step="0.1" value="${it.fade_out || 0}">s <button type="button" data-act="apply-fade">Set</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Crop</span><select data-crop style="flex:1"><option value="">None (full frame)</option><option value="c">Center 50%</option><option value="l">Left half</option><option value="r">Right half</option><option value="t">Top half</option><option value="b">Bottom half</option><option value="sq">Center square</option></select></div><div class="tl-row"><span></span><button type="button" data-act="apply-crop">Apply crop</button></div>` : ""}
             ${it && it.type === "clip" ? `<div class="tl-row"><span>Scale</span><span style="display:flex;gap:4px;align-items:center"><input data-tfscale type="range" min="0.1" max="3" step="0.05" value="${curTf.scale}" style="flex:1"><b style="min-width:40px;text-align:right">${curTf.scale.toFixed(2)}×</b></span></div><div class="tl-row"><span>Pos X</span><input data-tfx type="number" step="0.05" value="${curTf.x}"></div><div class="tl-row"><span>Pos Y</span><input data-tfy type="number" step="0.05" value="${curTf.y}"></div><div class="tl-row"><span>Rotate</span><input data-tfrot type="number" step="5" value="${curTf.rotate}">° <button type="button" data-act="apply-transform">Set</button></div><div class="tl-row"><span></span><button type="button" data-act="reset-transform">Reset</button></div>` : ""}
-            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
-            <div class="tl-keys">Space play · S split · ⌫ lift<br>← → step · Shift 1s · N snap<br>Ctrl Z undo · − = zoom</div>
+            ${it && it.type === "clip" ? `<div class="tl-row"><span>Animate</span><span style="display:flex;gap:4px;align-items:center">scale to <input data-kbend type="number" min="0.1" max="3" step="0.05" value="1.5" style="width:60px">× <button type="button" data-act="apply-kenburns">Add</button></span></div>${it.keyframes ? `<div class="tl-kfcurve"><nav>${Object.entries(KF_PROPS).map(([k, P]) => `<button type="button" data-kftab="${k}" class="${kfTab === k ? "on" : ""}" title="Animate ${P.label}">${P.label}</button>`).join("")}</nav><canvas class="tl-kfcurvec" data-kfcurve height="120" aria-label="Keyframe curve for ${(KF_PROPS[kfTab] || KF_PROPS.scale).label}: click to add a point, drag to move, double-click to remove"></canvas></div><div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">${it.keyframes.length} keys</span> <button type="button" data-act="add-kf">+ at playhead</button> <button type="button" data-act="clear-kenburns">Clear</button></div>${selKf >= 0 && it.keyframes[selKf] ? (function(){ const k = it.keyframes[selKf]; const ke = k.ease || "linear"; return `<div class="tl-row" style="background:rgba(222,171,66,.08);border-radius:4px;padding:4px 6px"><span>Key ${selKf+1}</span><span style="display:flex;gap:3px;align-items:center;flex-wrap:wrap"><input data-kfat type="number" min="0" step="0.1" value="${k.at}" style="width:56px" title="Time (s)">s <input data-kfscale type="number" min="0.1" max="3" step="0.05" value="${k.scale}" style="width:56px" title="Scale">× <input data-kfop type="number" min="0" max="1" step="0.05" value="${k.opacity != null ? k.opacity : 1}" style="width:48px" title="Opacity"> <select data-kfease title="Easing for the segment after this key">${KF_EASE.map(([v, l]) => `<option value="${v}" ${ke === v ? "selected" : ""}>${l}</option>`).join("")}</select> <button type="button" data-act="set-kf">Set</button> <button type="button" data-act="del-kf">Del</button></span></div>`; })() : `<div class="tl-row"><span></span><span style="color:var(--dim);font-size:11px">Click a ◆ on the clip to edit it</span></div>`}` : ""}` : ""}
+            <div class="tl-keys">? shortcuts · 1/2/3 workspace<br>Space play · S split · ⌫ lift<br>J K L · I O · W D E</div>
             ${pid === "demo" ? `<div class="tl-row"><span></span><button type="button" data-act="reset">Reset demo</button></div>` : ""}
           </aside>
         </div>
@@ -1761,6 +1951,7 @@
             <button type="button" data-act="fit">Fit</button>
           </div>
           <div class="tl-scroll">
+            ${emptyMain && tab === "clips" ? `<div class="tl-empty"><b>Empty timeline.</b> Import into the Bin, then drag onto the timeline (Alt = overwrite) or mark In/Out (I/O) and <b>W</b>/<b>D</b>/<b>E</b>. Press <b>?</b> for every key.</div>` : ""}
             ${tab === "words" ? `<div class="tl-words">${words.length ? words.map((wd) => `<b>${esc(fmt(wd.start))}</b><span class="tl-word${play >= wd.start && play < wd.end ? " on" : ""}" data-word="${wd.start}">${esc(wd.text)}</span>`).join(" ") : `<span style="color:var(--dim)">No words in this cut yet.</span>`}</div>` : tab === "act" ? `<div class="tl-act">${hist.length ? hist.map((h) => `<div class="row"><span class="who ${h.kind === "agent" ? "agent" : ""} ${h.undone ? "undone" : ""}">${esc(h.actor)}</span><span class="what ${h.undone ? "undone" : ""}">${esc(h.summary)}</span><span class="ver">v${esc(h.to)}</span></div>`).join("") : `<span style="color:var(--dim)">No changes yet. Trim, split or lift and each step lands here.</span>`}</div>` : `
             <div class="tl-ruler" style="width:${width - LAB}px">${rg ? `<span class="tl-rng" style="left:${rg[0] * pps}px;width:${(rg[1] - rg[0]) * pps}px"></span>` : ""}${ticks.join("")}${inOut.in != null && rg ? `<span class="tl-mk in" style="left:${rg[0] * pps}px" title="In ${esc(tc(rg[0]))}"></span>` : ""}${inOut.out != null && rg ? `<span class="tl-mk out" style="left:${rg[1] * pps}px" title="Out ${esc(tc(rg[1]))}"></span>` : ""}</div>
             <div class="tl-stack" style="width:${width}px">
@@ -1837,6 +2028,9 @@
     if (pic) pic.addEventListener("load", () => updateScope(true));
     wireWheels();
     wireCurves();
+    wireLut();
+    wireMask();
+    showMaskOverlay();
     wireBalance();
     wireTransitions();
     loadXcat();
@@ -1891,9 +2085,28 @@
     if (big) big.textContent = fmt(play);
     if (bar) bar.style.width = (play / Math.max(doc.duration, 0.01)) * 100 + "%";
     showGrade();
+    showClipMotion();
     showFrame();
     showTitles();
     updateScope(false);
+  }
+
+  function showClipMotion() {
+    const it = mainClip(play);
+    const v = root && root.querySelector(".tl-vid");
+    const pic = root && root.querySelector(".tl-pic");
+    const els = [v, pic].filter(Boolean);
+    if (!it || !it.keyframes || !window.HSKf) {
+      els.forEach((el) => { el.style.transform = ""; el.style.opacity = ""; });
+      return;
+    }
+    const st = window.HSKf.at(it.keyframes, Math.max(0, play - it.at));
+    const tr = `translate(${(st.x * 100).toFixed(4)}%, ${(st.y * 100).toFixed(4)}%) scale(${st.scale}) rotate(${st.rotate}deg)`;
+    els.forEach((el) => {
+      el.style.transformOrigin = "center center";
+      el.style.transform = tr;
+      el.style.opacity = String(st.opacity);
+    });
   }
 
   // ---- the clip's grade, live in the preview ------------------------------------------
@@ -1938,6 +2151,243 @@
     // The element's own backdrop would be graded too (a lift would grey the letterbox), so it
     // goes transparent and the frame's identical #050505 shows through, as in the render.
     els.forEach((n) => { n.style.filter = "url(#hs-grade)"; n.style.background = "transparent"; });
+    drawLutPreview();
+    showMaskOverlay();
+  }
+
+  const lutPacks = {};
+  let lutT = 0;
+  async function lutPack(file) {
+    if (lutPacks[file]) return lutPacks[file];
+    const r = await fetch("/api/editor/" + encodeURIComponent(pid || "demo") + "/lut?file=" + encodeURIComponent(file));
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || "LUT failed");
+    lutPacks[file] = window.HSLut.pack(j.lut);
+    return lutPacks[file];
+  }
+  let maskLive = null; // { ...mask fields } while dragging
+  function maskForClip(it) {
+    if (!it) return null;
+    if (maskLive && maskLive.id === it.id) return maskLive;
+    return it.mask || null;
+  }
+  function clipLocalT(it) {
+    if (!it || !doc) return 0;
+    return Math.max(0, play - it.at);
+  }
+  function showMaskOverlay() {
+    const ov = root && root.querySelector(".tl-maskov");
+    const fr = root && root.querySelector(".tl-frame");
+    if (!ov || !fr) return;
+    const it = mainClip(play);
+    const m = maskForClip(it);
+    if (!m || playing) { ov.innerHTML = ""; return; }
+    const p = window.HSMask ? window.HSMask.resolveAt(m, clipLocalT(it)) : m;
+    const cx = 0.5 + (p.x || 0);
+    const cy = 0.5 + (p.y || 0);
+    const w = p.w != null ? p.w : 0.5;
+    const h = p.h != null ? p.h : 1;
+    const left = (cx - w / 2) * 100;
+    const top = (cy - h / 2) * 100;
+    ov.innerHTML = `<span class="tl-maskbox ${m.shape === "ellipse" ? "ellipse" : ""}" style="left:${left.toFixed(3)}%;top:${top.toFixed(3)}%;width:${(w * 100).toFixed(3)}%;height:${(h * 100).toFixed(3)}%">
+      <i class="tl-maskh move" data-mskdrag="move" style="left:50%;top:50%"></i>
+      <i class="tl-maskh" data-mskdrag="se" style="left:100%;top:100%"></i></span>`;
+  }
+  async function drawMaskedPicture() {
+    const it = mainClip(play);
+    const cvs = root && root.querySelector(".tl-lutc");
+    const pic = root && root.querySelector(".tl-pic");
+    const vid = root && root.querySelector(".tl-vid");
+    const m = maskForClip(it);
+    if (!cvs || !it || !m || !window.HSMask) {
+      if (cvs && !it?.lut) cvs.style.display = "none";
+      if (!m) { if (pic) pic.style.visibility = ""; if (vid) vid.style.visibility = ""; }
+      return false;
+    }
+    const src = playing && vid && !vid.hidden && vid.readyState >= 2 ? vid : pic;
+    if (!src || !(src.videoWidth || src.naturalWidth)) return false;
+    const w = src.videoWidth || src.naturalWidth;
+    const h = src.videoHeight || src.naturalHeight;
+    cvs.width = w; cvs.height = h;
+    const ctx = cvs.getContext("2d", { willReadFrequently: true });
+    const gf = root.querySelector("#hs-grade") ? "url(#hs-grade)" : "none";
+    ctx.filter = "none";
+    ctx.drawImage(src, 0, 0, w, h);
+    const plain = ctx.getImageData(0, 0, w, h);
+    ctx.filter = gf;
+    ctx.drawImage(src, 0, 0, w, h);
+    if (it.lut && window.HSLut && it.lut.file) {
+      try {
+        const pack = await lutPack(it.lut.file);
+        const graded = ctx.getImageData(0, 0, w, h);
+        window.HSLut.applyImageData(pack, it.lut.intensity, graded.data, w, h);
+        ctx.putImageData(graded, 0, 0);
+      } catch (e) { /* */ }
+    }
+    const graded = ctx.getImageData(0, 0, w, h);
+    const out = new Uint8ClampedArray(plain.data);
+    window.HSMask.applyMaskedGrade(out, w, h, m, clipLocalT(it), graded.data);
+    ctx.filter = "none";
+    ctx.putImageData(new ImageData(out, w, h), 0, 0);
+    cvs.style.display = "block";
+    if (pic) pic.style.visibility = "hidden";
+    if (vid) vid.style.visibility = "hidden";
+    return true;
+  }
+  async function drawLutPreview() {
+    const it = mainClip(play);
+    const cvs = root && root.querySelector(".tl-lutc");
+    const pic = root && root.querySelector(".tl-pic");
+    const vid = root && root.querySelector(".tl-vid");
+    if (maskForClip(it) && window.HSMask) {
+      const ok = await drawMaskedPicture();
+      if (ok) return;
+    }
+    if (!cvs || !it || !it.lut || !window.HSLut) {
+      if (cvs) cvs.style.display = "none";
+      if (pic) pic.style.visibility = "";
+      if (vid) vid.style.visibility = "";
+      return;
+    }
+    const src = playing && vid && !vid.hidden && vid.readyState >= 2 ? vid : pic;
+    if (!src || !(src.videoWidth || src.naturalWidth)) return;
+    try {
+      const pack = await lutPack(it.lut.file);
+      const w = src.videoWidth || src.naturalWidth;
+      const h = src.videoHeight || src.naturalHeight;
+      cvs.width = w; cvs.height = h;
+      const ctx = cvs.getContext("2d", { willReadFrequently: true });
+      const gf = root.querySelector("#hs-grade") ? "url(#hs-grade)" : "none";
+      ctx.filter = gf;
+      ctx.drawImage(src, 0, 0, w, h);
+      ctx.filter = "none";
+      const img = ctx.getImageData(0, 0, w, h);
+      window.HSLut.applyImageData(pack, it.lut.intensity, img.data, w, h);
+      ctx.putImageData(img, 0, 0);
+      cvs.style.display = "block";
+      if (pic) pic.style.visibility = "hidden";
+      if (vid) vid.style.visibility = "hidden";
+    } catch (e) { /* frame not ready yet */ }
+  }
+
+  function wireMask() {
+    if (!root || !wheel) return;
+    const add = root.querySelector("[data-mskadd]");
+    if (add) add.onclick = () => commit({ op: "mask", id: wheel.id, w: 0.5, h: 1, feather: 0.08 });
+    const clr = root.querySelector("[data-mskclear]");
+    if (clr) clr.onclick = () => commit({ op: "mask", id: wheel.id, clear: true });
+    const sendMask = (extra) => {
+      const it = doc && find(wheel.id);
+      const m = it && it.mask;
+      if (!m) return;
+      commit({ op: "mask", id: wheel.id, shape: m.shape || "rect", x: m.x || 0, y: m.y || 0, w: m.w, h: m.h,
+        feather: m.feather || 0, invert: !!m.invert, target: m.target || "grade", blur: m.blur || 12, keys: m.keys, ...extra });
+    };
+    const sh = root.querySelector("[data-mskshape]");
+    if (sh) sh.onchange = () => sendMask({ shape: sh.value });
+    const tg = root.querySelector("[data-msktgt]");
+    if (tg) tg.onchange = () => sendMask({ target: tg.value });
+    const inv = root.querySelector("[data-mskinv]");
+    if (inv) inv.onchange = () => sendMask({ invert: inv.checked });
+    const ft = root.querySelector("[data-mskfeather]");
+    const fv = root.querySelector("[data-mskfv]");
+    if (ft) {
+      ft.oninput = () => { if (fv) fv.textContent = parseFloat(ft.value).toFixed(3); drawLutPreview(); showMaskOverlay(); };
+      ft.onchange = () => sendMask({ feather: parseFloat(ft.value) });
+    }
+    const bl = root.querySelector("[data-mskblur]");
+    if (bl) bl.onchange = () => sendMask({ blur: parseFloat(bl.value) });
+    const mk = root.querySelector("[data-mskkey]");
+    if (mk) mk.onclick = () => {
+      const it = find(wheel.id);
+      if (!it || !it.mask) return;
+      const t = clipLocalT(it);
+      const keys = (it.mask.keys || []).map((k) => ({ ...k }));
+      const row = { at: t, x: it.mask.x || 0, y: it.mask.y || 0, w: it.mask.w, h: it.mask.h };
+      const ix = keys.findIndex((k) => Math.abs(k.at - t) < 0.02);
+      if (ix >= 0) keys[ix] = row; else keys.push(row);
+      keys.sort((a, b) => a.at - b.at);
+      sendMask({ keys });
+    };
+    const fr = root.querySelector(".tl-frame");
+    if (!fr || fr.dataset.mskwired) return;
+    fr.dataset.mskwired = "1";
+    let mdrag = null;
+    fr.addEventListener("pointerdown", (e) => {
+      const h = e.target.closest("[data-mskdrag]");
+      if (!h || playing) return;
+      const it = mainClip(play);
+      if (!it || !it.mask) return;
+      e.preventDefault();
+      e.stopPropagation();
+      fr.setPointerCapture(e.pointerId);
+      const m = it.mask;
+      mdrag = { id: it.id, mode: h.dataset.mskdrag, x0: e.clientX, y0: e.clientY,
+        bx: m.x || 0, by: m.y || 0, bw: m.w, bh: m.h, moved: false };
+      maskLive = { id: it.id, ...m };
+    });
+    fr.addEventListener("pointermove", (e) => {
+      if (!mdrag || !maskLive) return;
+      const r = fr.getBoundingClientRect();
+      const dx = (e.clientX - mdrag.x0) / r.width;
+      const dy = (e.clientY - mdrag.y0) / r.height;
+      if (mdrag.mode === "move") {
+        maskLive.x = Math.max(-0.5, Math.min(0.5, mdrag.bx + dx));
+        maskLive.y = Math.max(-0.5, Math.min(0.5, mdrag.by + dy));
+      } else {
+        maskLive.w = Math.max(0.05, Math.min(1, mdrag.bw + dx * 2));
+        maskLive.h = Math.max(0.05, Math.min(1, mdrag.bh + dy * 2));
+      }
+      if (Math.abs(dx) + Math.abs(dy) > 0.002) mdrag.moved = true;
+      showMaskOverlay();
+      drawLutPreview();
+    });
+    const mend = async () => {
+      if (!mdrag || !mdrag.moved) { mdrag = null; maskLive = null; return; }
+      const m = maskLive;
+      mdrag = null;
+      maskLive = null;
+      await commit({ op: "mask", id: m.id, shape: m.shape || "rect", x: m.x || 0, y: m.y || 0, w: m.w, h: m.h,
+        feather: m.feather || 0, invert: !!m.invert, target: m.target || "grade", blur: m.blur || 12, keys: m.keys });
+      showMaskOverlay();
+    };
+    fr.addEventListener("pointerup", mend);
+    fr.addEventListener("pointercancel", () => { mdrag = null; maskLive = null; showMaskOverlay(); });
+  }
+
+  function wireLut() {
+    if (!root || !wheel) return;
+    const inp = root.querySelector("[data-lutfile]");
+    if (inp) inp.onchange = async (e) => {
+      const f = e.target.files && e.target.files[0];
+      e.target.value = "";
+      if (!f || !wheel) return;
+      const x = new XMLHttpRequest();
+      x.open("POST", "/api/editor/" + encodeURIComponent(pid) + "/upload?name=" + encodeURIComponent(f.name));
+      x.setRequestHeader("Content-Type", "application/octet-stream");
+      x.onload = async () => {
+        const j = JSON.parse(x.responseText || "{}");
+        if (!j.ok) { toast(j.error || "import failed"); return; }
+        delete lutPacks[j.lut.file];
+        await commit({ op: "lut", id: wheel.id, file: j.lut.file, intensity: parseFloat(root.querySelector("[data-lutmix]")?.value || "1") });
+      };
+      x.onerror = () => toast("the upload failed");
+      x.send(f);
+    };
+    const clr = root.querySelector("[data-lutclear]");
+    if (clr) clr.onclick = () => commit({ op: "lut", id: wheel.id, clear: true });
+    const sl = root.querySelector("[data-lutmix]");
+    const mv = root.querySelector("[data-lutmv]");
+    if (sl) {
+      sl.oninput = () => { if (mv) mv.textContent = parseFloat(sl.value).toFixed(2); drawLutPreview(); };
+      sl.onchange = () => {
+        const it = doc && mainClip(play);
+        const v = parseFloat(sl.value);
+        if (it && it.lut && Math.abs(v - it.lut.intensity) < 0.005) return;
+        clearTimeout(lutT);
+        lutT = setTimeout(() => commit({ op: "lut", id: wheel.id, file: it.lut.file, intensity: v }), 400);
+      };
+    }
   }
 
   // ---- scopes: read the graded preview -------------------------------------------------
@@ -1998,6 +2448,7 @@
     if (t === shown && img.getAttribute("src")) return;
     shown = t;
     img.hidden = false;
+    img.onload = () => drawLutPreview();
     img.src = "/api/editor/" + encodeURIComponent(pid || "demo") + "/frame?t=" + t.toFixed(6);
   }
 
@@ -2899,6 +3350,12 @@
     if (name === "title") { await addTitleHere("lower-third"); return; }
     if (name === "import") { const inp = root.querySelector("[data-import]"); if (inp) inp.click(); return; }
     if (name === "bin") { binOpen = !binOpen; try { localStorage.setItem("tl-bin", binOpen ? "1" : "0"); } catch (e) { /* private */ } paint(); return; }
+    if (name === "ws-edit") { setWorkspace("edit"); return; }
+    if (name === "ws-colour") { setWorkspace("colour"); return; }
+    if (name === "ws-audio") { setWorkspace("audio"); return; }
+    if (name === "help") { helpOpen = !helpOpen; paint(); return; }
+    if (name === "help-close") { helpOpen = false; paint(); return; }
+
     if (name === "src-insert" || name === "src-over" || name === "src-append") {
       await srcEdit(name === "src-insert" ? "insert" : name === "src-over" ? "overwrite" : "append");
       return;
@@ -2980,8 +3437,8 @@
       await commit({
         op: "keyframes", id: s2.id,
         keyframes: [
-          { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate },
-          { at: s2.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate },
+          { at: 0, x: start.x, y: start.y, scale: start.scale, rotate: start.rotate, opacity: 1, ease: "ease-in-out" },
+          { at: s2.dur, x: start.x, y: start.y, scale: endScale, rotate: start.rotate, opacity: 1 },
         ],
       });
       return;
@@ -2996,7 +3453,8 @@
         // Insert a key at the playhead, carrying the current static transform's scale so the
         // move doesn't jump. Re-sorted by time below.
         const base = s2.transform || { x: 0, y: 0, scale: 1, rotate: 0 };
-        kfs.push({ at: Math.max(0, Math.min(s2.dur, play)), x: base.x, y: base.y, scale: base.scale, rotate: base.rotate });
+        const cur = window.HSKf && s2.keyframes.length >= 2 ? window.HSKf.at(s2.keyframes, Math.max(0, play - s2.at)) : base;
+        kfs.push({ at: Math.max(0, Math.min(s2.dur, play - s2.at)), x: cur.x, y: cur.y, scale: cur.scale, rotate: cur.rotate, opacity: cur.opacity != null ? cur.opacity : 1 });
       } else if (name === "del-kf") {
         if (selKf < 0 || selKf >= kfs.length) return;
         kfs.splice(selKf, 1);
@@ -3007,8 +3465,15 @@
         if (selKf < 0 || selKf >= kfs.length) return;
         const atEl = root.querySelector("[data-kfat]");
         const scEl = root.querySelector("[data-kfscale]");
+        const opEl = root.querySelector("[data-kfop]");
+        const esEl = root.querySelector("[data-kfease]");
         kfs[selKf].at = parseFloat((atEl || {}).value) || 0;
         kfs[selKf].scale = parseFloat((scEl || {}).value) || 1;
+        const op = parseFloat((opEl || {}).value);
+        kfs[selKf].opacity = Number.isFinite(op) ? op : 1;
+        const ease = esEl && esEl.value ? esEl.value : "linear";
+        if (ease === "linear") delete kfs[selKf].ease;
+        else kfs[selKf].ease = ease;
       }
       kfs.sort((a, b) => a.at - b.at);
       await commit({ op: "keyframes", id: s2.id, keyframes: kfs.length >= 2 ? kfs : null });
@@ -3024,18 +3489,39 @@
       await commit({ op: "canvas", width: w, height: h });
       return;
     }
+    if (name === "render-cancel") {
+      try {
+        await api({ op: "render_cancel" });
+        msg = "Stopping export…";
+      } catch (e) {
+        msg = e.message;
+      }
+      paint();
+      return;
+    }
     if (name === "render") {
+      const presetEl = root.querySelector("[data-export-preset]");
+      const qualEl = root.querySelector("[data-export-quality]");
+      const fpsEl = root.querySelector("[data-export-fps]");
+      exportPreset = (presetEl && presetEl.value) || exportPreset;
+      exportQuality = (qualEl && qualEl.value) || exportQuality;
+      exportFps = (fpsEl && fpsEl.value.trim()) || "";
+      try {
+        localStorage.setItem("hs-export-preset", exportPreset);
+        localStorage.setItem("hs-export-quality", exportQuality);
+        localStorage.setItem("hs-export-fps", exportFps);
+      } catch (e) { /* ignore */ }
+      const body = { op: "render", preset: exportPreset, quality: exportQuality };
+      if (exportFps) body.fps = Number(exportFps);
+      const rg = rangeOf();
+      if (rg) { body.in = rg[0]; body.out = rg[1]; }
       msg = "Rendering… this takes a moment.";
       paint();
       try {
-        const rg = rangeOf();
-        const res = await api(rg ? { op: "render", in: rg[0], out: rg[1] } : { op: "render" });
+        const res = await api(body);
         doc = res.project;
-        const r = res.render || {};
-        const what = r.range ? `the range ${tc(r.range[0])}–${tc(r.range[1])}` : r.name || "file";
-        msg = `Rendered ${what} — ${r.size ? r.size[0] + "×" + r.size[1] : ""} ${r.duration || ""}s`;
-        // Cache-bust: the file keeps one name, so a browser could hand back the previous render.
-        renderOut = { name: r.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
+        renderJob = res.render || { state: "queued", progress: 0 };
+        startRenderPoll();
       } catch (e) {
         msg = e.message;
       }
@@ -3086,14 +3572,76 @@
     pps = Math.max(8, (box - LAB - 48) / Math.max(doc.duration, 1));
   }
 
+  function stopRenderPoll() {
+    if (renderPoll) { clearInterval(renderPoll); renderPoll = null; }
+  }
+
+  function probeSummary(pr) {
+    if (!pr || !pr.width) return "";
+    const ch = pr.audio_channels != null ? `${pr.audio_channels}ch` : "";
+    const rate = pr.audio_rate != null ? `${pr.audio_rate}Hz` : "";
+    const mb = pr.bytes != null ? `${(pr.bytes / 1e6).toFixed(2)} MB` : "";
+    return `${pr.width}×${pr.height} ${pr.fps}fps ${pr.duration}s ${pr.video_codec}/${pr.audio_codec}${ch ? " " + ch : ""}${rate ? " " + rate : ""}${mb ? " " + mb : ""}`;
+  }
+
+  function finishRenderJob(r) {
+    const out = r.result || r;
+    const what = out.range ? `the range ${tc(out.range[0])}–${tc(out.range[1])}` : out.name || "file";
+    const pr = out.probe || {};
+    const loud = out.loudness && out.loudness.lufs != null ? ` · ${out.loudness.lufs.toFixed(1)} LUFS` : "";
+    const line = probeSummary(pr);
+    msg = `Rendered ${what}${line ? " — " + line : ` — ${pr.width || out.size?.[0]}×${pr.height || out.size?.[1]} ${out.duration || pr.duration || ""}s`}${loud}`;
+    renderOut = { name: out.name || "", url: "/api/editor/" + encodeURIComponent(pid) + "/render?v=" + Date.now() };
+  }
+
+  async function tickRenderPoll() {
+    try {
+      const res = await api({ op: "render_status" });
+      doc = res.project || doc;
+      renderJob = res.render || renderJob;
+      const st = renderJob.state;
+      if (st === "ready" && renderJob.result) {
+        stopRenderPoll();
+        finishRenderJob(renderJob);
+      } else if (st === "failed") {
+        stopRenderPoll();
+        msg = renderJob.error || "Export failed.";
+      } else if (st === "cancelled") {
+        stopRenderPoll();
+        msg = "Export cancelled.";
+        renderJob = null;
+      }
+      paint();
+    } catch (e) {
+      stopRenderPoll();
+      msg = e.message;
+      paint();
+    }
+  }
+
+  function startRenderPoll() {
+    stopRenderPoll();
+    renderPoll = setInterval(() => { tickRenderPoll(); }, 500);
+    tickRenderPoll();
+  }
+
   function onKey(e) {
     if (!document.body.classList.contains("editing") || !doc) return;
+
     // Any focused control keeps its own keys: a <select> takes the arrows, a range takes them
     // too, a text box takes letters. (A <select> used to lose its arrows to the timeline.)
     if (e.target.closest("input, textarea, select, [contenteditable]")) return;
     if (picking && e.key === "Escape") { e.preventDefault(); armPick(false); paint(); return; }
     const k = e.key.toLowerCase();
+    if (helpOpen && (k === "escape" || e.key === "?" || (e.shiftKey && k === "/"))) { e.preventDefault(); helpOpen = false; paint(); return; }
     if (binKey(e, e.code || "")) return;
+    if (e.key === "?" || (e.shiftKey && k === "/")) { e.preventDefault(); helpOpen = !helpOpen; paint(); return; }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey && (k === "1" || k === "2" || k === "3")) {
+      e.preventDefault();
+      setWorkspace(k === "1" ? "edit" : k === "2" ? "colour" : "audio");
+      return;
+    }
+
     if (k === " " || k === "s" || k === "n" || k === "backspace" || k === "delete" || k === "arrowleft" || k === "arrowright" || k === "-" || k === "=" || (e.ctrlKey && k === "z")) e.preventDefault();
     // In/Out (I / O), as in Resolve and Premiere. e.code, because Alt+I types "ˆ" on a Mac.
     const code = e.code || "";

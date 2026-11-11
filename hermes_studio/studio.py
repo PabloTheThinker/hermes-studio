@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import queue
+import re
 import secrets
 import threading
+import time
 from dataclasses import asdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -38,6 +41,7 @@ PORT_DEFAULT = 3870
 # - Oversized bodies: 1 MB cap.
 MAX_BODY = 1024 * 1024
 MAX_UPLOAD = 16 * 1024 ** 3  # one imported video file, streamed to disk
+MAX_LUT_UPLOAD = 20 * 1024 * 1024  # .cube 3D LUT
 MAX_IMAGE_BODY = 32 * 1024 * 1024  # design uploads + exported pages (base64 in JSON)
 DESIGN_STATIC = {  # fixed names only; nothing derived from the request path is opened
     "fabric.min.js": ("vendor/fabric.min.js", "text/javascript; charset=utf-8"),
@@ -61,6 +65,10 @@ SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+# Desktop's plugin frame is an opaque origin. Only /e/<token>/ answers it, and
+# only while this file holds a live token. The open desk stays unframeable.
+EMBED_FILE = Path.home() / ".hermes" / "clips" / "desktop-embed.json"
+_EMBED_PATH = re.compile(r"^/e/([A-Za-z0-9_-]{20,80})(/.*)?$")
 
 
 def _extra_hosts() -> set[str]:
@@ -77,6 +85,41 @@ def host_allowed(host_header: str | None) -> bool:
     if name.startswith("[") and "]" in name:
         name = name[: name.index("]") + 1]
     return name in LOOPBACK_NAMES or name.endswith(".ts.net") or name in _extra_hosts()
+
+
+def embed_token_ok(token: str) -> bool:
+    """True when ``token`` matches the Desktop embed file and has not expired."""
+    try:
+        data = json.loads(EMBED_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    saved = str(data.get("desk") or "")
+    try:
+        exp = float(data.get("exp") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not saved or exp < time.time():
+        return False
+    return hmac.compare_digest(saved, token)
+
+
+def embed_headers(host: str) -> dict[str, str]:
+    """Framing headers for one token-gated document. Not used on the open desk."""
+    origin = "https://" + host.strip() if host else "'none'"
+    csp = (
+        f"default-src {origin}; script-src {origin} 'unsafe-inline'; "
+        f"style-src {origin} 'unsafe-inline' https://fonts.googleapis.com; "
+        f"font-src {origin} https://fonts.gstatic.com; "
+        f"img-src {origin} data: blob:; media-src {origin} blob:; connect-src {origin}; "
+        "base-uri 'none'; object-src 'none'"
+    )
+    return {
+        "Content-Security-Policy": csp,
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    }
 
 
 def origin_ok(origin: str | None, host_header: str | None) -> bool:
@@ -300,9 +343,33 @@ class StudioHandler(BaseHTTPRequestHandler):
         return
 
     def end_headers(self) -> None:
-        for k, v in SECURITY_HEADERS.items():
+        headers = embed_headers(self.headers.get("Host") or "") if getattr(self, "_embed", False) else SECURITY_HEADERS
+        for k, v in headers.items():
             self.send_header(k, v)
+        if getattr(self, "_embed", False):
+            self.send_header("Access-Control-Allow-Origin", "null")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Range")
+            self.send_header("Vary", "Origin")
         super().end_headers()
+
+    def _claim_embed(self) -> bool:
+        """Strip a valid /e/<token> prefix. Invalid tokens are a 404. Plain paths pass through."""
+        parsed = urlparse(self.path)
+        match = _EMBED_PATH.match(parsed.path)
+        if not match:
+            return True
+        if not embed_token_ok(match.group(1)):
+            self._refuse(404, "not found")
+            return False
+        rest = match.group(2) or "/"
+        if not rest.startswith("/"):
+            rest = "/" + rest
+        query = ("?" + parsed.query) if parsed.query else ""
+        self._embed = True
+        self._embed_token = match.group(1)
+        self.path = rest + query
+        return True
 
     def _refuse(self, code: int, why: str) -> None:
         body = json.dumps({"ok": False, "error": why}).encode()
@@ -322,7 +389,9 @@ class StudioHandler(BaseHTTPRequestHandler):
             self._refuse(421, "host not allowed")
             return False
         if write:
-            if not origin_ok(self.headers.get("Origin"), self.headers.get("Host")):
+            origin = self.headers.get("Origin")
+            allowed = origin == "null" and getattr(self, "_embed", False)
+            if not allowed and not origin_ok(origin, self.headers.get("Host")):
                 self._refuse(403, "cross-origin request refused")
                 return False
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -346,13 +415,19 @@ class StudioHandler(BaseHTTPRequestHandler):
             return False
 
     def do_OPTIONS(self) -> None:  # noqa: N802
-        if not self._no_body():
+        if not self._claim_embed() or not self._no_body():
             return
-        # No CORS: cross-site preflights get nothing to work with.
-        self._refuse(405, "no cross-origin access")
+        if not getattr(self, "_embed", False):
+            self._refuse(405, "no cross-origin access")
+            return
+        if not self._guard(write=False):
+            return
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_HEAD(self) -> None:  # noqa: N802
-        if not self._guard(write=False) or not self._no_body():
+        if not self._claim_embed() or not self._guard(write=False) or not self._no_body():
             return
         parsed = urlparse(self.path)
         path = unquote(parsed.path)
@@ -375,7 +450,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        if not self._guard(write=False):
+        if not self._claim_embed() or not self._guard(write=False):
             return
         parsed = urlparse(self.path)
         segs = path_segments(parsed.path)  # split first, then decode each segment
@@ -383,6 +458,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return
         path = "/".join(segs)
         if path in {"/", "/index.html"}:
+            if getattr(self, "_embed", False):
+                return self._embed_html()
             return self._file(UI_DIR / "index.html", "text/html; charset=utf-8")
         if is_project_route(segs) or segs == ["", "mcp"]:
             from hermes_studio import http_engine
@@ -402,6 +479,14 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._file(UI_DIR / "scopes.js", "text/javascript; charset=utf-8", cache=False)
         if path.split("?")[0] == "/wheels.js":
             return self._file(UI_DIR / "wheels.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/lut.js":
+            return self._file(UI_DIR / "lut.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/mask.js":
+            return self._file(UI_DIR / "mask.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/easing.js":
+            return self._file(UI_DIR / "easing.js", "text/javascript; charset=utf-8", cache=False)
+        if path.split("?")[0] == "/keyframes.js":
+            return self._file(UI_DIR / "keyframes.js", "text/javascript; charset=utf-8", cache=False)
         if path == "/api/editor" or path.startswith("/api/editor/"):
             return self._editor_get(path)
         if path.startswith("/api/probe"):
@@ -557,6 +642,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self) -> None:  # noqa: N802
+        if not self._claim_embed():
+            return
         up = urlparse(self.path).path
         if up.startswith("/api/editor/") and up.endswith("/upload") and up.count("/") == 4:
             if not self._guard(write=True, raw_ok=True):
@@ -869,15 +956,33 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 200, {"ok": True, "words": words})
         if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "render":
             from hermes_studio import editor as _e
+            from hermes_studio import editor_renders as ER
 
             try:
-                out = _e._dir(parts[2]) / f"{parts[2]}-render.mp4"
-                out = _e.resolve_media(_e._dir(parts[2]), out.name)
+                folder = _e._dir(parts[2])
+                out = ER.last_export_file(folder)
+                if out is None:
+                    return _json(self, 404, {"ok": False, "error": "no render yet"})
+                out = _e.resolve_media(folder, out.name)
             except _e.EditorError as exc:
                 return _json(self, 404, {"ok": False, "error": str(exc)})
-            if not out.is_file():
-                return _json(self, 404, {"ok": False, "error": "no render yet"})
-            return self._file(out, "video/mp4")
+            mime = "video/quicktime" if out.suffix.lower() == ".mov" else "video/mp4"
+            return self._file(out, mime)
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "export-presets":
+            from hermes_studio import api
+
+            return _json(self, 200, api.editor_export_presets())
+        if len(parts) >= 4 and parts[0] == "api" and parts[1] == "editor" and parts[3] == "lut":
+            from hermes_studio import lut as _LU
+
+            qs = parse_qs(urlparse(self.path).query)
+            rel = (qs.get("file") or [""])[0]
+            try:
+                folder = editor._dir(parts[2])
+                parsed = _LU.load_file(folder, rel)
+            except (editor.EditorError, ValueError) as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            return _json(self, 200, {"ok": True, "lut": _LU.preview_pack(parsed)})
         try:
             if pid:
                 return _json(self, 200, {"ok": True, "project": editor.open_project(pid)})
@@ -886,8 +991,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 404, {"ok": False, "error": str(exc)})
 
     def _editor_upload(self, path: str) -> None:
-        """A video file into the project's bin: the raw body, streamed to disk (never held in
-        memory), then probed and added with an undoable add_media op. ?name= labels it."""
+        """A video file into the project's bin, or a .cube LUT into ``luts/``: raw body streamed
+        to disk (never held in memory). ?name= labels it; the stored path never trusts the name."""
         from hermes_studio import editor
 
         pid = path.split("/")[3]
@@ -898,6 +1003,41 @@ class StudioHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+        if ext == ".cube":
+            if length <= 0 or length > MAX_LUT_UPLOAD:
+                return _json(self, 413 if length > MAX_LUT_UPLOAD else 400,
+                             {"ok": False, "error": f"send one .cube LUT up to {MAX_LUT_UPLOAD // (1024 * 1024)} MB"})
+            try:
+                folder = editor._dir(pid)
+            except editor.EditorError as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            base = folder.resolve()
+            try:
+                base.relative_to(editor.root().resolve())
+            except ValueError:
+                return _json(self, 400, {"ok": False, "error": "bad project id"})
+            if not (base / "base.json").exists():
+                return _json(self, 404, {"ok": False, "error": "no such project"})
+            tmp = (base / f".upload-{secrets.token_hex(4)}.cube").resolve()
+            tmp.relative_to(base)
+            try:
+                left = length
+                with open(tmp, "wb") as out:
+                    while left > 0:
+                        chunk = self.rfile.read(min(left, 1 << 20))
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        left -= len(chunk)
+                if left:
+                    return _json(self, 400, {"ok": False, "error": "the upload stopped short"})
+                data = tmp.read_bytes()
+                info = editor.import_lut(pid, data, Path(name).stem)
+            except (editor.EditorError, ValueError) as exc:
+                return _json(self, 400, {"ok": False, "error": str(exc)})
+            finally:
+                tmp.unlink(missing_ok=True)
+            return _json(self, 200, {"ok": True, "lut": info})
         if length <= 0 or length > MAX_UPLOAD:
             return _json(self, 413 if length > MAX_UPLOAD else 400,
                          {"ok": False, "error": f"send one video file up to {MAX_UPLOAD // (1024 ** 3)} GB"})
@@ -907,9 +1047,15 @@ class StudioHandler(BaseHTTPRequestHandler):
             folder = editor._dir(pid)
         except editor.EditorError as exc:
             return _json(self, 400, {"ok": False, "error": str(exc)})
-        if not (folder / "base.json").exists():
+        base = folder.resolve()
+        try:
+            base.relative_to(editor.root().resolve())
+        except ValueError:
+            return _json(self, 400, {"ok": False, "error": "bad project id"})
+        if not (base / "base.json").exists():
             return _json(self, 404, {"ok": False, "error": "no such project"})
-        tmp = folder / f".upload-{secrets.token_hex(4)}{ext}"
+        tmp = (base / f".upload-{secrets.token_hex(4)}{ext}").resolve()
+        tmp.relative_to(base)
         try:
             left = length
             with open(tmp, "wb") as out:
@@ -1008,6 +1154,30 @@ class StudioHandler(BaseHTTPRequestHandler):
                 project = editor.set_reverse(pid, str(body.get("id") or ""), body.get("on") is True)
             elif op == "look":
                 project = editor.set_look(pid, str(body.get("id") or ""), body.get("look"))
+            elif op == "lut":
+                gid = str(body.get("id") or "")
+                if body.get("clear"):
+                    project = editor.clear_lut(pid, gid)
+                else:
+                    project = editor.set_lut(pid, gid, str(body.get("file") or ""),
+                                             _num(body, "intensity", 1.0))
+            elif op == "mask":
+                gid = str(body.get("id") or "")
+                if body.get("clear"):
+                    project = editor.clear_mask(pid, gid)
+                else:
+                    keys = body.get("keys")
+                    project = editor.set_mask(
+                        pid, gid,
+                        shape=str(body.get("shape") or "rect"),
+                        x=_num(body, "x", 0.0), y=_num(body, "y", 0.0),
+                        w=_num(body, "w", 0.5), h=_num(body, "h", 1.0),
+                        feather=_num(body, "feather", 0.0),
+                        invert=body.get("invert") is True,
+                        target=str(body.get("target") or "grade"),
+                        blur=_num(body, "blur", 12.0),
+                        keys=keys if isinstance(keys, list) else None,
+                    )
             elif op == "volume":
                 project = editor.set_volume(pid, str(body.get("id") or ""), _num(body, "volume", 1.0))
             elif op == "fade":
@@ -1064,16 +1234,42 @@ class StudioHandler(BaseHTTPRequestHandler):
             elif op == "import":
                 project = editor.import_run(pid)
             elif op == "render":
-                from hermes_studio import render_timeline as R
+                from hermes_studio import api
+                from hermes_studio.api import HermesStudioError
 
-                # In/Out from the page's marks: render only that range. Absent = the whole cut.
                 start = _num(body, "in", -1.0) if body.get("in") is not None else None
                 end = _num(body, "out", -1.0) if body.get("out") is not None else None
+                preset = body.get("preset")
+                quality = body.get("quality") or "standard"
+                fps = body.get("fps")
                 try:
-                    out = R.render_project(pid, start=start, end=end)
-                except R.RenderError as exc:
+                    fps_v = float(fps) if fps is not None else None
+                except (TypeError, ValueError):
+                    return _json(self, 400, {"ok": False, "error": "fps must be a number"})
+                try:
+                    st = api.editor_render(
+                        pid,
+                        preset=str(preset) if preset is not None else None,
+                        fps=fps_v,
+                        quality=str(quality),
+                        start=start,
+                        end=end,
+                        detach=True,
+                    )
+                except HermesStudioError as exc:
                     return _json(self, 400, {"ok": False, "error": str(exc)})
-                return _json(self, 200, {"ok": True, "render": out, "project": editor.open_project(pid)})
+                return _json(self, 200, {"ok": True, "render": st, "project": editor.open_project(pid)})
+            elif op == "render_status":
+                from hermes_studio import api
+
+                st = api.editor_render_status(pid)
+                out = st.get("result")
+                return _json(self, 200, {"ok": True, "render": {**st, "result": out}, "project": editor.open_project(pid)})
+            elif op == "render_cancel":
+                from hermes_studio import api
+
+                st = api.editor_render_cancel(pid)
+                return _json(self, 200, {"ok": True, "render": st, "project": editor.open_project(pid)})
             elif op == "reset":
                 project = editor.reset(pid)
             elif op == "split":
@@ -1183,6 +1379,34 @@ class StudioHandler(BaseHTTPRequestHandler):
             return _json(self, 404, {"ok": False, "error": "unknown design action"})
         except (design.DesignError, photo.PhotoError) as exc:
             return _json(self, 400, {"ok": False, "error": str(exc)[:300]})
+
+    def _embed_html(self) -> None:
+        """The real desk, with absolute URLs pinned under the embed token."""
+        token = getattr(self, "_embed_token", "")
+        prefix = "/e/" + token
+        raw = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        raw = raw.replace('src="/', f'src="{prefix}/')
+        raw = raw.replace("src='/", f"src='{prefix}/")
+        boot = (
+            "<script>(function(){var P=" + json.dumps(prefix) + ";"
+            "function fix(u){return typeof u==='string'&&u.charAt(0)==='/'&&u.indexOf(P+'/')!==0&&u!==P?P+u:u;}"
+            "var f=window.fetch;window.fetch=function(input,init){"
+            "if(typeof input==='string')input=fix(input);"
+            "return f.call(this,input,init);};"
+            "function wrap(proto,prop){var d=Object.getOwnPropertyDescriptor(proto,prop);if(!d||!d.set)return;"
+            "Object.defineProperty(proto,prop,{get:d.get,set:function(v){d.set.call(this,fix(v));},configurable:true});}"
+            "wrap(HTMLMediaElement.prototype,'src');wrap(HTMLImageElement.prototype,'src');"
+            "var open=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){"
+            "arguments[1]=fix(u);return open.apply(this,arguments);};})();</script>"
+        )
+        raw = raw.replace("<head>", "<head>" + boot, 1)
+        body = raw.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
 
     def _file(self, path: Path, content_type: str, cache: bool = False) -> None:
         size = path.stat().st_size

@@ -38,14 +38,39 @@ def root() -> Path:
 def _dir(pid: str) -> Path:
     if not T.ID_RE.fullmatch(pid or ""):
         raise EditorError("bad project id")
-    folder = root() / pid
-    # Containment stated where the path is made: the id arrives off a URL, so prove the
-    # resolved folder sits under the editor root before anything opens a file inside it.
-    base = os.path.realpath(root())
-    real = os.path.realpath(folder)
-    if real != base and not real.startswith(base + os.sep):
+    # id arrives off a URL — realpath + prefix check is the CodeQL-visible barrier
+    base = os.path.realpath(str(root()))
+    prefix = base.rstrip(os.sep) + os.sep
+    folder = os.path.realpath(os.path.join(base, pid))
+    if folder != base and not folder.startswith(prefix):
         raise EditorError("bad project id")
-    return folder
+    return Path(folder)
+
+
+def _write_project_text(folder: Path, name: str, text: str) -> None:
+    """Write a fixed project filename after an inlined realpath prefix check."""
+    if Path(name).name != name or not name or name in {".", ".."}:
+        raise EditorError("bad project file")
+    base = os.path.realpath(str(folder))
+    prefix = base.rstrip(os.sep) + os.sep
+    path = os.path.realpath(os.path.join(base, name))
+    if not path.startswith(prefix):
+        raise EditorError("bad project path")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def _project_path(folder: Path, name: str) -> str:
+    """Absolute path string to a fixed filename; raises unless under folder."""
+    if Path(name).name != name or not name or name in {".", ".."}:
+        raise EditorError("bad project file")
+    base = os.path.realpath(str(folder))
+    prefix = base.rstrip(os.sep) + os.sep
+    path = os.path.realpath(os.path.join(base, name))
+    if not path.startswith(prefix):
+        raise EditorError("bad project path")
+    return path
 
 
 def _cid() -> str:
@@ -107,6 +132,12 @@ def _keyframes_view(v: object, rate: int) -> list[dict] | None:
             if k not in kf:
                 return None
             row[k] = round(_pair_to_float(kf[k]), 4)
+        if "opacity" in kf:
+            row["opacity"] = round(_pair_to_float(kf["opacity"]), 4)
+        else:
+            row["opacity"] = 1.0
+        if isinstance(kf.get("ease"), str) and kf["ease"] != "linear":
+            row["ease"] = kf["ease"]
         out.append(row)
     return out or None
 
@@ -169,14 +200,18 @@ def _locked(folder: Path):
 
 def _save_current(folder: Path, doc: dict) -> None:
     folder.mkdir(parents=True, exist_ok=True)
-    tmp = folder / "timeline.json.tmp"
-    tmp.write_text(json.dumps(doc, separators=(",", ":"), sort_keys=True))
-    tmp.replace(folder / "timeline.json")
+    text = json.dumps(doc, separators=(",", ":"), sort_keys=True)
+    _write_project_text(folder, "timeline.json.tmp", text)
+    src = _project_path(folder, "timeline.json.tmp")
+    dst = _project_path(folder, "timeline.json")
+    os.replace(src, dst)
 
 
 def _log(folder: Path) -> O.Oplog:
-    base = json.loads((folder / "base.json").read_text())
-    path = folder / "oplog.jsonl"
+    base_path = _project_path(folder, "base.json")
+    with open(base_path, encoding="utf-8") as fh:
+        base = json.loads(fh.read())
+    path = Path(_project_path(folder, "oplog.jsonl"))
     if path.exists() and path.stat().st_size:
         return O.Oplog.load(base, path)
     return O.Oplog(base, path=path)
@@ -290,6 +325,34 @@ def view(doc: dict) -> dict:
                 )
                 row["fade_in"] = round((it.get("fade_in") or 0) / rate, 3)
                 row["fade_out"] = round((it.get("fade_out") or 0) / rate, 3)
+                lut = props.get("lut")
+                if isinstance(lut, dict) and lut.get("file"):
+                    from hermes_studio import lut as _LU
+
+                    folder = _dir(doc["id"])
+                    row["lut"] = {
+                        "file": lut["file"],
+                        "name": _LU.display_name(folder, lut["file"]),
+                        "intensity": _pair_to_float(lut.get("intensity", [1, 1])),
+                    }
+                mk = props.get("mask")
+                if isinstance(mk, dict):
+                    from hermes_studio import mask as _MK
+
+                    mv = _MK.view(mk)
+                    gk = mk.get("keys")
+                    if isinstance(gk, list) and gk:
+                        mv["keys"] = [
+                            {
+                                "at": round(k["at"] / rate, 4),
+                                "x": _pair_to_float(k["x"]),
+                                "y": _pair_to_float(k["y"]),
+                                "w": _pair_to_float(k["w"]),
+                                "h": _pair_to_float(k["h"]),
+                            }
+                            for k in gk
+                        ]
+                    row["mask"] = mv
                 media = doc.get("media", {}).get(it.get("media") or "", {})
                 if media.get("dur"):
                     row["media_dur"] = round(media["dur"] / rate, 3)
@@ -371,10 +434,11 @@ def create(pid: str = "demo") -> dict:
         return open_project(pid)
     d, _ = T.stamp_hash(_seed(pid))
     with _locked(folder):
-        if (folder / "base.json").exists():  # another request created it while we waited
+        base_json = _project_path(folder, "base.json")
+        if os.path.exists(base_json):  # another request created it while we waited
             return view(_log(folder).doc)
-        (folder / "base.json").write_text(json.dumps(d))
-        log = O.Oplog(d, path=folder / "oplog.jsonl")
+        _write_project_text(folder, "base.json", json.dumps(d))
+        log = O.Oplog(d, path=Path(_project_path(folder, "oplog.jsonl")))
         _save_current(folder, log.doc)
         return view(log.doc)
 
@@ -1325,6 +1389,126 @@ def clear_grade(pid: str, item_id: str) -> dict:
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"grade": None, "look": None}}], f"Grade {item_id} reset")
 
 
+def import_lut(pid: str, raw: bytes, name: str = "") -> dict:
+    """Validate and store a .cube LUT under ``luts/`` (content hash). Returns ``file`` and ``name``."""
+    from hermes_studio import lut as _LU
+
+    folder = _dir(pid)
+    text = _LU.decode_bytes(raw)
+    rel = _LU.store_text(folder, text)
+    label = (name or _LU.parse(text).title or Path(rel).stem).strip()
+    if label:
+        _LU.save_display_name(folder, rel, label)
+    return {"file": rel, "name": _LU.display_name(folder, rel)}
+
+
+def set_lut(pid: str, item_id: str, file: str, intensity: float = 1.0) -> dict:
+    """Apply a 3D LUT to a clip (``file`` is ``luts/<hash>.cube`` in the project). One undo step."""
+    from hermes_studio import lut as _LU
+
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a LUT")
+    if not _LU._FILE_RE.match(file):
+        raise EditorError("file must be a LUT in this project's luts folder")
+    if not (_dir(pid) / file).is_file():
+        raise EditorError("import that LUT into the project first")
+    t = float(intensity)
+    if not (0.0 <= t <= 1.0):
+        raise EditorError("intensity must be from 0 to 1")
+    fr = Fraction(t).limit_denominator(1000)
+    pair = [fr.numerator, fr.denominator]
+    op: dict = {"op": "set_lut", "id": item_id, "file": file}
+    if pair != [1, 1]:
+        op["intensity"] = pair
+    return apply(pid, [op], f"LUT {item_id}")
+
+
+def clear_lut(pid: str, item_id: str) -> dict:
+    """Remove a clip's LUT. One undo step."""
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a LUT")
+    return apply(pid, [{"op": "clear_lut", "id": item_id}], f"LUT {item_id} cleared")
+
+
+def set_mask(
+    pid: str,
+    item_id: str,
+    *,
+    shape: str = "rect",
+    x: float = 0.0,
+    y: float = 0.0,
+    w: float = 0.5,
+    h: float = 1.0,
+    feather: float = 0.0,
+    invert: bool = False,
+    target: str = "grade",
+    blur: float = 12.0,
+    keys: list[dict] | None = None,
+) -> dict:
+    """Feathered mask on a clip (isolates grade or blur). One undo step."""
+    from fractions import Fraction
+
+    from hermes_studio import mask as _M
+
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a mask")
+    if shape not in _M.SHAPES:
+        raise EditorError("shape must be rect or ellipse")
+    if target not in _M.TARGETS:
+        raise EditorError("target must be grade or blur")
+
+    def pair(v: float) -> list[int]:
+        fr = Fraction(v).limit_denominator(1000)
+        return [fr.numerator, fr.denominator]
+
+    op: dict = {
+        "op": "set_mask",
+        "id": item_id,
+        "x": pair(x),
+        "y": pair(y),
+        "w": pair(w),
+        "h": pair(h),
+    }
+    if shape != _M.DEFAULT_SHAPE:
+        op["shape"] = shape
+    if feather > 1e-9:
+        op["feather"] = pair(feather)
+    if invert:
+        op["invert"] = True
+    if target != _M.DEFAULT_TARGET:
+        op["target"] = target
+    if target == "blur" and abs(blur - _M.DEFAULT_BLUR) > 1e-9:
+        op["blur"] = pair(blur)
+    if keys:
+        out_keys = []
+        prev = None
+        for kf in keys:
+            at = T.seconds_to_ticks(float(kf.get("at", 0.0)))
+            if prev is not None and at <= prev:
+                raise EditorError("mask keys must be in strictly increasing time order")
+            prev = at
+            out_keys.append({
+                "at": at,
+                "x": pair(float(kf.get("x", x))),
+                "y": pair(float(kf.get("y", y))),
+                "w": pair(float(kf.get("w", w))),
+                "h": pair(float(kf.get("h", h))),
+            })
+        op["keys"] = out_keys
+    return apply(pid, [op], f"Mask {item_id}")
+
+
+def clear_mask(pid: str, item_id: str) -> dict:
+    """Remove a clip's mask. One undo step."""
+    _, it = _item(pid, item_id)
+    if it["type"] != "clip":
+        raise EditorError("only a clip can carry a mask")
+    return apply(pid, [{"op": "clear_mask", "id": item_id}], f"Mask {item_id} cleared")
+
+
 def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, scale: float = 1.0, rotate: float = 0.0) -> dict:
     """Position, scale, and rotate a clip's picture. Position is a fraction of the canvas,
     scale a positive multiplier, rotate an angle in degrees. Passing the identity clears the
@@ -1352,10 +1536,11 @@ def set_transform(pid: str, item_id: str, *, x: float = 0.0, y: float = 0.0, sca
 
 
 def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
-    """Set a clip's animated transform. Each keyframe is {at, x, y, scale, rotate} with `at`
-    in seconds from the clip start; values match the transform's ranges. A single-element or
-    empty list clears the animation (back to a static transform). Stored as [num, den] pairs
-    and validated by the schema (increasing time, within range). Passing None clears it."""
+    """Set a clip's animated transform. Each keyframe is {at, x, y, scale, rotate, opacity?,
+    ease?} with `at` in seconds from the clip start; values match the transform's ranges.
+    A single-element or empty list clears the animation (back to a static transform). Stored
+    as [num, den] pairs and validated by the schema (increasing time, within range). Passing
+    None clears it."""
     from fractions import Fraction
 
     def pair(v: float) -> list[int]:
@@ -1372,17 +1557,28 @@ def set_keyframes(pid: str, item_id: str, keyframes: list[dict] | None) -> dict:
         at = float(kf.get("at", 0.0))
         fx, fy = float(kf.get("x", 0.0)), float(kf.get("y", 0.0))
         fs, fr_ = float(kf.get("scale", 1.0)), float(kf.get("rotate", 0.0))
+        fo = float(kf.get("opacity", 1.0))
+        ease = kf.get("ease")
         if not (-4.0 <= fx <= 4.0 and -4.0 <= fy <= 4.0):
             raise EditorError("position must be within ±4 of the canvas")
         if not (0.01 <= fs <= 100.0):
             raise EditorError("scale must be between 0.01 and 100")
         if not (-3600.0 <= fr_ <= 3600.0):
             raise EditorError("rotate must be within ±3600 degrees")
+        if not (0.0 <= fo <= 1.0):
+            raise EditorError("opacity must be between 0 and 1")
+        if ease is not None and ease not in T.EASE_IDS:
+            raise EditorError("easing must be linear, ease-in, ease-out, or ease-in-out")
         ticks = T.seconds_to_ticks(at)
         if prev is not None and ticks <= prev:
             raise EditorError("keyframes must be in strictly increasing time order")
         prev = ticks
-        out.append({"at": ticks, "x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)})
+        row = {"at": ticks, "x": pair(fx), "y": pair(fy), "scale": pair(fs), "rotate": pair(fr_)}
+        if fo != 1.0:
+            row["opacity"] = pair(fo)
+        if ease and ease != "linear":
+            row["ease"] = ease
+        out.append(row)
     return apply(pid, [{"op": "set_props", "id": item_id, "props": {"keyframes": out}}], f"Animate ({len(out)} keys)")
 
 
@@ -1602,11 +1798,12 @@ def resolve_media(folder: Path, rel: str) -> Path:
     parts = Path(rel or "").parts
     if not parts or Path(rel).is_absolute() or ".." in parts:
         raise EditorError("media path leaves the project")
-    path = (folder / rel).resolve()
-    root = folder.resolve()
-    if path != root and root not in path.parents:
+    base = os.path.realpath(str(folder))
+    prefix = base.rstrip(os.sep) + os.sep
+    path = os.path.realpath(os.path.join(base, *parts))
+    if not path.startswith(prefix):
         raise EditorError("media path leaves the project")
-    return path
+    return Path(path)
 
 
 def _ensure_demo_plate(folder: Path, path: Path) -> None:
@@ -1772,11 +1969,12 @@ def write_import(pid: str, title: str, placed: list[tuple[str, float, str]]) -> 
     d, _ = T.stamp_hash(d)
     folder = _dir(pid)
     with _locked(folder):
-        (folder / "base.json").write_text(json.dumps(d))
+        _write_project_text(folder, "base.json", json.dumps(d))
         # An imported cut starts with an empty log, but the log file must exist: without it
         # the film has no history surface until somebody happens to make an edit.
-        log = O.Oplog(d, path=folder / "oplog.jsonl")
-        (folder / "oplog.jsonl").touch(exist_ok=True)
+        oplog_path = Path(_project_path(folder, "oplog.jsonl"))
+        log = O.Oplog(d, path=oplog_path)
+        oplog_path.touch(exist_ok=True)
         _save_current(folder, log.doc)
     out = view(log.doc)
     out["summary"] = f"Opened {title}"[:120]

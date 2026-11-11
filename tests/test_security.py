@@ -105,6 +105,39 @@ def test_security_headers_on_every_answer():
         assert k in raw
 
 
+def test_open_desk_stays_unframeable():
+    h = _Fake("GET", "/", _h(Host="127.0.0.1:3870"))
+    h.do_GET()
+    raw = h.raw()
+    assert b"X-Frame-Options: DENY" in raw
+    assert b"frame-ancestors 'none'" in raw
+
+
+def test_embed_requires_a_live_slug(tmp_path, monkeypatch):
+    monkeypatch.setattr(studio, "EMBED_FILE", tmp_path / "missing.json")
+    h = _Fake("GET", "/e/abcdefghijklmnopqrstuvwxyz/", _h(Host="127.0.0.1:3870"))
+    h.do_GET()
+    assert h.status() == 404
+    assert b"X-Frame-Options: DENY" in h.raw()
+
+
+def test_embed_serves_the_desk(tmp_path, monkeypatch):
+    slug = "abcdefghijklmnopqrstuvwxyz012345"
+    embed = tmp_path / "desktop-embed.json"
+    embed.write_text(json.dumps({"desk": slug, "exp": 9_999_999_999}), encoding="utf-8")
+    monkeypatch.setattr(studio, "EMBED_FILE", embed)
+    h = _Fake("GET", f"/e/{slug}/", _h(Host="127.0.0.1:3870"))
+    h.do_GET()
+    raw = h.raw()
+    assert h.status() == 200
+    assert b"X-Frame-Options" not in raw
+    assert b"frame-ancestors" not in raw
+    assert b"Cross-Origin-Resource-Policy: cross-origin" in raw
+    assert b"Access-Control-Allow-Origin: null" in raw
+    assert f"/e/{slug}/editor.js".encode() in raw
+    assert b"Hermes Studio" in raw
+
+
 def test_media_path_traversal_is_refused():
     assert studio._safe_media("x", "../../etc/passwd") is None
     assert studio._safe_media("../x", "clip.mp4") is None

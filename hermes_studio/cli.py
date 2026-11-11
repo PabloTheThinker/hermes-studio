@@ -46,6 +46,7 @@ examples:
   hermes-studio doctor                               check FFmpeg, speech, links
   hermes-studio app                                  open the desktop app
   hermes-studio studio                               open the desk in your browser
+  hermes-studio render demo --preset 1080p           export an Edit timeline (4k, vertical, prores too)
   hermes-studio mcp install claude                   add the tools to Claude Code
   hermes-studio update                               get the latest release
 
@@ -276,6 +277,9 @@ def build_parser() -> argparse.ArgumentParser:
     rn = sub.add_parser("render", help="render an Edit page timeline to a real video file")
     rn.add_argument("id", help="project id (the Edit page url has it)")
     rn.add_argument("-o", "--out", default="", help="output path (defaults into the project folder)")
+    rn.add_argument("--preset", default="", help="export preset: 1080p, 4k, vertical, prores")
+    rn.add_argument("--fps", type=float, default=None, help="override output frame rate")
+    rn.add_argument("--quality", default="standard", choices=["draft", "standard", "high"], help="x264 quality tier")
     rn.add_argument("--in", dest="start", type=float, default=None, help="render from this second (the In mark)")
     rn.add_argument("--out-at", dest="end", type=float, default=None, help="render up to this second (the Out mark)")
     _common(rn)
@@ -600,18 +604,30 @@ def cmd_edit(a: argparse.Namespace, o: Out) -> int:
 
 
 def cmd_render(a: argparse.Namespace, o: Out) -> int:
+    from hermes_studio import api
     from hermes_studio.api import HermesStudioError
-    from hermes_studio.editor import EditorError
-    from hermes_studio.render_timeline import RenderError, render_project
 
-    out = Path(a.out).expanduser() if a.out else None
+    preset = a.preset.strip() or None
     try:
-        res = render_project(a.id, out, start=a.start, end=a.end)
-    except (RenderError, EditorError) as exc:
-        return o.error(HermesStudioError(str(exc), code="failed"))
+        res = api.editor_render(
+            a.id,
+            a.out or None,
+            preset=preset,
+            fps=a.fps,
+            quality=a.quality,
+            start=a.start,
+            end=a.end,
+        )
+    except HermesStudioError as exc:
+        return o.error(exc)
     o.emit(res)
     rng = f"  range {res['range'][0]}–{res['range'][1]}s" if res.get("range") else ""
-    o.say(o.green("✓ ") + f"rendered {res['name']}  {res['size'][0]}×{res['size'][1]}  {res['duration']}s{rng}")
+    probe = res.get("probe") or {}
+    codecs = f"  {probe.get('video_codec') or '?'}/{probe.get('audio_codec') or '?'}"
+    o.say(
+        o.green("✓ ")
+        + f"rendered {res['name']}  {res['size'][0]}×{res['size'][1]}  {res['duration']}s{rng}{codecs}"
+    )
     return 0
 
 

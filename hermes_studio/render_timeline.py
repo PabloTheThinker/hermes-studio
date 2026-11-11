@@ -18,6 +18,7 @@ Shape of a render:
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import shutil
@@ -41,7 +42,8 @@ class RenderError(Exception):
 
 
 def _run(cmd: list[str], *, timeout: int = 7200) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # argv list only — never shell=True. Paths in cmd are resolved under the project first.
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, shell=False)
     if proc.returncode != 0:
         raise RenderError(proc.stderr[-2500:] or "ffmpeg failed")
 
@@ -169,8 +171,8 @@ def _transform(it: dict) -> dict | None:
 
 def _keyframes(it: dict, rate: int) -> list[dict] | None:
     """The clip's keyframes as plain floats, `at` in seconds from the clip's start, sorted.
-    None when there are none. Each is {at, x, y, scale, rotate}; the values match the
-    transform's ranges and are stored as [num, den] pairs."""
+    None when there are none. Each is {at, x, y, scale, rotate, opacity, ease?}; the values
+    match the transform's ranges and are stored as [num, den] pairs."""
 
     def frac(v: Any) -> float | None:
         if isinstance(v, (list, tuple)) and len(v) == 2:
@@ -196,9 +198,16 @@ def _keyframes(it: dict, rate: int) -> list[dict] | None:
         vals = {k: frac(kf.get(k)) for k in ("x", "y", "scale", "rotate")}
         if any(v is None for v in vals.values()):
             return None
+        op = frac(kf.get("opacity"))
+        if op is None:
+            op = 1.0
         if vals["scale"] <= 0:
             return None
-        out.append({"at": at / rate, **vals})
+        row = {"at": at / rate, **vals, "opacity": op}
+        ease = kf.get("ease")
+        if isinstance(ease, str) and ease != "linear":
+            row["ease"] = ease
+        out.append(row)
     out.sort(key=lambda k: k["at"])
     return out or None
 
@@ -216,6 +225,97 @@ def _level(raw: Any) -> float:
     except (TypeError, ValueError, ZeroDivisionError):
         pass
     return 1.0
+
+
+def _vchain(*parts: str) -> str:
+    """Join ffmpeg video filters, dropping empty pieces (no ``,,`` holes)."""
+    return ",".join(p.strip(",") for p in parts if p and p.strip(","))
+
+
+def _mask_corr_chain(mask: dict, gchain: str, lut_pre: str) -> str:
+    from hermes_studio import mask as _MK
+
+    if str(mask.get("target") or _MK.DEFAULT_TARGET) == "blur":
+        bpx = _MK.frac(mask.get("blur")) or _MK.DEFAULT_BLUR
+        return f"boxblur=luma_radius={bpx:.3f}:luma_power=1:chroma_radius=0"
+    return _vchain(gchain, lut_pre)
+
+
+def _masked_mid_graph(
+    plain_tag: str,
+    mask: dict,
+    dw: int,
+    dh: int,
+    rate: int,
+    gchain: str,
+    lut_pre: str,
+    n: int,
+    mid: str,
+    *,
+    cache_dir: Path | None = None,
+) -> str:
+    """``plain_tag`` is scaled picture; writes corrected branch + matte + merge into ``mid``.
+
+    Every branch is forced to ``dw``×``dh`` before ``maskedmerge``. The plain frame is
+    split once more before matte+merge: a label may only feed one filter input, and
+    without that split ffmpeg auto-wires the raw source into maskedmerge (size mismatch).
+
+    Static masks (no keyframes) bake a gray PNG once and pull it via ``movie`` — per-frame
+    geq at 1080p with feathered ellipse was ~0.15x realtime and hung M10 exports.
+    """
+    import hashlib
+    import json as _json
+
+    from hermes_studio import mask as _MK
+
+    corr = _mask_corr_chain(mask, gchain, lut_pre)
+    ctag, mtag, stag = f"mc{n}", f"mm{n}", f"ms{n}"
+    sp, sm = f"msp{n}", f"msm{n}"
+    fit = f"scale={dw}:{dh}:flags=bicubic,setsar=1,format=yuv420p"
+    fit_m = f"scale={dw}:{dh}:flags=neighbor,setsar=1,format=gray"
+    corr_chain = _vchain(corr, fit) if corr else fit
+
+    # Static PNG+movie(loop=0) never EOFs and hangs the graph; linear geq is ~1.3x realtime.
+    use_static = False and cache_dir is not None and not _MK.has_animated_keys(mask)
+    if use_static:
+        key = hashlib.sha1(
+            _json.dumps({"m": mask, "w": dw, "h": dh}, sort_keys=True, default=str).encode(),
+            usedforsecurity=False,
+        ).hexdigest()[:16]
+        matte_path = Path(cache_dir) / "mattes" / f"{key}.png"
+        if not matte_path.is_file():
+            _MK.write_static_matte_png(mask, dw, dh, matte_path)
+        matte_src = f"{_MK.movie_matte_filter(matte_path, dw, dh)}[{mtag}]"
+        return (
+            f"[{plain_tag}]split[{sp}][{plain_tag}b];"
+            f"[{sp}]{fit}[{sp}f];"
+            f"[{plain_tag}b]{corr_chain}[{ctag}];"
+            f"{matte_src};"
+            f"[{sp}f][{ctag}][{mtag}]maskedmerge[{mid}]"
+        )
+
+    matte = _MK.ffmpeg_matte_filter(mask, dw, dh, rate)
+    return (
+        f"[{plain_tag}]split[{plain_tag}a][{plain_tag}b];"
+        f"[{plain_tag}a]{fit}[{stag}];"
+        f"[{plain_tag}b]{corr_chain}[{ctag}];"
+        f"[{stag}]split[{sp}][{sm}];"
+        f"[{sm}]{matte},{fit_m}[{mtag}];"
+        f"[{sp}][{ctag}][{mtag}]maskedmerge[{mid}]"
+    )
+
+
+def _clip_lut(raw: Any, folder: Path) -> dict | None:
+    """Resolved LUT path and intensity for a clip, or None."""
+    from hermes_studio import lut as _LU
+
+    if not isinstance(raw, dict) or not raw.get("file"):
+        return None
+    try:
+        path = _LU.resolve_path(folder, str(raw["file"]))
+    except ValueError:
+        return None
+    return {"path": path, "intensity": _level(raw.get("intensity", [1, 1]))}
 
 
 def _balance(raw: Any) -> float:
@@ -443,9 +543,15 @@ def _contain(sw: int, sh: int, w: int, h: int) -> tuple[int, int, int, int]:
 # --------------------------------------------------------------------------- plan
 
 
-def _build_plan(doc: dict, folder: Path) -> dict:
+def _build_plan(
+    doc: dict,
+    folder: Path,
+    *,
+    size: tuple[int, int] | None = None,
+    fps: float | None = None,
+) -> dict:
     """Turn a timeline doc into a render plan. Pure: ffmpeg is never touched here."""
-    w, h = _canvas(doc)
+    w, h = size if size else _canvas(doc)
     rate = doc["tick_rate"]
     media = doc.get("media") or {}
 
@@ -499,8 +605,11 @@ def _build_plan(doc: dict, folder: Path) -> dict:
         # A legacy props.look renders as that look's grade (the eq/colorbalance chains are gone).
         grade = _G.parse(props_.get("grade") or (_G.look(look) if look in _G.LOOKS else None))
         hold = props_.get("hold") if isinstance(props_.get("hold"), int) and props_.get("hold") > 0 else None
-        clip_extra = {"crop": crop, "look": look, "grade": grade, "fade_in": fi, "fade_out": fo, "transform": transform,
-                      "keyframes": keyframes, "speed_keys": None if hold else speed_keys, "tl_dur": tl_dur, "hold": hold}
+        lut = _clip_lut(props_.get("lut"), folder)
+        mask = props_.get("mask") if isinstance(props_.get("mask"), dict) else None
+        clip_extra = {"crop": crop, "look": look, "grade": grade, "lut": lut, "mask": mask, "fade_in": fi, "fade_out": fo,
+                      "transform": transform, "keyframes": keyframes, "speed_keys": None if hold else speed_keys,
+                      "tl_dur": tl_dur, "hold": hold}
         if idx is None:
             idx = len(inputs)
             seen[rel] = idx
@@ -629,7 +738,7 @@ def _build_plan(doc: dict, folder: Path) -> dict:
     return {
         "width": w,
         "height": h,
-        "fps": _fps(doc),
+        "fps": fps if fps is not None else _fps(doc),
         "rate": rate,
         "inputs": inputs,
         "audio": audio,
@@ -716,29 +825,25 @@ def _duck_expr(pts: list[tuple[float, float]]) -> str:
 
 
 def _interp_expr(kfs: list[dict], key: str, tvar: str) -> str:
-    """A piecewise-linear ffmpeg expression for one value over keyframes (sorted by ``at``).
+    """Piecewise-linear ffmpeg expression (volume, ducking, gain keys)."""
+    from hermes_studio import easing as _EZ
 
-    Before the first key it holds the first value; between two keys it ramps linearly; after
-    the last key it holds the LAST value. Built from the end: start with the last value, then
-    for each segment from the last to the first wrap ``if(lt(t, b.at), <segment>, <rest>)``,
-    and finally guard the time before the first key.
+    return _EZ.interp_expr(kfs, key, tvar, eased=False)
 
-    The old builder got two things wrong, and transform keyframes rendered wrong because of it:
-    after the last key it fell back to the FIRST key's value, and a segment between two equal
-    values replaced everything built so far (so keys 1, 2, 2, 1 lost the ramp from 1 to 2).
-    """
-    def v(x: float) -> str:
-        return f"{x:.6f}"
 
-    expr = v(kfs[-1][key])
-    for i in range(len(kfs) - 1, 0, -1):
-        a, b = kfs[i - 1], kfs[i]
-        if abs(b[key] - a[key]) < 1e-12 or b["at"] <= a["at"]:
-            seg = v(a[key])
-        else:
-            seg = f"{v(a[key])}+({v(b[key])}-{v(a[key])})*({tvar}-{v(a['at'])})/({v(b['at'])}-{v(a['at'])})"
-        expr = f"if(lt({tvar},{v(b['at'])}),{seg},{expr})"
-    return f"if(lt({tvar},{v(kfs[0]['at'])}),{v(kfs[0][key])},{expr})" if len(kfs) > 1 else expr
+def _interp_expr_eased(kfs: list[dict], key: str, tvar: str) -> str:
+    """Piecewise eased ffmpeg expression for transform keyframes."""
+    from hermes_studio import easing as _EZ
+
+    return _EZ.interp_expr(kfs, key, tvar, eased=True)
+
+
+def _opacity_chain(kfs: list[dict], *, tvar: str = "T") -> str:
+    """Multiply luma/chroma by keyed opacity (black behind), on the rebased clip clock."""
+    if not kfs or all(abs(k.get("opacity", 1.0) - 1.0) < 1e-9 for k in kfs):
+        return ""
+    op = _interp_expr_eased(kfs, "opacity", tvar)
+    return f"geq=r='r(X,Y)*({op})':g='g(X,Y)*({op})':b='b(X,Y)*({op})',"
 
 
 def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
@@ -752,14 +857,21 @@ def _zoompan(kfs: list[dict], w: int, h: int, fps: float, dur: float) -> str:
     # The caller feeds an already contain-fitted frame that fills the canvas at zoom 1, so the
     # keyframe scale is zoompan's zoom directly. Keyframe times are frames now (at * fps).
     frame_kfs = [{**k, "at": k["at"] * fps} for k in kfs]
-    z = _interp_expr(frame_kfs, "scale", "on")
-    xx = _interp_expr(frame_kfs, "x", "on")
-    yy = _interp_expr(frame_kfs, "y", "on")
+    z = _interp_expr_eased(frame_kfs, "scale", "on")
+    xx = _interp_expr_eased(frame_kfs, "x", "on")
+    yy = _interp_expr_eased(frame_kfs, "y", "on")
     # zoompan's x/y are the top-left of the crop window in the zoomed image; centre the crop
     # and add the pan offset (a fraction of the input size). iw/ih are the input size.
     xexp = f"iw/2-(iw/zoom/2)+({xx})*iw"
     yexp = f"ih/2-(ih/zoom/2)+({yy})*ih"
-    return f"zoompan=z='{z}':x='{xexp}':y='{yexp}':d=1:s={w}x{h}:fps={fps:.3f},"
+    # zoompan+d=1 can emit tens of thousands of frames when followed by setpts speed
+    # changes (concat stalls mid-timeline). Clamp to the segment duration the caller
+    # passed (source window length before speed setpts).
+    dur_s = max(1.0 / max(fps, 1.0), float(dur))
+    return (
+        f"zoompan=z='{z}':x='{xexp}':y='{yexp}':d=1:s={w}x{h}:fps={fps:.3f},"
+        f"setpts=PTS-STARTPTS,trim=duration={dur_s:.6f},"
+    )
 
 
 # --------------------------------------------------------------------------- graph
@@ -816,6 +928,7 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     rate = plan["rate"]
     total = _t2s(plan["end_tick"], rate)
     fps = plan["fps"]
+    cache_dir = Path(plan["cache"]) if plan.get("cache") else None
     fc: list[str] = []
     v_in: list[str] = []
 
@@ -883,7 +996,13 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             # before transform/pad, so a lift never lifts the letterbox. Same formula the
             # preview shows.
             gchain = _G.ffmpeg_chain(inp.get("grade"), Path(plan.get("cache") or ".") / "luts")
-            grade_filter = f"{gchain}," if gchain else ""
+            from hermes_studio import lut as _LU
+
+            lut_info = inp.get("lut")
+            lut_inline, lut_graph = ("", "")
+            if lut_info:
+                lut_inline, lut_graph = _LU.ffmpeg_chain(lut_info["path"], lut_info["intensity"])
+            lut_pre = lut_inline if not lut_graph else ""
             # Transform acts on the contained frame before it meets the canvas: scale
             # multiplies it, rotate turns it, and x/y pan it by a fraction of the canvas.
             # The frame is padded onto a layer at least canvas-sized (so a zoom-out leaves
@@ -898,7 +1017,8 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
                 # already seconds from the clip start, and the segment is rebased to zero, so
                 # `on/fps` is that same clock. Values before the first / after the last
                 # keyframe hold the endpoint (clamped), which is how a Ken Burns push reads.
-                xf = _zoompan(kfs, w, h, fps, dur)
+                # Clamp zoompan to source window length (before setpts speed), not tl_dur.
+                xf = _zoompan(kfs, w, h, fps, src_dur)
             elif tf:
                 tscale = tf["scale"]
                 tw = max(2, int(round(dw * tscale)) // 2 * 2)
@@ -938,21 +1058,67 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
             if fo_v:
                 vfade += f",fade=t=out:st={max(0.0, dur - _t2s(fo_v, rate)):.3f}:d={_t2s(fo_v, rate):.3f}"
             pad = f"pad={w}:{h}:{x}:{y}:black," if not tf else ""
+            clip_mask = inp.get("mask")
+            base_scale = _vchain(f"{crop_filter}scale={dw}:{dh}:flags=bicubic")
             if inp.get("hold"):
                 # A freeze frame: pick exactly the one source frame (a half-frame window either
                 # side of its time, so rounding can't take two or none), clone it out to the
                 # hold, then cut to the hold's length.
                 fr = 1.0 / (fps if fps > 0 else 30.0)
-                chain = (f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts=PTS-STARTPTS,"
-                         f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}"
-                         f"{vfade},setsar=1,format=yuv420p")
-                fc.append(f"[{src}]trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f},{chain}[v{n}]")
+                mid = f"vm{n}"
+                ptag = f"mp{n}"
+                after = _vchain(xf, pad) + ",setpts=PTS-STARTPTS"
+                tail = _vchain(
+                    f"tpad=stop_mode=clone:stop_duration={dur + fr:.6f},fps={fps:.3f},trim=duration={dur:.6f}",
+                    _opacity_chain(kfs) if kfs else "",
+                    vfade.lstrip(","),
+                    "setsar=1",
+                    "format=yuv420p",
+                )
+                trim = f"trim=start={max(0.0, s_in - fr / 2):.6f}:end={s_in + fr / 2:.6f}"
+                if clip_mask:
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid, cache_dir=cache_dir)}"
+                    # after must re-label [mid] before a partial-intensity LUT graph (split=2…),
+                    # otherwise fps/pad output is unlabeled and split has no input.
+                    if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
+                        lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                        fc.append(f"{head};[{mid}]{after}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    else:
+                        fc.append(f"{head};[{mid}]{_vchain(after, tail)}[v{n}]")
+                elif lut_graph:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
+                    lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                    fc.append(f"[{src}]{trim},{core}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                else:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad) + ",setpts=PTS-STARTPTS"
+                    fc.append(f"[{src}]{trim},{core},{tail}[v{n}]")
             else:
                 # setsar=1 on every piece: scaling a 9:16 phone shot to whole pixels leaves it SAR
                 # 1215:1216, a 16:9 shot stays 1:1, and concat refuses to join the two -- any cut
                 # mixing vertical and horizontal footage failed to render. The canvas is square.
-                chain = f"{crop_filter}scale={dw}:{dh}:flags=bicubic,{grade_filter}{xf}{pad}setpts={pts},fps={fps:.3f}{vfade},setsar=1,format=yuv420p"
-                fc.append(f"[{src}]trim=start={s_in:.3f}:end={s_in + src_dur:.3f},{chain}[v{n}]")
+                mid = f"vm{n}"
+                ptag = f"mp{n}"
+                # Transform once: mask path applies xf/pad after merge; plain path puts them in core.
+                # Never append `after` (which already has xf/pad) onto a core that also has xf/pad —
+                # that doubled zoompan and OOM-killed full acceptance exports (SIGKILL, empty stderr).
+                after = _vchain(xf, pad) + f",setpts={pts},fps={fps:.3f}"
+                timing = f"setpts={pts},fps={fps:.3f}"
+                tail = _vchain(_opacity_chain(kfs) if kfs else "", vfade.lstrip(","), "setsar=1", "format=yuv420p")
+                trim = f"trim=start={s_in:.3f}:end={s_in + src_dur:.3f}"
+                if clip_mask:
+                    head = f"[{src}]{trim},{base_scale}[{ptag}];{_masked_mid_graph(ptag, clip_mask, dw, dh, rate, gchain, lut_pre, n, mid, cache_dir=cache_dir)}"
+                    if lut_graph and str(clip_mask.get("target") or "grade") != "blur":
+                        lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                        fc.append(f"{head};[{mid}]{after}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                    else:
+                        fc.append(f"{head};[{mid}]{_vchain(after, tail)}[v{n}]")
+                elif lut_graph:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad, timing)
+                    lg = _LU.ffmpeg_graph(lut_info["path"], lut_info["intensity"], mid)
+                    fc.append(f"[{src}]{trim},{core}[{mid}];[{mid}]{lg};[{mid}]{tail}[v{n}]")
+                else:
+                    core = _vchain(base_scale, gchain, lut_pre, xf, pad, timing)
+                    fc.append(f"[{src}]{trim},{core},{tail}[v{n}]")
         elif kind == "gap":
             dur = _t2s(inp["end"] - inp["at"], rate)
             v_in.append(f"[v{n}]")
@@ -1065,30 +1231,30 @@ def _build_graph(plan: dict, ass: Path | None) -> tuple[str, str]:
     if ass is not None:
         fc.append(f"[outv]ass='{_ass_escape_path(ass)}'[outv2]")
         vout = "outv2"
-    # Titles over everything: each PNG is its own looped input (see _encode), faded in alpha
-    # (linear, as the preview) and slid with the overlay position expression (titles.py).
-    from hermes_studio import titles as _TT
-
-    base_idx = len(plan["inputs"])
-    for k, ti in enumerate(plan.get("titles") or []):
-        at, dur = _t2s(ti["at"], rate), _t2s(ti["dur"], rate)
-        fi, fo = min(_t2s(ti["fi"], rate), dur), min(_t2s(ti["fo"], rate), dur)
-        chain = f"[{base_idx + k}:v]format=rgba"
-        if fi > 0 and ti["in"] != "none":
-            chain += f",fade=t=in:st=0:d={fi:.6f}:alpha=1"
-        if fo > 0 and ti["out"] != "none":
-            chain += f",fade=t=out:st={max(0.0, dur - fo):.6f}:d={fo:.6f}:alpha=1"
-        chain += f",setpts=PTS-STARTPTS+{at:.6f}/TB[tt{k}]"
-        fc.append(chain)
-        xe, ye = _TT.motion_expr(ti["in"] if fi > 0 else "none", ti["out"] if fo > 0 else "none", at, dur, fi, fo, w, h)
-        fc.append(f"[{vout}][tt{k}]overlay=x='{xe}':y='{ye}':eval=frame:eof_action=pass:format=auto,format=yuv420p[tv{k}]")
-        vout = f"tv{k}"
-
+    # Titles are burned in a second pass (_burn_titles). Inlining multiple setpts-shifted
+    # overlays on top of zoompan/mask graphs deadlocks ffmpeg (one title OK, two hang).
     return ";".join(fc), vout
 
 
-def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "outa", seconds: float | None = None) -> list[str]:
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin"]
+def _encode(
+    plan: dict,
+    graph: str,
+    vout: str,
+    out_path: Path,
+    *,
+    aout: str = "outa",
+    seconds: float | None = None,
+    export: Any | None = None,
+) -> list[str]:
+    from hermes_studio.export_presets import ResolvedExport
+    from hermes_studio.export_presets import resolve as resolve_export
+
+    exp: ResolvedExport = export if export is not None else resolve_export(None)
+    preset = exp.preset
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin",
+         # Cap filter graph parallelism: keyframe zoompan + mask + grade can OOM-kill
+         # (SIGKILL, empty stderr) on a 16–19 GB host when ffmpeg fans out unbounded.
+         "-filter_threads", "2", "-filter_complex_threads", "2"]
     for inp in plan["inputs"]:
         kind = inp["role"]
         if kind == "clip":
@@ -1111,25 +1277,132 @@ def _encode(plan: dict, graph: str, vout: str, out_path: Path, *, aout: str = "o
         f"{seconds if seconds is not None else _t2s(plan['end_tick'], plan['rate']):.3f}",
         "-r",
         f"{plan['fps']:.3f}",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "medium",
-        "-crf",
-        "20",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "160k",
-        "-ar",
-        "48000",
-        "-movflags",
-        "+faststart",
-        str(out_path),
     ]
+    if preset and preset.video_codec == "prores_ks":
+        cmd += [
+            "-c:v",
+            "prores_ks",
+            "-profile:v",
+            str(preset.prores_profile or 3),
+            "-pix_fmt",
+            preset.pix_fmt,
+            "-c:a",
+            preset.audio_codec,
+            "-ar",
+            "48000",
+        ]
+    else:
+        crf = exp.crf if exp.crf is not None else 20
+        xpreset = exp.x264_preset or "medium"
+        cmd += [
+            "-c:v",
+            "libx264",
+            "-preset",
+            xpreset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "160k",
+            "-ar",
+            "48000",
+        ]
+        if preset is None or preset.movflags:
+            cmd += ["-movflags", "+faststart"]
+    cmd.append(str(out_path))
     return cmd
+
+
+def _run_ffmpeg_progress(
+    cmd: list[str],
+    duration_sec: float,
+    on_progress: Callable[[float], None] | None,
+    cancel: Callable[[], bool],
+) -> None:
+    """Run an ffmpeg command built by ``_encode``, reporting ``-progress`` and honouring cancel."""
+    if on_progress is None and not cancel():
+        _run(cmd)
+        return
+    if cmd[0] != "ffmpeg" or len(cmd) < 2:
+        raise RenderError("bad ffmpeg command")
+    tail = cmd[5:] if len(cmd) > 5 and cmd[4] == "-nostdin" else cmd[2:]
+    pcmd = ["ffmpeg", "-hide_banner", "-nostdin", "-nostats", "-loglevel", "error",
+          "-filter_threads", "2", "-filter_complex_threads", "2",
+          "-progress", "pipe:1", "-y", *tail]
+    total_us = max(1, int(duration_sec * 1_000_000))
+    p = subprocess.Popen(pcmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout is not None
+        for line in p.stdout:
+            if cancel():
+                p.kill()
+                break
+            k, _, v = line.strip().partition("=")
+            if k == "out_time_us" and v.isdigit() and on_progress:
+                on_progress(min(1.0, int(v) / total_us))
+        p.wait()
+        err = p.stderr.read() if p.stderr else ""
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+        for s in (p.stdout, p.stderr):
+            if s:
+                s.close()
+    if cancel():
+        raise RenderError("render cancelled")
+    if p.returncode != 0:
+        raise RenderError(err.strip()[-2500:] or f"ffmpeg exit {p.returncode}")
+
+
+def probe_export(path: Path) -> dict:
+    """ffprobe summary for a finished export (size, fps, codecs, duration, file size)."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RenderError(f"ffprobe could not read {path.name}")
+    try:
+        info = json.loads(proc.stdout)
+    except ValueError as exc:
+        raise RenderError(f"ffprobe gave no JSON for {path.name}") from exc
+    streams = [s for s in info.get("streams") or [] if isinstance(s, dict)]
+    video = next((s for s in streams if s.get("codec_type") == "video"), None)
+    audio = next((s for s in streams if s.get("codec_type") == "audio"), None)
+    fmt = info.get("format") or {}
+    dur = float(fmt.get("duration") or 0)
+    if dur <= 0 and video:
+        dur = float(video.get("duration") or 0)
+    fps = None
+    if video:
+        raw = video.get("avg_frame_rate") or video.get("r_frame_rate") or "0/0"
+        if isinstance(raw, str) and "/" in raw:
+            num, den = raw.split("/", 1)
+            try:
+                n, d = float(num), float(den)
+                fps = round(n / d, 3) if d else None
+            except ValueError:
+                fps = None
+    w = int(video.get("width") or 0) if video else 0
+    h = int(video.get("height") or 0) if video else 0
+    rate = int(audio.get("sample_rate") or 0) if audio else None
+    return {
+        "width": w,
+        "height": h,
+        "fps": fps,
+        "duration": round(dur, 3),
+        "video_codec": video.get("codec_name") if video else None,
+        "audio_codec": audio.get("codec_name") if audio else None,
+        "audio_channels": audio.get("channels") if audio else None,
+        "audio_rate": rate,
+        "bytes": path.stat().st_size,
+    }
 
 
 def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, float] | None:
@@ -1144,25 +1417,160 @@ def _range(plan: dict, start: float | None, end: float | None) -> tuple[float, f
     return s, min(e, total)
 
 
-def render_project(pid: str, out_path: Path | None = None, *, start: float | None = None, end: float | None = None) -> dict:
+def validate_editor_export(
+    pid: str,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    preset: str | None = None,
+    fps: float | None = None,
+    quality: str | None = "standard",
+) -> Any:
+    """Check project, preset and In/Out range before queueing a desk export."""
+    from hermes_studio import editor as E
+    from hermes_studio.export_presets import ExportPresetError
+    from hermes_studio.export_presets import resolve as resolve_export
+
+    try:
+        export = resolve_export(preset, quality=quality, fps=fps)
+    except ExportPresetError as exc:
+        raise RenderError(str(exc)) from exc
+    folder = E._dir(pid)
+    if not (folder / "base.json").exists():
+        raise EditorError("no such project")
+    doc = E._log(folder).doc
+    size = (export.preset.width, export.preset.height) if export.preset else None
+    plan = _build_plan(doc, folder, size=size, fps=export.fps)
+    _range(plan, start, end)
+    return export
+
+
+
+def _burn_titles(
+    src: Path,
+    dest: Path,
+    plan: dict,
+    *,
+    export: Any | None = None,
+    on_progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> None:
+    """Second-pass title burn onto a finished picture+sound cut.
+
+    Keeps title overlays out of the main filter graph (multi-title + Ken Burns deadlocked
+    single-pass encodes).
+    """
+    from hermes_studio import titles as _TT
+    from hermes_studio.export_presets import ResolvedExport
+    from hermes_studio.export_presets import resolve as resolve_export
+
+    titles = plan.get("titles") or []
+    if not titles:
+        if src.resolve() != dest.resolve():
+            os.replace(src, dest)
+        return
+    exp: ResolvedExport = export if export is not None else resolve_export(None)
+    rate = plan["rate"]
+    fps = plan["fps"]
+    w, h = plan["width"], plan["height"]
+    total = _t2s(plan["end_tick"], rate)
+    cancel_fn = cancel or (lambda: False)
+    cmd: list[str] = ["ffmpeg", "-y", "-loglevel", "error", "-nostdin", "-i", str(src)]
+    fc: list[str] = []
+    vlab = "0:v"
+    for k, ti in enumerate(titles):
+        at, dur = _t2s(ti["at"], rate), _t2s(ti["dur"], rate)
+        fi, fo = min(_t2s(ti["fi"], rate), dur), min(_t2s(ti["fo"], rate), dur)
+        cmd += ["-loop", "1", "-framerate", f"{fps:.3f}", "-t", f"{dur:.6f}", "-i", str(ti["png"])]
+        chain = f"[{k + 1}:v]format=rgba"
+        if fi > 0 and ti["in"] != "none":
+            chain += f",fade=t=in:st=0:d={fi:.6f}:alpha=1"
+        if fo > 0 and ti["out"] != "none":
+            chain += f",fade=t=out:st={max(0.0, dur - fo):.6f}:d={fo:.6f}:alpha=1"
+        if at > 1e-6:
+            chain += f",tpad=start_mode=add:start_duration={at:.6f}:color=black@0"
+        tail = max(0.0, total - at - dur)
+        if tail > 1e-6:
+            chain += f",tpad=stop_mode=add:stop_duration={tail:.6f}:color=black@0"
+        chain += f",setpts=PTS-STARTPTS[tt{k}]"
+        fc.append(chain)
+        xe, ye = _TT.motion_expr(
+            ti["in"] if fi > 0 else "none",
+            ti["out"] if fo > 0 else "none",
+            at, dur, fi, fo, w, h,
+        )
+        out = f"tv{k}"
+        fc.append(
+            f"[{vlab}][tt{k}]overlay=x='{xe}':y='{ye}':eval=frame:eof_action=pass:format=auto,"
+            f"format=yuv420p[{out}]"
+        )
+        vlab = out
+    fc.append(f"[{vlab}]trim=duration={total:.6f},setpts=PTS-STARTPTS[vout]")
+    xpreset = exp.x264_preset or "veryfast"
+    crf = exp.crf if exp.crf is not None else 20
+    cmd += [
+        "-filter_complex", ";".join(fc),
+        "-map", "[vout]", "-map", "0:a?",
+        "-t", f"{total:.3f}", "-r", f"{fps:.3f}",
+        "-c:v", "libx264", "-preset", xpreset, "-crf", str(crf),
+        "-pix_fmt", "yuv420p", "-c:a", "copy",
+        "-movflags", "+faststart", str(dest),
+    ]
+    _run_ffmpeg_progress(cmd, total, on_progress, cancel_fn)
+
+
+def render_project(
+    pid: str,
+    out_path: Path | None = None,
+    *,
+    start: float | None = None,
+    end: float | None = None,
+    preset: str | None = None,
+    fps: float | None = None,
+    quality: str | None = "standard",
+    on_progress: Callable[[float], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> dict:
     """Render a project to a file. The file lands in the project folder by default.
 
     ``start``/``end`` (timeline seconds, the page's In and Out marks) render only that range.
     The trim is the very last step -- after captions, the mix, the limiter and loudnorm -- so a
     range is frame-for-frame and level-for-level the same as that stretch of a full render,
     rather than a section levelled on its own.
+
+    ``preset`` chooses export size and codec (``1080p``, ``4k``, ``vertical``, ``prores``). When
+    omitted, the timeline canvas size and the default H.264 settings are used. Writes to a temp
+    file in the same folder and atomically replaces the destination on success; cancel removes
+    the temp and never leaves a partial export.
     """
     from hermes_studio import editor as E
+    from hermes_studio.export_presets import default_filename
+
+    export = validate_editor_export(
+        pid, start=start, end=end, preset=preset, fps=fps, quality=quality
+    )
+    cancel_fn = cancel or (lambda: False)
 
     folder = E._dir(pid)
-    if not (folder / "base.json").exists():
-        raise EditorError("no such project")
-    plan = _build_plan(E._log(folder).doc, folder)
+    base = folder.resolve()
+    try:
+        base.relative_to(E.root().resolve())
+    except ValueError as exc:
+        raise RenderError("bad project id") from exc
+    doc = E._log(folder).doc
+    size = (export.preset.width, export.preset.height) if export.preset else None
+    plan = _build_plan(doc, folder, size=size, fps=export.fps)
     rng = _range(plan, start, end)
     if shutil.which("ffmpeg") is None:
         raise RenderError("ffmpeg is not installed")
-    ass = _build_ass(plan, folder / "cache")
-    graph, vout = _build_graph(plan, ass)
+    cache = (base / "cache").resolve()
+    cache.relative_to(base)
+    ass = _build_ass(plan, cache)
+    titles = list(plan.get("titles") or [])
+    # Main graph never inlines titles (see _build_graph); burn after the base cut.
+    plan_base = dict(plan)
+    plan_base["titles"] = []
+    graph, vout = _build_graph(plan_base, ass)
     aout, seconds = "outa", None
     if rng:
         s, e = rng
@@ -1171,20 +1579,72 @@ def render_project(pid: str, out_path: Path | None = None, *, start: float | Non
             f";[outa]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[rnga]"
         )
         vout, aout, seconds = "rngv", "rnga", e - s
-    dest = out_path or (folder / f"{pid}-render.mp4")
+    if out_path is None:
+        dest = (base / default_filename(pid, export)).resolve()
+    else:
+        dest = Path(out_path).resolve()
+    try:
+        dest.relative_to(base)
+    except ValueError as exc:
+        raise RenderError("export path leaves the project") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _run(_encode(plan, graph, vout, dest, aout=aout, seconds=seconds))
-    if not dest.is_file() or dest.stat().st_size < 1024:
-        raise RenderError("the render produced no file")
+    dur_sec = seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"])
+    tmp = dest.with_name(f".{dest.stem}.part{dest.suffix}")
+    tmp_base = dest.with_name(f".{dest.stem}.base{dest.suffix}") if titles else tmp
+    try:
+        tmp.relative_to(base)
+        tmp_base.relative_to(base)
+    except ValueError as exc:
+        raise RenderError("export path leaves the project") from exc
+    tmp.unlink(missing_ok=True)
+    tmp_base.unlink(missing_ok=True)
+    replaced = False
+    try:
+        cmd = _encode(plan_base, graph, vout, tmp_base, aout=aout, seconds=seconds, export=export)
+        _run_ffmpeg_progress(cmd, dur_sec, on_progress, cancel_fn)
+        if cancel_fn():
+            raise RenderError("render cancelled")
+        if not tmp_base.is_file() or tmp_base.stat().st_size < 1024:
+            raise RenderError("the render produced no file")
+        if titles:
+            # Second pass: titles only. Progress stays at ~1.0 for the burn.
+            _burn_titles(tmp_base, tmp, plan, export=export, on_progress=on_progress, cancel=cancel_fn)
+            tmp_base.unlink(missing_ok=True)
+            if cancel_fn():
+                raise RenderError("render cancelled")
+            if not tmp.is_file() or tmp.stat().st_size < 1024:
+                raise RenderError("the render produced no file")
+        elif tmp_base != tmp:
+            os.replace(tmp_base, tmp)
+        os.replace(tmp, dest)
+        replaced = True
+    finally:
+        if not replaced:
+            tmp.unlink(missing_ok=True)
+            tmp_base.unlink(missing_ok=True)
+    summary = probe_export(dest)
+    meta = {
+        "path": dest.name,
+        "preset": export.preset.id if export.preset else None,
+        "quality": export.quality,
+        "mime": "video/quicktime" if dest.suffix.lower() == ".mov" else "video/mp4",
+    }
+    cache.mkdir(parents=True, exist_ok=True)
+    meta_path = (cache / "last-export.json").resolve()
+    meta_path.relative_to(base)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
     return {
         "ok": True,
         "path": str(dest),
         "name": dest.name,
         "size": [plan["width"], plan["height"]],
-        "duration": round(seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"]), 3),
+        "duration": round(dur_sec, 3),
         "range": [round(rng[0], 3), round(rng[1], 3)] if rng else None,
         "bytes": dest.stat().st_size,
         "captions": bool(ass),
+        "preset": export.preset.id if export.preset else None,
+        "quality": export.quality,
+        "probe": summary,
         # What the mix came out at, measured on the exported file (M4's readout).
         "loudness": _loudness(dest),
     }
@@ -1233,7 +1693,7 @@ def _loudness(path: Path) -> dict | None:
     return out
 
 
-__all__ = ["RenderError", "render_project", "MIX", "TARGET_LUFS"]
+__all__ = ["RenderError", "render_project", "probe_export", "MIX", "TARGET_LUFS"]
 
 
 # ---------------------------------------------------------------------------

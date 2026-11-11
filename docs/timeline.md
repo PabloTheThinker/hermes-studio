@@ -41,7 +41,10 @@ frozen after slice 1: any change means `hs.timeline/2`.
 | doc | `markers[].color` | optional `cyan`/`green`/`yellow`/`orange`/`red`/`pink`/`purple`. `blue` is the default and is never stored, so an uncoloured marker hashes as before |
 | clip | `id, type:"clip", media, src:[in,out], fade_in, fade_out` | required; `src` in media ticks, `in < out ≤ media.dur` |
 | clip | `at` or `anchor` | exactly one; `anchor` only on music tracks |
-| clip | `props` | optional `{volume, speed, crop, look, transform, keyframes, gain_keys}`; defaults `[1,1]`, `[1,1]`, `null`, `null`, `null`, `null`, `null` |
+| clip | `props` | optional `{volume, speed, crop, look, transform, keyframes, gain_keys, lut, ...}`; defaults `[1,1]`, `[1,1]`, `null`, `null`, `null`, `null`, `null` |
+| clip | `props.lut` | optional `{file, intensity?}`: a 3D `.cube` under `luts/<sha256>.cube` in the project folder, blended by `intensity` (`[num, den]` 0..1; default 1 is not stored). `bad_lut` when the path or intensity is wrong |
+| clip | `props.keyframes` | optional sorted list (2–64) of `{at, x, y, scale, rotate, opacity?, ease?}`: transform animation; `opacity` 0..1 (default 1 omitted), `ease` on a key sets the segment after it (`linear` / `ease-in` / `ease-out` / `ease-in-out`; `linear` dropped). `bad_ease` when `ease` is wrong |
+| clip | `props.mask` | optional `{shape?, x, y, w, h, feather?, invert?, target?, blur?, keys?}`: centre-based fractions, feather 0..0.5 of the shorter side, `target` `grade` (default) or `blur`, animated `keys` like transform keyframes (optional `ease` per key). `bad_mask` when any field is wrong |
 | clip | `props.gain_keys` | the volume envelope (rubber band): a sorted list (1–64) of `{at, gain}`, `at` ticks from the clip's start, `gain` `[num, den]` 0–4. Linear between keys, held before the first and after the last; it multiplies `volume`. Any envelope counts as a hand-set level, so the render's loudnorm stands aside |
 | clip | `split_from` | optional id of the item this was split from (it need not still exist) |
 | text | `id, type:"text", dur, text, style, fade_in, fade_out` + `at` or `anchor` | `split_from` optional |
@@ -192,4 +195,4 @@ Open questions (Slice 2 notes):
 `anchor_target_missing`, `anchor_target_not_main`, `anchor_before_zero`, `overlap`,
 `bad_transition`, `transition_overlap_mismatch`, `bad_split_from`, `bad_fps`, `hash_mismatch`,
 `bad_keyframes`, `bad_order`, `track_audio_only`, `bad_speed_keys`, `bad_hold`, `bad_title`,
-`duck_music_only`.
+`duck_music_only`, `bad_lut`, `bad_mask`, `bad_ease`.
