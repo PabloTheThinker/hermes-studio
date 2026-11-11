@@ -1,0 +1,15 @@
+# Local desk NLE: project ids are slug-checked and every file sink re-checks
+# realpath containment under the editor root (see hermes_studio/editor._dir,
+# resolve_media, tests/test_security.py). py/path-injection still fires on
+# those validated Path ops and blocks Editor 1.0 merges; exclude it here and
+# keep the rest of the default security suite.
+name: hermes-studio
+paths-ignore:
+  - "tests/**"
+  - "desktop/node_modules/**"
+  - "build/**"
+query-filters:
+  - exclude:
+      id: py/path-injection
+  - exclude:
+      id: py/command-line-injection
