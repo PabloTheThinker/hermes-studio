@@ -248,7 +248,8 @@ def write_static_matte_png(mask: dict, w: int, h: int, path: Path) -> Path:
     """
     from pathlib import Path as _P
 
-    path = _P(path)
+    path = _P(path).resolve()
+    # Matte files are written under a render cache the caller already contains.
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         import numpy as np
@@ -294,7 +295,8 @@ def write_static_matte_png(mask: dict, w: int, h: int, path: Path) -> Path:
 def movie_matte_filter(path: Path, w: int, h: int) -> str:
     """Source filter: loop a baked gray PNG as a matte stream (no video input)."""
     from pathlib import Path as _P
-    p = str(_P(path).resolve()).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+    resolved = _P(path).resolve()
+    p = str(resolved).replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
     return (
         f"movie='{p}':loop=0,format=gray,"
         f"scale={int(w)}:{int(h)}:flags=neighbor,setsar=1,format=gray"

@@ -1011,9 +1011,15 @@ class StudioHandler(BaseHTTPRequestHandler):
                 folder = editor._dir(pid)
             except editor.EditorError as exc:
                 return _json(self, 400, {"ok": False, "error": str(exc)})
-            if not (folder / "base.json").exists():
+            base = folder.resolve()
+            try:
+                base.relative_to(editor.root().resolve())
+            except ValueError:
+                return _json(self, 400, {"ok": False, "error": "bad project id"})
+            if not (base / "base.json").exists():
                 return _json(self, 404, {"ok": False, "error": "no such project"})
-            tmp = folder / f".upload-{secrets.token_hex(4)}.cube"
+            tmp = (base / f".upload-{secrets.token_hex(4)}.cube").resolve()
+            tmp.relative_to(base)
             try:
                 left = length
                 with open(tmp, "wb") as out:
@@ -1041,9 +1047,15 @@ class StudioHandler(BaseHTTPRequestHandler):
             folder = editor._dir(pid)
         except editor.EditorError as exc:
             return _json(self, 400, {"ok": False, "error": str(exc)})
-        if not (folder / "base.json").exists():
+        base = folder.resolve()
+        try:
+            base.relative_to(editor.root().resolve())
+        except ValueError:
+            return _json(self, 400, {"ok": False, "error": "bad project id"})
+        if not (base / "base.json").exists():
             return _json(self, 404, {"ok": False, "error": "no such project"})
-        tmp = folder / f".upload-{secrets.token_hex(4)}{ext}"
+        tmp = (base / f".upload-{secrets.token_hex(4)}{ext}").resolve()
+        tmp.relative_to(base)
         try:
             left = length
             with open(tmp, "wb") as out:

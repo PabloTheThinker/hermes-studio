@@ -42,7 +42,8 @@ class RenderError(Exception):
 
 
 def _run(cmd: list[str], *, timeout: int = 7200) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    # argv list only — never shell=True. Paths in cmd are resolved under the project first.
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, shell=False)
     if proc.returncode != 0:
         raise RenderError(proc.stderr[-2500:] or "ffmpeg failed")
 
@@ -1551,13 +1552,20 @@ def render_project(
     cancel_fn = cancel or (lambda: False)
 
     folder = E._dir(pid)
+    base = folder.resolve()
+    try:
+        base.relative_to(E.root().resolve())
+    except ValueError as exc:
+        raise RenderError("bad project id") from exc
     doc = E._log(folder).doc
     size = (export.preset.width, export.preset.height) if export.preset else None
     plan = _build_plan(doc, folder, size=size, fps=export.fps)
     rng = _range(plan, start, end)
     if shutil.which("ffmpeg") is None:
         raise RenderError("ffmpeg is not installed")
-    ass = _build_ass(plan, folder / "cache")
+    cache = (base / "cache").resolve()
+    cache.relative_to(base)
+    ass = _build_ass(plan, cache)
     titles = list(plan.get("titles") or [])
     # Main graph never inlines titles (see _build_graph); burn after the base cut.
     plan_base = dict(plan)
@@ -1571,11 +1579,23 @@ def render_project(
             f";[outa]atrim=start={s:.6f}:end={e:.6f},asetpts=PTS-STARTPTS[rnga]"
         )
         vout, aout, seconds = "rngv", "rnga", e - s
-    dest = out_path or (folder / default_filename(pid, export))
+    if out_path is None:
+        dest = (base / default_filename(pid, export)).resolve()
+    else:
+        dest = Path(out_path).resolve()
+    try:
+        dest.relative_to(base)
+    except ValueError as exc:
+        raise RenderError("export path leaves the project") from exc
     dest.parent.mkdir(parents=True, exist_ok=True)
     dur_sec = seconds if seconds is not None else _t2s(plan["end_tick"], plan["rate"])
     tmp = dest.with_name(f".{dest.stem}.part{dest.suffix}")
     tmp_base = dest.with_name(f".{dest.stem}.base{dest.suffix}") if titles else tmp
+    try:
+        tmp.relative_to(base)
+        tmp_base.relative_to(base)
+    except ValueError as exc:
+        raise RenderError("export path leaves the project") from exc
     tmp.unlink(missing_ok=True)
     tmp_base.unlink(missing_ok=True)
     replaced = False
@@ -1609,9 +1629,10 @@ def render_project(
         "quality": export.quality,
         "mime": "video/quicktime" if dest.suffix.lower() == ".mov" else "video/mp4",
     }
-    cache = folder / "cache"
     cache.mkdir(parents=True, exist_ok=True)
-    (cache / "last-export.json").write_text(json.dumps(meta), encoding="utf-8")
+    meta_path = (cache / "last-export.json").resolve()
+    meta_path.relative_to(base)
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
     return {
         "ok": True,
         "path": str(dest),

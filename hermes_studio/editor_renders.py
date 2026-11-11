@@ -112,18 +112,28 @@ def start(
 
 
 def last_export_file(folder: Path) -> Path | None:
-    meta = folder / "cache" / "last-export.json"
+    base = folder.resolve()
+    meta = (base / "cache" / "last-export.json").resolve()
+    try:
+        meta.relative_to(base)
+    except ValueError:
+        return None
     if meta.is_file():
         try:
             import json
 
             row = json.loads(meta.read_text(encoding="utf-8"))
             name = row.get("path")
-            if isinstance(name, str):
-                p = folder / name
+            if isinstance(name, str) and Path(name).name == name:
+                p = (base / name).resolve()
+                p.relative_to(base)
                 if p.is_file():
                     return p
         except (OSError, ValueError, TypeError):
             pass
-    legacy = folder / f"{folder.name}-render.mp4"
+    legacy = (base / f"{folder.name}-render.mp4").resolve()
+    try:
+        legacy.relative_to(base)
+    except ValueError:
+        return None
     return legacy if legacy.is_file() else None

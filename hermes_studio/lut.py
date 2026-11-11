@@ -123,7 +123,9 @@ def store_text(folder: Path, text: str) -> str:
     parse(text)  # validate before storing
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
     rel = f"{LUT_DIR}/{digest}.cube"
-    path = folder / rel
+    base = folder.resolve()
+    path = (base / rel).resolve()
+    path.relative_to(base)
     if not path.is_file():
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
@@ -137,7 +139,12 @@ def store_bytes(folder: Path, raw: bytes) -> str:
 
 
 def _name_file(folder: Path, rel: str) -> Path:
-    return folder / f"{rel[: -len('.cube')]}.name"
+    if not _FILE_RE.match(rel):
+        raise ValueError("LUT path must be luts/<hash>.cube")
+    base = folder.resolve()
+    path = (base / f"{rel[: -len('.cube')]}.name").resolve()
+    path.relative_to(base)
+    return path
 
 
 def save_display_name(folder: Path, rel: str, name: str) -> None:
@@ -151,27 +158,24 @@ def display_name(folder: Path, rel: str) -> str:
     if nf.is_file():
         return nf.read_text(encoding="utf-8").strip()
     try:
-        return parse((folder / rel).read_text(encoding="utf-8")).title or Path(rel).stem
+        return parse(resolve_path(folder, rel).read_text(encoding="utf-8")).title or Path(rel).stem
     except (OSError, ValueError):
         return Path(rel).stem
 
 
 def load_file(folder: Path, rel: str) -> Lut3D:
-    if not _FILE_RE.match(rel):
-        raise ValueError("LUT path must be luts/<hash>.cube")
-    path = folder / rel
-    if not path.is_file():
-        raise ValueError("LUT file is missing")
-    return parse(path.read_text(encoding="utf-8"))
+    return parse(resolve_path(folder, rel).read_text(encoding="utf-8"))
 
 
 def resolve_path(folder: Path, rel: str) -> Path:
     if not _FILE_RE.match(rel):
         raise ValueError("LUT path must be luts/<hash>.cube")
-    path = (folder / rel).resolve()
-    root = folder.resolve()
-    if not str(path).startswith(str(root) + "/") and path != root:
-        raise ValueError("LUT path escapes the project")
+    base = folder.resolve()
+    path = (base / rel).resolve()
+    try:
+        path.relative_to(base)
+    except ValueError as exc:
+        raise ValueError("LUT path escapes the project") from exc
     if not path.is_file():
         raise ValueError("LUT file is missing")
     return path
