@@ -357,7 +357,7 @@ def hermes_studio_desk(host: str = "127.0.0.1", port: int = 3870) -> str:
     import time
     import urllib.request
 
-    host = host or "127.0.0.1"
+    host = host if host in ("127.0.0.1", "localhost") else "127.0.0.1"  # loopback only
     port = int(port or 3870)
     url = f"http://{host}:{port}/"
     try:
@@ -859,15 +859,6 @@ def _register_slash(ctx) -> None:
             _handle_studio,
             description="Throw a video into Hermes Studio",
             args_hint="<clip|captions|reframe|tighten|this> <url or file>",
-        )
-    except Exception:
-        pass
-    try:
-        ctx.register_cli_command(
-            "studio-plugin",
-            "Throw a video into Hermes Studio from chat (/studio)",
-            lambda p: p.add_argument("args", nargs="*", help="clip|captions|reframe <url>"),
-            lambda ns: print(_handle_studio(" ".join(getattr(ns, "args", []) or []))),
         )
     except Exception:
         pass

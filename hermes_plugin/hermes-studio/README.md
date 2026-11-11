@@ -29,11 +29,15 @@ The chat tools call the `hermes-studio` CLI. If it is not installed they return 
 
 ## Disclosure (catalog rule 13)
 
-- **Local compute:** FFmpeg + Whisper on the host; jobs write under the Studio library / project dirs.
-- **Network:** optional fetch of public media URLs via yt-dlp / HTTP when you pass a URL; oEmbed for titles. No telemetry. Never publishes to social networks.
-- **Shell:** tools invoke the `hermes-studio` CLI (or a source checkout).
-- **Credentials:** none required. Optional local Ollama for clip naming (`HERMES_STUDIO_NAMER`); no cloud key by default.
-- **Does not post.** You seal every publish.
+- **Shell commands:** every tool runs the `hermes-studio` CLI as a subprocess (`hermes-studio <verb> ... --json`), found on `PATH`, else a source checkout at `$HERMES_STUDIO_HOME` or `~/projects/hermes-studio`, else `python -m hermes_studio`. Each call has a timeout (30 s to 60 min, by tool), so nothing waits forever under cron or the gateway.
+- **Long-running background process:** `hermes_studio_desk` (and `/studio desk`) starts the local Studio desk with `subprocess.Popen` as a detached process, bound to **127.0.0.1:3870** (loopback only). It keeps running after the tool returns; stop it by ending the `hermes-studio studio` process. Its log goes to `~/.hermes/clips/studio.log`.
+- **Separate engine install:** the plugin does not install the engine. Install it with `uv tool install git+https://github.com/PabloTheThinker/hermes-studio` or the `install.sh` above. Without it, every tool returns a `missing_dependency` error in chat with those commands.
+- **Network:** only when you pass a URL: public media is fetched with yt-dlp / HTTP, and oEmbed is read for titles. Otherwise no network calls.
+- **Optional local Ollama:** clip naming can use a local Ollama model (`HERMES_STUDIO_NAMER`). No cloud key by default.
+- **Files outside the plugin:** reads the media paths you pass; writes jobs under the Studio library / project dirs, caption cues to `~/.hermes/clips/agent-cues.json`, and the desk log above.
+- **Local compute:** FFmpeg + Whisper on this machine.
+- **Credentials:** none read or stored. No `.env`, `auth.json` or other credential files.
+- **No telemetry. Never posts** to social networks; you publish yourself.
 
 ## License
 
