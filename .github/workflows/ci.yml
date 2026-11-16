@@ -96,6 +96,9 @@ jobs:
           echo "end: $(date -u +%FT%TZ)"
       - name: Lint (bugs, imports, security)
         run: ruff check hermes_studio tests hermes_plugin
+      - name: Review checks (warnings only)
+        # Exit 0 by default so leftover findings do not fail CI. --strict is for local use.
+        run: python scripts/review_checks.py
       - name: Tests
         env:
           HERMES_SLOW_TESTS: "1"  # S4 gate: a 20-minute fixture imports with progress (~2 min)
